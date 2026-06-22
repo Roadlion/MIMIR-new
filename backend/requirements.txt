@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic-settings
+psycopg2-binary
+python-dotenv
+requests
+redis
+pandas
+transformers
+torch

@@ -1,0 +1,1 @@
+fetch_financial_feed_batch
