@@ -67,10 +67,9 @@ a:hover {
 
 .ticker-track {
     display: flex;
-    gap: 3rem;
+    gap: 2.5rem;
     white-space: nowrap;
     animation: marquee 45s linear infinite;
-    padding-left: 100%; /* starts off screen */
 }
 
 .ticker-track:hover {
@@ -81,7 +80,7 @@ a:hover {
 .ticker-item {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.25rem;
 }
 
 .ticker-symbol {
@@ -110,6 +109,6 @@ a:hover {
         transform: translateX(0);
     }
     100% {
-        transform: translateX(-100%);
+        transform: translateX(-50%);
     }
-}
+}

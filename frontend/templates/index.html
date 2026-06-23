@@ -3,5 +3,106 @@
 {% block title %}MIMIR — Dashboard{% endblock %}
 
 {% block content %}
-<h1>fuck nigga</h1>
+<div class="w-full lg:w-2/3">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Global Sentiment Card -->
+        <div class="card flex flex-col justify-between h-40">
+            <div>
+                <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Global Sentiment</span>
+                <h3 id="sentiment-val" class="text-2xl font-bold mt-2 text-[#D6E5E3]">--</h3>
+            </div>
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
+                <span>Avg Score: <span id="sentiment-score">0.00</span></span>
+                <span id="sentiment-direction" class="px-2 py-0.5 rounded text-[10px]">--</span>
+            </div>
+        </div>
+
+        <!-- Global Volatility Card -->
+        <div class="card flex flex-col justify-between h-40">
+            <div>
+                <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Global Volatility (VIX)</span>
+                <h3 id="volatility-val" class="text-2xl font-bold mt-2 text-[#D6E5E3]">--</h3>
+            </div>
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
+                <span>24h Change: <span id="volatility-change">--</span></span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-[#111A20] text-[#00A6B2]">INDEX</span>
+            </div>
+        </div>
+
+        <!-- Articles Count Card -->
+        <div class="card flex flex-col justify-between h-40">
+            <div>
+                <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Articles (24h)</span>
+                <h3 id="articles-val" class="text-3xl font-bold mt-2 text-[#00A6B2]">--</h3>
+            </div>
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
+                <span>By Published Date</span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-[#1A2A30] text-[#8A9E9B]">RAW</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    async function loadDashboardCards() {
+        try {
+            // 1. Fetch Global Sentiment & Articles count
+            const sentimentRes = await fetch('/api/v1/summary?days=1');
+            if (sentimentRes.ok) {
+                const sData = await sentimentRes.json();
+                const avgScore = sData.avg_sentiment;
+                const totalArticles = sData.total_articles;
+                
+                // Render Sentiment
+                const sentValEl = document.getElementById('sentiment-val');
+                const scoreEl = document.getElementById('sentiment-score');
+                const dirEl = document.getElementById('sentiment-direction');
+                
+                scoreEl.textContent = avgScore.toFixed(2);
+                if (avgScore > 0.05) {
+                    sentValEl.textContent = 'Bullish';
+                    sentValEl.className = 'text-2xl font-bold mt-2 text-[#00E676]';
+                    dirEl.textContent = 'BULL';
+                    dirEl.className = 'px-2 py-0.5 rounded text-[10px] bg-[#00E676]/10 text-[#00E676]';
+                } else if (avgScore < -0.05) {
+                    sentValEl.textContent = 'Bearish';
+                    sentValEl.className = 'text-2xl font-bold mt-2 text-[#FF5252]';
+                    dirEl.textContent = 'BEAR';
+                    dirEl.className = 'px-2 py-0.5 rounded text-[10px] bg-[#FF5252]/10 text-[#FF5252]';
+                } else {
+                    sentValEl.textContent = 'Neutral';
+                    sentValEl.className = 'text-2xl font-bold mt-2 text-[#FFD740]';
+                    dirEl.textContent = 'NEUT';
+                    dirEl.className = 'px-2 py-0.5 rounded text-[10px] bg-[#FFD740]/10 text-[#FFD740]';
+                }
+                
+                // Render Articles Count
+                document.getElementById('articles-val').textContent = totalArticles;
+            }
+            
+            // 2. Fetch VIX for Global Volatility
+            const vixRes = await fetch('/api/v1/prices/ticker-changes?tickers=^VIX');
+            if (vixRes.ok) {
+                const vData = await vixRes.json();
+                if (vData.tickers && vData.tickers.length > 0) {
+                    const vix = vData.tickers[0];
+                    document.getElementById('volatility-val').textContent = vix.current_price.toFixed(2);
+                    
+                    const changeEl = document.getElementById('volatility-change');
+                    const changeFormatted = vix.change_percent >= 0 ? `+${vix.change_percent.toFixed(2)}%` : `${vix.change_percent.toFixed(2)}%`;
+                    changeEl.textContent = changeFormatted;
+                    changeEl.className = vix.change_percent >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+                }
+            }
+        } catch (err) {
+            console.error('Error loading dashboard cards:', err);
+        }
+    }
+    
+    loadDashboardCards();
+    // Refresh cards every 5 minutes
+    setInterval(loadDashboardCards, 300000);
+});
+</script>
 {% endblock %}

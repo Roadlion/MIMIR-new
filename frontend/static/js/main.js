@@ -39,6 +39,7 @@ async function fetchTickerData() {
                 return items.map(item => {
                     const changeClass = item.change_percent >= 0 ? 'up' : 'down';
                     const changeSign = item.change_percent >= 0 ? '▲' : '▼';
+                    const isCurrency = !item.ticker.startsWith('^') && !item.ticker.endsWith('=X');
                     const priceFormatted = Number(item.current_price).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 4
@@ -47,17 +48,17 @@ async function fetchTickerData() {
                     return `
                         <div class="ticker-item">
                             <span class="ticker-symbol">${item.ticker}</span>
-                            <span class="ticker-price">$${priceFormatted}</span>
+                            <span class="ticker-price">${isCurrency ? '$' : ''}${priceFormatted}</span>
                             <span class="ticker-change ${changeClass}">${changeSign} ${changeFormatted}%</span>
                         </div>
                     `;
-                }).join(' <span class="text-[#1A2A30]">•</span> ');
+                }).join('');
             };
             
             const listHtml = renderItems(data.tickers);
             // Render twice to support infinite marquee looping
-            track.innerHTML = listHtml + ' <span class="text-[#1A2A30]">•</span> ' + listHtml;
-            track.style.animationDuration = `${Math.max(25, data.tickers.length * 3.5)}s`;
+            track.innerHTML = listHtml + listHtml;
+            track.style.animationDuration = `${Math.max(45, data.tickers.length * 6.5)}s`;
             track.style.paddingLeft = '0';
         } else {
             track.innerHTML = '<span class="text-[#4A6A70]">No ticker data available</span>';

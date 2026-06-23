@@ -20,13 +20,14 @@ async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
     # Get summary stats
     cur.execute(f"""
         SELECT 
-            COUNT(*) AS total_articles,
-            AVG(sentiment_score) AS avg_sentiment,
-            COUNT(*) FILTER (WHERE direction = 'bullish') AS bullish_count,
-            COUNT(*) FILTER (WHERE direction = 'bearish') AS bearish_count,
-            COUNT(*) FILTER (WHERE direction = 'neutral') AS neutral_count
-        FROM {settings.mimir_schema}.mimir_sentiment_impacts
-        WHERE created_at > NOW() - INTERVAL '%s days'
+            COUNT(DISTINCT a.id) AS total_articles,
+            AVG(si.sentiment_score) AS avg_sentiment,
+            COUNT(si.article_id) FILTER (WHERE si.direction = 'bullish') AS bullish_count,
+            COUNT(si.article_id) FILTER (WHERE si.direction = 'bearish') AS bearish_count,
+            COUNT(si.article_id) FILTER (WHERE si.direction = 'neutral') AS neutral_count
+        FROM {settings.mimir_schema}.mimir_raw_articles a
+        LEFT JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+        WHERE a.published_ts > NOW() - INTERVAL '%s days'
     """, (days,))
     
     result = cur.fetchone()
@@ -34,14 +35,15 @@ async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
     # Get top mover (asset with most articles and extreme sentiment)
     cur.execute(f"""
         SELECT 
-            asset_name,
-            AVG(sentiment_score) AS avg_sentiment,
-            COUNT(*) AS article_count
-        FROM {settings.mimir_schema}.mimir_sentiment_impacts
-        WHERE created_at > NOW() - INTERVAL '%s days'
-        GROUP BY asset_name
-        HAVING COUNT(*) >= 3
-        ORDER BY ABS(AVG(sentiment_score)) DESC, COUNT(*) DESC
+            si.asset_name,
+            AVG(si.sentiment_score) AS avg_sentiment,
+            COUNT(DISTINCT a.id) AS article_count
+        FROM {settings.mimir_schema}.mimir_raw_articles a
+        JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+        WHERE a.published_ts > NOW() - INTERVAL '%s days'
+        GROUP BY si.asset_name
+        HAVING COUNT(DISTINCT a.id) >= 3
+        ORDER BY ABS(AVG(si.sentiment_score)) DESC, COUNT(DISTINCT a.id) DESC
         LIMIT 1
     """, (days,))
     
