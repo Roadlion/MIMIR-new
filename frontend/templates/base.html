@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}MIMIR{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="font-['Inter'] antialiased min-h-screen flex flex-col">
+    <!-- Sliding Ticker Bar -->
+    <div id="ticker-bar" class="w-full bg-[#060A0D] border-b border-[#1A2A30] py-1.5 overflow-hidden text-xs font-mono select-none">
+        <div class="ticker-wrapper">
+            <div id="ticker-track" class="ticker-track">
+                <span class="text-[#4A6A70]">🌳 Loading market data from Valhalla...</span>
+            </div>
+        </div>
+    </div>
+
+    <nav class="border-b border-[#1A2A30] px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-6">
+            <div class="flex items-center gap-2">
+                <span class="text-[#00A6B2] font-bold text-xl font-['JetBrains_Mono']">MIMIR</span>
+                <span class="text-xs text-[#4A6A70] font-mono">v1.0</span>
+            </div>
+            <div class="flex gap-6 text-sm">
+                <a href="/" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Dashboard</a>
+                <a href="/articles" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Articles</a>
+                <a href="/watchlist" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Watchlist</a>
+            </div>
+        </div>
+        <div class="flex items-center gap-4">
+            <span class="text-xs text-[#4A6A70] font-mono">⏱️ <span id="clock">--:--:--</span></span>
+            <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
+                ↻ Refresh
+            </button>
+        </div>
+    </nav>
+
+    <main class="container mx-auto px-6 py-6 max-w-7xl">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="border-t border-[#1A2A30] px-6 py-3 text-xs text-[#4A6A70] text-center font-mono">
+        The tree watches. The well remembers.
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

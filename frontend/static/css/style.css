@@ -1,0 +1,115 @@
+/* MIMIR - Brutalist Theme */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: black;
+    color: #D6E5E3;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #0A0E12;
+}
+::-webkit-scrollbar-thumb {
+    background: #1A2A30;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #2A4A50;
+}
+
+a {
+    color: #00A6B2;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+a:hover {
+    color: #4DD0D6;
+}
+
+.card {
+    background: #111A20;
+    border: 1px solid #1A2A30;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    transition: border-color 0.2s ease;
+}
+.card:hover {
+    border-color: #2A4A50;
+}
+
+.sentiment-bullish {
+    color: #00E676;
+}
+.sentiment-bearish {
+    color: #FF5252;
+}
+.sentiment-neutral {
+    color: #FFD740;
+}
+
+/* Ticker Marquee Animation Styles */
+.ticker-wrapper {
+    display: flex;
+    overflow: hidden;
+    width: 100%;
+}
+
+.ticker-track {
+    display: flex;
+    gap: 3rem;
+    white-space: nowrap;
+    animation: marquee 45s linear infinite;
+    padding-left: 100%; /* starts off screen */
+}
+
+.ticker-track:hover {
+    animation-play-state: paused;
+    cursor: pointer;
+}
+
+.ticker-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.ticker-symbol {
+    color: #D6E5E3;
+    font-weight: 600;
+}
+
+.ticker-price {
+    color: #8A9E9B;
+}
+
+.ticker-change {
+    font-weight: 500;
+}
+
+.ticker-change.up {
+    color: #00E676;
+}
+
+.ticker-change.down {
+    color: #FF5252;
+}
+
+@keyframes marquee {
+    0% {
+        transform: translateX(0);
+    }
+    100% {
+        transform: translateX(-100%);
+    }
+}
