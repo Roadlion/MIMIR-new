@@ -656,6 +656,59 @@ HEATMAP_INDICES = {
             {"ticker": "BAS.DE",  "name": "BASF",              "sector": "Materials"},
             {"ticker": "NG.L",    "name": "National Grid",     "sector": "Utilities"},
         ]
+    },
+    "spchina500": {
+        "label": "S&P China 500",
+        "constituents": [
+            # Technology & Internet
+            {"ticker": "0700.HK",   "name": "Tencent Holdings",      "sector": "Technology"},
+            {"ticker": "9988.HK",   "name": "Alibaba Group",         "sector": "Technology"},
+            {"ticker": "9618.HK",   "name": "JD.com",                "sector": "Consumer Cycl."},
+            {"ticker": "9999.HK",   "name": "NetEase",               "sector": "Technology"},
+            {"ticker": "BIDU",      "name": "Baidu",                 "sector": "Technology"},
+            {"ticker": "9626.HK",   "name": "Bilibili",              "sector": "Technology"},
+            {"ticker": "1024.HK",   "name": "Kuaishou Technology",   "sector": "Technology"},
+            {"ticker": "3690.HK",   "name": "Meituan",               "sector": "Technology"},
+            {"ticker": "9961.HK",   "name": "Trip.com Group",        "sector": "Consumer Cycl."},
+            {"ticker": "6618.HK",   "name": "JD Health",             "sector": "Healthcare"},
+            # Financials
+            {"ticker": "0939.HK",   "name": "China Construction Bank","sector": "Financials"},
+            {"ticker": "1398.HK",   "name": "ICBC",                  "sector": "Financials"},
+            {"ticker": "3988.HK",   "name": "Bank of China",         "sector": "Financials"},
+            {"ticker": "3328.HK",   "name": "Bank of Communications","sector": "Financials"},
+            {"ticker": "2318.HK",   "name": "Ping An Insurance",     "sector": "Financials"},
+            {"ticker": "2628.HK",   "name": "China Life Insurance",  "sector": "Financials"},
+            {"ticker": "6030.HK",   "name": "CITIC Securities",      "sector": "Financials"},
+            {"ticker": "0388.HK",   "name": "Hong Kong Exchanges",   "sector": "Financials"},
+            # Consumer & Retail
+            {"ticker": "9869.HK",   "name": "Miniso Group",          "sector": "Consumer Cycl."},
+            {"ticker": "6862.HK",   "name": "Haidilao",              "sector": "Consumer Cycl."},
+            {"ticker": "1929.HK",   "name": "Chow Tai Fook",         "sector": "Consumer Cycl."},
+            {"ticker": "2331.HK",   "name": "Li Ning",               "sector": "Consumer Cycl."},
+            {"ticker": "0960.HK",   "name": "Longfor Group",         "sector": "Real Estate"},
+            # Energy & Utilities
+            {"ticker": "0857.HK",   "name": "PetroChina",            "sector": "Energy"},
+            {"ticker": "0386.HK",   "name": "China Petroleum (Sinopec)","sector": "Energy"},
+            {"ticker": "0883.HK",   "name": "CNOOC",                 "sector": "Energy"},
+            {"ticker": "0002.HK",   "name": "CLP Holdings",          "sector": "Utilities"},
+            {"ticker": "0006.HK",   "name": "Power Assets",          "sector": "Utilities"},
+            # Industrials
+            {"ticker": "1211.HK",   "name": "BYD Company",           "sector": "Consumer Cycl."},
+            {"ticker": "2238.HK",   "name": "GAC Group",             "sector": "Consumer Cycl."},
+            {"ticker": "1088.HK",   "name": "China Shenhua Energy",  "sector": "Energy"},
+            {"ticker": "1816.HK",   "name": "CGN Power",             "sector": "Utilities"},
+            {"ticker": "1919.HK",   "name": "COSCO Shipping",        "sector": "Industrials"},
+            {"ticker": "0291.HK",   "name": "China Resources Beer",  "sector": "Consumer Def."},
+            # Healthcare & Biotech
+            {"ticker": "1177.HK",   "name": "Sino Biopharmaceutical","sector": "Healthcare"},
+            {"ticker": "2269.HK",   "name": "WuXi Biologics",        "sector": "Healthcare"},
+            {"ticker": "2359.HK",   "name": "WuXi AppTec",           "sector": "Healthcare"},
+            {"ticker": "6160.HK",   "name": "BeiGene",               "sector": "Healthcare"},
+            # Telecom
+            {"ticker": "0941.HK",   "name": "China Mobile",          "sector": "Comm. Services"},
+            {"ticker": "0762.HK",   "name": "China Unicom",          "sector": "Comm. Services"},
+            {"ticker": "0728.HK",   "name": "China Telecom",         "sector": "Comm. Services"},
+        ]
     }
 }
 

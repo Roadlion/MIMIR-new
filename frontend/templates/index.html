@@ -132,6 +132,7 @@
                 <button class="heatmap-tab" data-index="dax">DAX</button>
                 <button class="heatmap-tab" data-index="cac40">CAC 40</button>
                 <button class="heatmap-tab" data-index="stoxx600">STOXX 600</button>
+                <button class="heatmap-tab" data-index="spchina500">S&P China 500</button>
             </div>
 
             <div class="heatmap-card">
@@ -1525,6 +1526,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             else if (t.endsWith('.L')) sym = '£';
             else if (t.endsWith('.PA') || t.endsWith('.DE') || t.endsWith('.AS') || t.endsWith('.SW') || t.endsWith('.CO')) sym = '€';
             else if (t.endsWith('.KS') || t.endsWith('.KQ')) sym = '₩';
+            else if (t.endsWith('.HK')) sym = 'HK$';
             else if (t.endsWith('.T')) sym = '¥';
             else if (/^[A-Z0-9\-^=]+$/.test(t)) sym = '$';
             const formatted = Number(p).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
