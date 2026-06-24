@@ -191,6 +191,25 @@ def process_unscored_articles(batch_size: int = 50, max_workers: int = 5) -> int
                     pass
 
     print(f"[MIMIR] Total impacts inserted: {total_inserted}")
+    
+    # Run asset category clean up queries
+    if total_inserted > 0:
+        try:
+            conn_cleanup = get_db_connection()
+            cur_cleanup = conn_cleanup.cursor()
+            print("[MIMIR] Executing asset category replacements (SECTOR -> EQUITY)...")
+            cur_cleanup.execute("""
+                UPDATE yggdrasil.mimir_sentiment_impacts
+                SET asset_category = REPLACE(asset_category, 'SECTOR', 'EQUITY')
+                WHERE asset_category LIKE '%SECTOR%';
+            """)
+            conn_cleanup.commit()
+            cur_cleanup.close()
+            conn_cleanup.close()
+            print("[MIMIR] Asset category replacements completed.")
+        except Exception as e:
+            print(f"[MIMIR] Error running asset category replacements: {e}")
+
     return total_inserted
 
 

@@ -112,3 +112,403 @@ a:hover {
         transform: translateX(-50%);
     }
 }
+
+/* ==================== WATCHLIST PANEL ==================== */
+.watchlist-panel {
+    background: #111A20;
+    border: 1px solid #1A2A30;
+    border-radius: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 10rem;
+    max-height: 32rem;
+    overflow: hidden;
+}
+
+.watchlist-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #1A2A30;
+}
+
+.watchlist-title {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #D6E5E3;
+}
+
+.watchlist-settings-btn {
+    background: none;
+    border: none;
+    color: #4A6A70;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+}
+.watchlist-settings-btn:hover {
+    color: #00A6B2;
+    background: rgba(0, 166, 178, 0.08);
+}
+
+/* Search */
+.watchlist-search-container {
+    position: relative;
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid #1A2A30;
+}
+
+.watchlist-search-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.watchlist-search-icon {
+    position: absolute;
+    left: 10px;
+    color: #4A6A70;
+    pointer-events: none;
+}
+
+.watchlist-search {
+    width: 100%;
+    background: #0A0E12;
+    border: 1px solid #1A2A30;
+    border-radius: 6px;
+    padding: 8px 12px 8px 32px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: #D6E5E3;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.watchlist-search::placeholder {
+    color: #3A5A60;
+}
+.watchlist-search:focus {
+    border-color: #00A6B2;
+}
+
+/* Dropdown */
+.watchlist-dropdown {
+    position: absolute;
+    top: calc(100% - 4px);
+    left: 1.25rem;
+    right: 1.25rem;
+    background: #0D1418;
+    border: 1px solid #1A2A30;
+    border-radius: 0 0 6px 6px;
+    z-index: 50;
+    max-height: 280px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.watchlist-dropdown.hidden {
+    display: none;
+}
+
+.watchlist-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-bottom: 1px solid #141E24;
+}
+.watchlist-dropdown-item:last-child {
+    border-bottom: none;
+}
+.watchlist-dropdown-item:hover {
+    background: #1A2A30;
+}
+
+.watchlist-dropdown-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.watchlist-dropdown-add {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: #00A6B2;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.watchlist-dropdown-empty {
+    padding: 16px 12px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: #4A6A70;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Items List */
+.watchlist-items {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.watchlist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 1.25rem;
+    border-bottom: 1px solid #141E24;
+    transition: background 0.15s;
+    animation: watchlistSlideIn 0.25s ease-out;
+}
+.watchlist-item:hover {
+    background: rgba(26, 42, 48, 0.5);
+}
+
+@keyframes watchlistSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.watchlist-item-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.watchlist-item-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #1A2A30, #0D1418);
+    border: 1px solid #2A4A50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: #00A6B2;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    overflow: hidden;
+}
+
+.watchlist-item-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+}
+
+.watchlist-item-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.watchlist-item-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #D6E5E3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.watchlist-item-ticker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: #4A6A70;
+    text-transform: uppercase;
+}
+
+.watchlist-item-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.watchlist-item-data-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    min-width: 0;
+    gap: 1px;
+}
+
+.watchlist-item-data-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    color: #3A5A60;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.watchlist-item-data-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #D6E5E3;
+}
+
+.watchlist-item-change {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    font-weight: 500;
+}
+.watchlist-item-change.up {
+    color: #00E676;
+}
+.watchlist-item-change.down {
+    color: #FF5252;
+}
+
+.watchlist-data-divider {
+    width: 1px;
+    height: 28px;
+    background: #1A2A30;
+    flex-shrink: 0;
+}
+
+/* Star & Remove Buttons */
+.watchlist-star-btn,
+.watchlist-remove-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s, opacity 0.2s;
+    opacity: 0.5;
+}
+.watchlist-item:hover .watchlist-star-btn,
+.watchlist-item:hover .watchlist-remove-btn,
+.watchlist-star-btn.starred {
+    opacity: 1;
+}
+.watchlist-star-btn:hover {
+    transform: scale(1.15);
+}
+.watchlist-remove-btn {
+    color: #4A6A70;
+}
+.watchlist-remove-btn:hover {
+    color: #FF5252;
+    transform: scale(1.15);
+}
+
+/* Empty State */
+.watchlist-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2.5rem 1.5rem;
+    gap: 0.75rem;
+    text-align: center;
+}
+.watchlist-empty.hidden {
+    display: none;
+}
+
+.watchlist-empty-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #4A6A70;
+}
+
+.watchlist-empty-sub {
+    font-size: 0.72rem;
+    color: #3A5A60;
+    line-height: 1.5;
+    max-width: 200px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* ==================== MARKET SUMMARY ==================== */
+.market-summary-section {
+    margin-top: 1.25rem;
+}
+
+.market-summary-btn {
+    font-size: 0.7rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.market-summary-card {
+    transition: border-color 0.2s ease;
+}
+
+.market-summary-story {
+    transition: background-color 0.2s ease;
+}
+.market-summary-story:hover {
+    background-color: rgba(26, 42, 48, 0.2);
+}
+
+.story-content-wrapper {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.market-summary-story button svg {
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.market-summary-logos img {
+    border-radius: 50%;
+    margin-right: -4px;
+    transition: transform 0.2s ease;
+}
+.market-summary-logos img:hover {
+    transform: scale(1.15) translateY(-1px);
+    z-index: 10;
+}
+
+/* ==================== UPCOMING EVENTS ==================== */
+.upcoming-events-section {
+    margin-top: 1.25rem;
+}
+
+.upcoming-events-btn {
+    font-size: 0.7rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.upcoming-event-item {
+    transition: background-color 0.2s ease;
+}
+
+.countdown-ticker {
+    text-shadow: 0 0 8px rgba(0, 166, 178, 0.2);
+}
+
+

@@ -3,41 +3,194 @@
 {% block title %}MIMIR — Dashboard{% endblock %}
 
 {% block content %}
-<div class="w-full lg:w-2/3">
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <!-- Global Sentiment Card -->
-        <div class="card flex flex-col justify-between h-40">
-            <div>
-                <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Global Sentiment</span>
-                <h3 id="sentiment-val" class="text-2xl font-bold mt-2 text-[#D6E5E3]">--</h3>
+<div class="flex flex-col lg:flex-row gap-5">
+    <!-- Left: Dashboard Cards (2/3) -->
+    <div class="w-full lg:w-2/3">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-5">
+            <!-- Global Sentiment Card -->
+            <div class="card flex flex-col justify-between h-40">
+                <div>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Global Sentiment</span>
+                    <h3 id="sentiment-val" class="text-2xl font-bold mt-2 text-[#D6E5E3]">--</h3>
+                </div>
+                <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
+                    <span>Avg Score: <span id="sentiment-score">0.00</span></span>
+                    <span id="sentiment-direction" class="px-2 py-0.5 rounded text-[10px]">--</span>
+                </div>
             </div>
-            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
-                <span>Avg Score: <span id="sentiment-score">0.00</span></span>
-                <span id="sentiment-direction" class="px-2 py-0.5 rounded text-[10px]">--</span>
+
+            <!-- Global Volatility Card -->
+            <div class="card flex flex-col justify-between h-40">
+                <div>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Global Volatility (VIX)</span>
+                    <h3 id="volatility-val" class="text-2xl font-bold mt-2 text-[#D6E5E3]">--</h3>
+                </div>
+                <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
+                    <span>24h Change: <span id="volatility-change">--</span></span>
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-[#111A20] text-[#00A6B2]">INDEX</span>
+                </div>
+            </div>
+
+            <!-- Articles Count Card -->
+            <div class="card flex flex-col justify-between h-40">
+                <div>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Articles (24h)</span>
+                    <h3 id="articles-val" class="text-3xl font-bold mt-2 text-[#00A6B2]">--</h3>
+                </div>
+                <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
+                    <span>By Published Date</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-[#1A2A30] text-[#8A9E9B]">RAW</span>
+                </div>
+            </div>
+            
+            <!-- Top Mover Card -->
+            <div class="card flex flex-col justify-between h-40">
+                <div>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Top Mover (24h)</span>
+                    <h3 id="mover-val" class="text-2xl font-bold mt-1 text-[#D6E5E3]">--</h3>
+                </div>
+                <div class="flex flex-col gap-1 text-xs font-mono border-t border-[#1A2A30] pt-2 mt-2">
+                    <!-- Row 1: Sentiment -->
+                    <div class="flex items-center justify-between">
+                        <span class="text-[#4A6A70]">Sentiment: <span id="mover-sentiment" class="text-[#D6E5E3]">0.00</span></span>
+                        <span id="mover-sentiment-change" class="px-1.5 py-0.5 rounded text-[10px]">--</span>
+                    </div>
+                    <!-- Row 2: Price -->
+                    <div class="flex items-center justify-between">
+                        <span class="text-[#4A6A70]">Price: <span id="mover-price" class="text-[#D6E5E3]">--</span></span>
+                        <span id="mover-change" class="px-1.5 py-0.5 rounded text-[10px]">--</span>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Global Volatility Card -->
-        <div class="card flex flex-col justify-between h-40">
-            <div>
-                <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Global Volatility (VIX)</span>
-                <h3 id="volatility-val" class="text-2xl font-bold mt-2 text-[#D6E5E3]">--</h3>
+        <!-- Market Summary Section -->
+        <div class="market-summary-section mt-5">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Market Summary</h2>
+                    <span id="market-summary-updated" class="text-xs text-[#4A6A70] font-mono hidden">Updated --</span>
+                </div>
+                <button id="market-summary-gen-btn" class="market-summary-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer">
+                    <span id="market-summary-btn-text">Generate Summary</span>
+                    <!-- Loading Spinner (hidden by default) -->
+                    <svg id="market-summary-spinner" class="animate-spin hidden" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25" class="stroke-[#00A6B2]"></circle>
+                        <path d="M12 2a10 10 0 0 1 10 10" class="stroke-[#00A6B2]"></path>
+                    </svg>
+                </button>
             </div>
-            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
-                <span>24h Change: <span id="volatility-change">--</span></span>
-                <span class="px-2 py-0.5 rounded text-[10px] bg-[#111A20] text-[#00A6B2]">INDEX</span>
+            
+            <!-- Summary Container -->
+            <div id="market-summary-container" class="market-summary-card card p-0 overflow-hidden flex flex-col">
+                <!-- Empty State (default) -->
+                <div id="market-summary-empty" class="p-8 text-center flex flex-col items-center justify-center gap-3">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2A4A50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                    <div>
+                        <p class="text-sm font-bold text-[#8A9E9B]">No summary loaded</p>
+                        <p class="text-xs text-[#4A6A70] mt-1 font-mono">Press the generate button to analyze the last 24 hours of market news.</p>
+                    </div>
+                </div>
+
+                <!-- Stories List (populated dynamically) -->
+                <div id="market-summary-stories" class="hidden">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Footer (populated dynamically) -->
+                <div id="market-summary-footer" class="hidden px-5 py-3 bg-[#0c1417] border-t border-[#1A2A30]/30 flex items-center justify-between text-xs text-[#4A6A70] font-mono">
+                    <div class="flex items-center gap-2">
+                        <div id="market-summary-logos" class="flex items-center -space-x-1.5">
+                            <!-- Logos populated by JS -->
+                        </div>
+                        <span id="market-summary-sources-count">-- sources</span>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Articles Count Card -->
-        <div class="card flex flex-col justify-between h-40">
-            <div>
-                <span class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider">Articles (24h)</span>
-                <h3 id="articles-val" class="text-3xl font-bold mt-2 text-[#00A6B2]">--</h3>
+        <!-- Upcoming Events Section -->
+        <div class="upcoming-events-section mt-5">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Upcoming Major Events</h2>
+                    <span id="upcoming-events-syncing" class="text-xs text-[#00A6B2] font-mono hidden">Syncing...</span>
+                </div>
+                <button id="upcoming-events-sync-btn" class="upcoming-events-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer" title="Scan articles to sync upcoming events">
+                    <span id="upcoming-events-btn-text">Scan Events</span>
+                    <!-- Sync icon / loading spinner -->
+                    <svg id="upcoming-events-spinner" class="animate-spin hidden" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25" class="stroke-[#00A6B2]"></circle>
+                        <path d="M12 2a10 10 0 0 1 10 10" class="stroke-[#00A6B2]"></path>
+                    </svg>
+                </button>
             </div>
-            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30] pt-2 mt-4">
-                <span>By Published Date</span>
-                <span class="px-2 py-0.5 rounded text-[10px] bg-[#1A2A30] text-[#8A9E9B]">RAW</span>
+            
+            <!-- Events Card -->
+            <div id="upcoming-events-container" class="upcoming-events-card card p-0 overflow-hidden flex flex-col">
+                <!-- Empty State -->
+                <div id="upcoming-events-empty" class="p-8 text-center flex flex-col items-center justify-center gap-3">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2A4A50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <div>
+                        <p class="text-sm font-bold text-[#8A9E9B]">No upcoming events synced</p>
+                        <p class="text-xs text-[#4A6A70] mt-1 font-mono">Press 'Scan Events' to parse forward-looking events from recent news.</p>
+                    </div>
+                </div>
+
+                <!-- Events List -->
+                <div id="upcoming-events-list" class="hidden divide-y divide-[#1A2A30]/50">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Watchlist Panel (1/3) -->
+    <div class="w-full lg:w-1/3">
+        <div class="watchlist-panel">
+            <!-- Header -->
+            <div class="watchlist-header">
+                <span class="watchlist-title">Create Watchlist</span>
+                <button id="watchlist-settings-btn" class="watchlist-settings-btn" title="Watchlist settings">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>
+                        <line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>
+                        <line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line>
+                        <line x1="17" y1="16" x2="23" y2="16"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Search / Add Ticker -->
+            <div class="watchlist-search-container">
+                <div class="watchlist-search-wrapper">
+                    <svg class="watchlist-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" id="watchlist-search" class="watchlist-search" placeholder="Search ticker to add (e.g. AAPL)" autocomplete="off" spellcheck="false">
+                </div>
+                <div id="watchlist-dropdown" class="watchlist-dropdown hidden"></div>
+            </div>
+
+            <!-- Watchlist Items -->
+            <div id="watchlist-items" class="watchlist-items">
+                <!-- Empty State -->
+                <div id="watchlist-empty" class="watchlist-empty">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#2A4A50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                    </svg>
+                    <p class="watchlist-empty-title">No assets yet</p>
+                    <p class="watchlist-empty-sub">Search for a ticker above to start building your watchlist</p>
+                </div>
             </div>
         </div>
     </div>
@@ -45,15 +198,41 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
+    // ==================== COMMON UTILITIES ====================
+    function getCurrencySymbol(ticker) {
+        if (!ticker || ticker.startsWith('^') || ticker.endsWith('=X')) {
+            return '';
+        }
+        const upper = ticker.toUpperCase();
+        if (upper.endsWith('.BK')) return '฿';
+        if (upper.endsWith('.NS')) return '₹';
+        if (upper.endsWith('.L')) return '£';
+        if (upper.endsWith('.PA') || upper.endsWith('.DE') || upper.endsWith('.FR') || upper.endsWith('.IT') || upper.endsWith('.ES')) return '€';
+        if (upper.endsWith('.KS')) return '₩';
+        if (upper.endsWith('.HK')) return 'HK$';
+        if (upper.endsWith('.TO')) return 'C$';
+        if (upper.endsWith('.AX')) return 'A$';
+        return '$';
+    }
+
+    // ==================== DASHBOARD CARDS ====================
     async function loadDashboardCards() {
         try {
-            // 1. Fetch Global Sentiment & Articles count
+            let topMoverTicker = null;
+            let topMoverSentiment = 0;
+            let topMoverName = '--';
+
+            // 1. Fetch Global Sentiment, Articles count, and Top Mover
             const sentimentRes = await fetch('/api/v1/summary?days=1');
             if (sentimentRes.ok) {
                 const sData = await sentimentRes.json();
                 const avgScore = sData.avg_sentiment;
                 const totalArticles = sData.total_articles;
                 
+                topMoverName = sData.top_mover_name || '--';
+                topMoverTicker = sData.top_mover_ticker;
+                topMoverSentiment = sData.top_mover_sentiment || 0;
+
                 // Render Sentiment
                 const sentValEl = document.getElementById('sentiment-val');
                 const scoreEl = document.getElementById('sentiment-score');
@@ -79,6 +258,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 
                 // Render Articles Count
                 document.getElementById('articles-val').textContent = totalArticles;
+
+                // Render Top Mover Ticker and Sentiment
+                document.getElementById('mover-val').textContent = topMoverTicker ? topMoverTicker.toUpperCase() : topMoverName;
+                document.getElementById('mover-sentiment').textContent = topMoverSentiment.toFixed(2);
+
+                // Render Top Mover Sentiment Change
+                const sentChangeEl = document.getElementById('mover-sentiment-change');
+                const sChange = sData.top_mover_sentiment_change || 0;
+                sentChangeEl.textContent = sChange >= 0 ? `+${sChange.toFixed(1)}%` : `${sChange.toFixed(1)}%`;
+                sentChangeEl.className = sChange >= 0 
+                    ? 'px-1.5 py-0.5 rounded text-[10px] bg-[#00E676]/10 text-[#00E676]' 
+                    : 'px-1.5 py-0.5 rounded text-[10px] bg-[#FF5252]/10 text-[#FF5252]';
             }
             
             // 2. Fetch VIX for Global Volatility
@@ -95,6 +286,38 @@ document.addEventListener('DOMContentLoaded', async () => {
                     changeEl.className = vix.change_percent >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
                 }
             }
+
+            // 3. Fetch Top Mover Price Change (if ticker exists)
+            if (topMoverTicker) {
+                const moverPriceRes = await fetch(`/api/v1/prices/ticker-changes?tickers=${topMoverTicker}`);
+                if (moverPriceRes.ok) {
+                    const mpData = await moverPriceRes.json();
+                    if (mpData.tickers && mpData.tickers.length > 0) {
+                        const mover = mpData.tickers[0];
+                        
+                        // Render Price with Ticker-sensitive Currency
+                        const symbol = getCurrencySymbol(mover.ticker);
+                        const priceFormatted = Number(mover.current_price).toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 4
+                        });
+                        document.getElementById('mover-price').textContent = `${symbol}${priceFormatted}`;
+
+                        // Render Change
+                        const changeEl = document.getElementById('mover-change');
+                        const priceChange = mover.change_percent;
+                        changeEl.textContent = priceChange >= 0 ? `+${priceChange.toFixed(2)}%` : `${priceChange.toFixed(2)}%`;
+                        changeEl.className = priceChange >= 0 
+                            ? 'px-1.5 py-0.5 rounded text-[10px] bg-[#00E676]/10 text-[#00E676]' 
+                            : 'px-1.5 py-0.5 rounded text-[10px] bg-[#FF5252]/10 text-[#FF5252]';
+                    }
+                }
+            } else {
+                document.getElementById('mover-price').textContent = '--';
+                const changeEl = document.getElementById('mover-change');
+                changeEl.textContent = '--';
+                changeEl.className = 'px-1.5 py-0.5 rounded text-[10px] bg-[#1A2A30] text-[#8A9E9B]';
+            }
         } catch (err) {
             console.error('Error loading dashboard cards:', err);
         }
@@ -103,6 +326,730 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadDashboardCards();
     // Refresh cards every 5 minutes
     setInterval(loadDashboardCards, 300000);
+
+    // ==================== WATCHLIST ====================
+    const WATCHLIST_KEY = 'mimir_watchlist';
+    const WATCHLIST_STARRED_KEY = 'mimir_watchlist_starred';
+
+    // Available assets loaded from the database (mimir_sentiment_impacts)
+    let KNOWN_ASSETS = [];
+
+    async function loadAvailableAssets() {
+        try {
+            const res = await fetch('/api/v1/assets');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.assets && data.assets.length > 0) {
+                    KNOWN_ASSETS = data.assets.map(a => ({
+                        ticker: a.ticker,
+                        name: a.name,
+                        mentions: a.mentions
+                    }));
+                    console.log(`[WATCHLIST] Loaded ${KNOWN_ASSETS.length} assets from database`);
+                }
+            }
+        } catch (err) {
+            console.error('Error loading available assets:', err);
+        }
+    }
+
+    function getWatchlist() {
+        try {
+            return JSON.parse(localStorage.getItem(WATCHLIST_KEY)) || [];
+        } catch { return []; }
+    }
+
+    function saveWatchlist(list) {
+        localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+    }
+
+    function getStarred() {
+        try {
+            return JSON.parse(localStorage.getItem(WATCHLIST_STARRED_KEY)) || [];
+        } catch { return []; }
+    }
+
+    function saveStarred(list) {
+        localStorage.setItem(WATCHLIST_STARRED_KEY, JSON.stringify(list));
+    }
+
+    function addToWatchlist(ticker) {
+        const list = getWatchlist();
+        const upper = ticker.toUpperCase();
+        if (!list.includes(upper)) {
+            list.push(upper);
+            saveWatchlist(list);
+        }
+        renderWatchlist();
+        loadWatchlistPrices();
+        loadWatchlistSentiment();
+        loadWatchlistTickerInfo();
+    }
+
+    function removeFromWatchlist(ticker) {
+        let list = getWatchlist();
+        list = list.filter(t => t !== ticker);
+        saveWatchlist(list);
+        // Also remove from starred
+        let starred = getStarred();
+        starred = starred.filter(t => t !== ticker);
+        saveStarred(starred);
+        renderWatchlist();
+    }
+
+    function toggleStar(ticker) {
+        let starred = getStarred();
+        if (starred.includes(ticker)) {
+            starred = starred.filter(t => t !== ticker);
+        } else {
+            starred.push(ticker);
+        }
+        saveStarred(starred);
+        renderWatchlist();
+    }
+
+    // Price cache for watchlist items
+    let watchlistPriceData = {};
+    // Sentiment cache for watchlist items
+    let watchlistSentimentData = {};
+    // Ticker info cache: {TICKER: {logo_url, short_name}} persisted to localStorage
+    const TICKER_INFO_CACHE_KEY = 'mimir_ticker_info_cache';
+
+    function getTickerInfoCache() {
+        try {
+            return JSON.parse(localStorage.getItem(TICKER_INFO_CACHE_KEY)) || {};
+        } catch { return {}; }
+    }
+
+    function saveTickerInfoCache(cache) {
+        localStorage.setItem(TICKER_INFO_CACHE_KEY, JSON.stringify(cache));
+    }
+
+    async function loadWatchlistTickerInfo() {
+        const list = getWatchlist();
+        if (list.length === 0) return;
+
+        const cached = getTickerInfoCache();
+        const uncached = list.filter(t => 
+            !(t in cached) || 
+            !('long_name' in cached[t]) || 
+            (cached[t].logo_url && !cached[t].logo_url.includes('perplexity.ai'))
+        );
+        if (uncached.length === 0) return;
+
+        try {
+            const tickerParam = uncached.join(',');
+            const res = await fetch(`/api/v1/prices/logos?tickers=${tickerParam}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.tickers) {
+                    const updated = { ...cached, ...data.tickers };
+                    saveTickerInfoCache(updated);
+                    renderWatchlist();
+                }
+            }
+        } catch (err) {
+            console.error('Error loading ticker info:', err);
+        }
+    }
+
+    async function loadWatchlistPrices() {
+        const list = getWatchlist();
+        if (list.length === 0) return;
+
+        try {
+            const tickerParam = list.join(',');
+            const res = await fetch(`/api/v1/prices/ticker-changes?tickers=${tickerParam}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.tickers) {
+                    data.tickers.forEach(t => {
+                        watchlistPriceData[t.ticker] = t;
+                    });
+                }
+                renderWatchlist();
+            }
+        } catch (err) {
+            console.error('Error loading watchlist prices:', err);
+        }
+    }
+
+    async function loadWatchlistSentiment() {
+        const list = getWatchlist();
+        if (list.length === 0) return;
+
+        try {
+            const tickerParam = list.join(',');
+            const res = await fetch(`/api/v1/ticker-sentiments?tickers=${tickerParam}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.tickers) {
+                    data.tickers.forEach(t => {
+                        watchlistSentimentData[t.ticker] = t;
+                    });
+                }
+                renderWatchlist();
+            }
+        } catch (err) {
+            console.error('Error loading watchlist sentiment:', err);
+        }
+    }
+
+    function getAssetInfo(ticker) {
+        return KNOWN_ASSETS.find(a => a.ticker === ticker) || { ticker, name: ticker };
+    }
+
+    function renderWatchlist() {
+        const container = document.getElementById('watchlist-items');
+        const emptyEl = document.getElementById('watchlist-empty');
+        const list = getWatchlist();
+        const starred = getStarred();
+        const tickerInfoCache = getTickerInfoCache();
+        const headerEl = document.querySelector('.watchlist-title');
+
+        // Update header title if items exist
+        if (list.length > 0) {
+            headerEl.textContent = `Watchlist (${list.length})`;
+        } else {
+            headerEl.textContent = 'Create Watchlist';
+        }
+
+        // Clear existing items (keep empty state element)
+        container.querySelectorAll('.watchlist-item').forEach(el => el.remove());
+
+        if (list.length === 0) {
+            emptyEl.classList.remove('hidden');
+            return;
+        }
+
+        emptyEl.classList.add('hidden');
+
+        // Sort: starred first, then alphabetical within each group
+        const sorted = [...list].sort((a, b) => {
+            const aStarred = starred.includes(a);
+            const bStarred = starred.includes(b);
+            if (aStarred && !bStarred) return -1;
+            if (!aStarred && bStarred) return 1;
+            return a.localeCompare(b);
+        });
+
+        sorted.forEach(ticker => {
+            const info = getAssetInfo(ticker);
+            const priceData = watchlistPriceData[ticker];
+            const sentData = watchlistSentimentData[ticker];
+            const isStarred = starred.includes(ticker);
+            const tickerInfo = tickerInfoCache[ticker] || {};
+            const logoUrl = tickerInfo.logo_url || '';
+            const longName = tickerInfo.long_name || '';
+
+            // Display name: prefer yfinance longName, fallback to DB asset_name, then raw ticker
+            const displayName = longName || info.name || ticker;
+
+            // Build icon HTML: use logo img if available, else fallback to text
+            const iconInner = logoUrl
+                ? `<img src="${logoUrl}" alt="${ticker}" onerror="this.parentElement.innerHTML='${ticker.substring(0, 2)}'">`
+                : ticker.substring(0, 2);
+
+            // Price formatting
+            const priceStr = priceData
+                ? getCurrencySymbol(ticker) + Number(priceData.current_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : '—';
+            const priceChangeStr = priceData
+                ? (priceData.change_percent >= 0 ? '+' : '') + priceData.change_percent.toFixed(2) + '%'
+                : '—';
+            const priceChangeClass = priceData ? (priceData.change_percent >= 0 ? 'up' : 'down') : '';
+
+            // Sentiment formatting
+            const sentStr = sentData && sentData.current_sentiment !== null
+                ? sentData.current_sentiment.toFixed(2)
+                : '—';
+            const sentChangeStr = sentData && sentData.sentiment_change_percent !== null
+                ? (sentData.sentiment_change_percent >= 0 ? '+' : '') + sentData.sentiment_change_percent.toFixed(1) + '%'
+                : '—';
+            const sentChangeClass = sentData && sentData.sentiment_change_percent !== null
+                ? (sentData.sentiment_change_percent >= 0 ? 'up' : 'down')
+                : '';
+
+            const item = document.createElement('div');
+            item.className = 'watchlist-item';
+            item.innerHTML = `
+                <div class="watchlist-item-left">
+                    <div class="watchlist-item-icon">${iconInner}</div>
+                    <div class="watchlist-item-info">
+                        <span class="watchlist-item-name">${displayName}</span>
+                        <span class="watchlist-item-ticker">${ticker}</span>
+                    </div>
+                </div>
+                <div class="watchlist-item-right">
+                    <div class="watchlist-item-data-col">
+                        <span class="watchlist-item-data-label">Price</span>
+                        <span class="watchlist-item-data-val">${priceStr}</span>
+                        <span class="watchlist-item-change ${priceChangeClass}">${priceChangeStr}</span>
+                    </div>
+                    <div class="watchlist-data-divider"></div>
+                    <div class="watchlist-item-data-col">
+                        <span class="watchlist-item-data-label">Sentiment</span>
+                        <span class="watchlist-item-data-val">${sentStr}</span>
+                        <span class="watchlist-item-change ${sentChangeClass}">${sentChangeStr}</span>
+                    </div>
+                    <button class="watchlist-star-btn ${isStarred ? 'starred' : ''}" data-ticker="${ticker}" title="${isStarred ? 'Unstar' : 'Star'}">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="${isStarred ? '#FFD740' : 'none'}" stroke="${isStarred ? '#FFD740' : '#4A6A70'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                        </svg>
+                    </button>
+                    <button class="watchlist-remove-btn" data-ticker="${ticker}" title="Remove from watchlist">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            container.appendChild(item);
+        });
+
+        // Attach event listeners
+        container.querySelectorAll('.watchlist-star-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleStar(btn.dataset.ticker);
+            });
+        });
+        container.querySelectorAll('.watchlist-remove-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                removeFromWatchlist(btn.dataset.ticker);
+            });
+        });
+    }
+
+    // ==================== SEARCH DROPDOWN ====================
+    const searchInput = document.getElementById('watchlist-search');
+    const dropdown = document.getElementById('watchlist-dropdown');
+    let searchTimeout = null;
+
+    searchInput.addEventListener('input', () => {
+        clearTimeout(searchTimeout);
+        const query = searchInput.value.trim().toUpperCase();
+        
+        if (query.length === 0) {
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+            return;
+        }
+
+        searchTimeout = setTimeout(() => {
+            const watchlist = getWatchlist();
+            const results = KNOWN_ASSETS.filter(a => 
+                (a.ticker.includes(query) || a.name.toUpperCase().includes(query)) && 
+                !watchlist.includes(a.ticker)
+            ).slice(0, 6);
+
+            if (results.length === 0) {
+                // Allow adding custom tickers not in the known list
+                if (query.length >= 1 && !watchlist.includes(query)) {
+                    dropdown.innerHTML = `
+                        <div class="watchlist-dropdown-item" data-ticker="${query}">
+                            <div class="watchlist-dropdown-left">
+                                <div class="watchlist-item-icon">${query.substring(0, 2)}</div>
+                                <div class="watchlist-item-info">
+                                    <span class="watchlist-item-name">${query}</span>
+                                    <span class="watchlist-item-ticker">Add custom ticker</span>
+                                </div>
+                            </div>
+                            <span class="watchlist-dropdown-add">+ Add</span>
+                        </div>
+                    `;
+                } else {
+                    dropdown.innerHTML = '<div class="watchlist-dropdown-empty">No results found</div>';
+                }
+            } else {
+                dropdown.innerHTML = results.map(a => `
+                    <div class="watchlist-dropdown-item" data-ticker="${a.ticker}">
+                        <div class="watchlist-dropdown-left">
+                            <div class="watchlist-item-icon">${a.ticker.substring(0, 2)}</div>
+                            <div class="watchlist-item-info">
+                                <span class="watchlist-item-name">${a.name}</span>
+                                <span class="watchlist-item-ticker">${a.ticker} · ${a.mentions} mentions</span>
+                            </div>
+                        </div>
+                        <span class="watchlist-dropdown-add">+ Add</span>
+                    </div>
+                `).join('');
+            }
+
+            dropdown.classList.remove('hidden');
+
+            // Attach click to dropdown items
+            dropdown.querySelectorAll('.watchlist-dropdown-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    addToWatchlist(item.dataset.ticker);
+                    searchInput.value = '';
+                    dropdown.classList.add('hidden');
+                    dropdown.innerHTML = '';
+                });
+            });
+        }, 150);
+    });
+
+    // Close dropdown on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.watchlist-search-container')) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    // Enter key to add first result or custom ticker
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            const firstItem = dropdown.querySelector('.watchlist-dropdown-item');
+            if (firstItem) {
+                addToWatchlist(firstItem.dataset.ticker);
+                searchInput.value = '';
+                dropdown.classList.add('hidden');
+                dropdown.innerHTML = '';
+            }
+        }
+        if (e.key === 'Escape') {
+            dropdown.classList.add('hidden');
+            searchInput.blur();
+        }
+    });
+
+    // Load available assets from DB, then render watchlist and fetch all data
+    await loadAvailableAssets();
+    renderWatchlist();
+    loadWatchlistPrices();
+    loadWatchlistSentiment();
+    loadWatchlistTickerInfo();
+
+    // Refresh watchlist data every 5 minutes
+    setInterval(() => {
+        loadWatchlistPrices();
+        loadWatchlistSentiment();
+    }, 300000);
+
+    // ==================== MARKET SUMMARY ====================
+    const summaryContainer = document.getElementById('market-summary-container');
+    const summaryEmpty = document.getElementById('market-summary-empty');
+    const summaryStories = document.getElementById('market-summary-stories');
+    const summaryFooter = document.getElementById('market-summary-footer');
+    const summaryLogos = document.getElementById('market-summary-logos');
+    const summarySourcesCount = document.getElementById('market-summary-sources-count');
+    const summaryUpdated = document.getElementById('market-summary-updated');
+    const summaryGenBtn = document.getElementById('market-summary-gen-btn');
+    const summaryBtnText = document.getElementById('market-summary-btn-text');
+    const summarySpinner = document.getElementById('market-summary-spinner');
+
+    let summaryUpdatedAtStr = null;
+    let timeIntervalId = null;
+
+    function startRelativeTimeCounter(isoString) {
+        if (timeIntervalId) clearInterval(timeIntervalId);
+        summaryUpdatedAtStr = isoString;
+        updateTimeText();
+        timeIntervalId = setInterval(updateTimeText, 60000);
+    }
+
+    function updateTimeText() {
+        if (!summaryUpdatedAtStr) return;
+        summaryUpdated.textContent = `Updated ${formatRelativeTime(summaryUpdatedAtStr)}`;
+        summaryUpdated.classList.remove('hidden');
+    }
+
+    function formatRelativeTime(isoString) {
+        const date = new Date(isoString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMins / 60);
+        
+        if (diffMins < 1) return 'just now';
+        if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+        if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+        return date.toLocaleDateString();
+    }
+
+    // Toggle story accordion
+    window.toggleMarketStory = function(button) {
+        const wrapper = button.nextElementSibling;
+        const svg = button.querySelector('svg');
+        const isExpanded = wrapper.classList.contains('expanded');
+        
+        // Collapse all stories first
+        document.querySelectorAll('.story-content-wrapper').forEach(w => {
+            w.style.maxHeight = null;
+            w.classList.remove('expanded');
+        });
+        document.querySelectorAll('.market-summary-story svg').forEach(s => {
+            s.classList.remove('rotate-180');
+        });
+        
+        // If not already expanded, expand the clicked one
+        if (!isExpanded) {
+            wrapper.classList.add('expanded');
+            wrapper.style.maxHeight = wrapper.scrollHeight + 'px';
+            svg.classList.add('rotate-180');
+        }
+    };
+
+    function renderSummary(summary) {
+        if (!summary || !summary.stories || summary.stories.length === 0) {
+            summaryEmpty.classList.remove('hidden');
+            summaryStories.classList.add('hidden');
+            summaryFooter.classList.add('hidden');
+            summaryUpdated.classList.add('hidden');
+            return;
+        }
+
+        // Render stories list
+        summaryStories.innerHTML = summary.stories.map((story, idx) => `
+            <div class="market-summary-story border-[#1A2A30]/30 border-b last:border-b-0">
+                <button class="w-full flex items-center justify-between text-left p-4 focus:outline-none hover:bg-[#0c1417]/20 transition-colors" onclick="toggleMarketStory(this)">
+                    <span class="text-sm font-semibold text-[#D6E5E3] leading-relaxed transition-colors hover:text-[#00A6B2]">${story.title}</span>
+                    <svg class="w-3.5 h-3.5 text-[#4A6A70] transform transition-transform duration-200 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </button>
+                <div class="story-content-wrapper overflow-hidden transition-all duration-300 ease-in-out" style="max-height: 0px;">
+                    <div class="text-xs text-[#8A9E9B] leading-relaxed px-4 pb-4 pt-1">
+                        ${story.content}
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        // Render sources and logos
+        if (summary.sources && summary.sources.length > 0) {
+            summaryLogos.innerHTML = summary.sources.slice(0, 3).map(source => `
+                <img class="w-4 h-4 rounded-full border border-[#0b1216] bg-[#1A2A30] object-cover" 
+                     src="https://www.google.com/s2/favicons?sz=32&domain=${source}" 
+                     alt="${source}"
+                     onerror="this.style.display='none'">
+            `).join('');
+            summarySourcesCount.textContent = `${summary.sources_count} sources`;
+            summaryFooter.classList.remove('hidden');
+        } else {
+            summaryFooter.classList.add('hidden');
+        }
+
+        // Show stories, hide empty state
+        summaryEmpty.classList.add('hidden');
+        summaryStories.classList.remove('hidden');
+
+        // Start relative update time text
+        startRelativeTimeCounter(summary.created_at);
+        summaryBtnText.textContent = 'Regenerate Summary';
+    }
+
+    async function loadMarketSummary() {
+        try {
+            const res = await fetch('/api/v1/market-summary');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'success' && data.summary) {
+                    renderSummary(data.summary);
+                } else {
+                    renderSummary(null);
+                }
+            }
+        } catch (err) {
+            console.error('Error loading market summary:', err);
+        }
+    }
+
+    summaryGenBtn.addEventListener('click', async () => {
+        // Toggle loading state
+        summaryGenBtn.disabled = true;
+        summarySpinner.classList.remove('hidden');
+        summaryBtnText.textContent = 'Generating...';
+
+        try {
+            const res = await fetch('/api/v1/market-summary/generate', {
+                method: 'POST'
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'success' && data.summary) {
+                    renderSummary(data.summary);
+                } else {
+                    alert('Failed to generate summary: Empty response');
+                }
+            } else {
+                const errorData = await res.json();
+                alert(`Failed to generate summary: ${errorData.detail || res.statusText}`);
+            }
+        } catch (err) {
+            console.error('Error generating market summary:', err);
+            alert('An error occurred while generating the summary.');
+        } finally {
+            summarySpinner.classList.add('hidden');
+            summaryGenBtn.disabled = false;
+            summaryBtnText.textContent = summaryStories.classList.contains('hidden') ? 'Generate Summary' : 'Regenerate Summary';
+        }
+    });
+
+    // Load summary on startup
+    loadMarketSummary();
+
+    // ==================== UPCOMING EVENTS ====================
+    const eventsContainer = document.getElementById('upcoming-events-container');
+    const eventsEmpty = document.getElementById('upcoming-events-empty');
+    const eventsList = document.getElementById('upcoming-events-list');
+    const eventsSyncBtn = document.getElementById('upcoming-events-sync-btn');
+    const eventsBtnText = document.getElementById('upcoming-events-btn-text');
+    const eventsSpinner = document.getElementById('upcoming-events-spinner');
+
+    let countdownIntervalId = null;
+
+    function startCountdownTimer() {
+        if (countdownIntervalId) clearInterval(countdownIntervalId);
+        
+        updateCountdowns();
+        countdownIntervalId = setInterval(updateCountdowns, 1000);
+    }
+
+    function updateCountdowns() {
+        const rows = document.querySelectorAll('.upcoming-event-item');
+        if (rows.length === 0) return;
+        
+        const now = new Date().getTime();
+        
+        rows.forEach(row => {
+            const eventTimeStr = row.getAttribute('data-time');
+            if (!eventTimeStr) return;
+            
+            const eventTime = new Date(eventTimeStr).getTime();
+            const diff = eventTime - now;
+            const tickerEl = row.querySelector('.countdown-ticker');
+            
+            if (!tickerEl) return;
+            
+            if (diff > 0) {
+                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                
+                const dStr = String(days).padStart(2, '0');
+                const hStr = String(hours).padStart(2, '0');
+                const mStr = String(minutes).padStart(2, '0');
+                const sStr = String(seconds).padStart(2, '0');
+                
+                tickerEl.textContent = `${dStr}d : ${hStr}h : ${mStr}m : ${sStr}s`;
+                tickerEl.className = 'countdown-ticker font-mono text-xs md:text-sm font-bold text-[#00A6B2] tracking-wider mt-0.5 whitespace-nowrap';
+            } else {
+                const twoHoursMs = 2 * 60 * 60 * 1000;
+                if (Math.abs(diff) < twoHoursMs) {
+                    tickerEl.textContent = 'IN PROGRESS';
+                    tickerEl.className = 'countdown-ticker font-mono text-xs font-bold text-[#FFD740] tracking-wider mt-0.5 whitespace-nowrap animate-pulse';
+                } else {
+                    tickerEl.textContent = 'COMPLETED';
+                    tickerEl.className = 'countdown-ticker font-mono text-[10px] font-semibold text-[#4A6A70] tracking-wider mt-0.5 whitespace-nowrap';
+                }
+            }
+        });
+    }
+
+    function renderUpcomingEvents(events) {
+        if (!events || events.length === 0) {
+            eventsEmpty.classList.remove('hidden');
+            eventsList.classList.add('hidden');
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+            return;
+        }
+
+        eventsList.innerHTML = events.map(event => {
+            let importanceColor = '#00E676'; // Medium
+            let importanceBg = 'bg-[#00E676]/10';
+            let importanceText = 'text-[#00E676]';
+            
+            if (event.importance === 'CRITICAL') {
+                importanceColor = '#FF5252';
+                importanceBg = 'bg-[#FF5252]/10';
+                importanceText = 'text-[#FF5252]';
+            } else if (event.importance === 'HIGH') {
+                importanceColor = '#FF9100';
+                importanceBg = 'bg-[#FF9100]/10';
+                importanceText = 'text-[#FF9100]';
+            }
+            
+            return `
+                <div class="upcoming-event-item p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 hover:bg-[#0c1417]/20 transition-colors" data-time="${event.event_time}">
+                    <div class="flex items-start gap-3 flex-1 min-w-0">
+                        <div class="w-1 self-stretch rounded-full" style="background-color: ${importanceColor}; min-height: 24px;"></div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap mb-1">
+                                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${importanceBg} ${importanceText} font-bold">${event.importance}</span>
+                                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1A2A30] text-[#8A9E9B] uppercase">${event.category}</span>
+                                <span class="text-[10px] text-[#4A6A70] font-mono">${new Date(event.event_time).toLocaleDateString()} ${new Date(event.event_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                            </div>
+                            <h4 class="text-sm font-semibold text-[#D6E5E3] leading-snug">${event.title}</h4>
+                            <p class="text-xs text-[#8A9E9B] mt-1">${event.description}</p>
+                        </div>
+                    </div>
+                    <div class="flex flex-col items-start md:items-end justify-center flex-shrink-0">
+                        <span class="text-[9px] text-[#4A6A70] font-mono uppercase tracking-wider">Countdown</span>
+                        <span class="countdown-ticker font-mono text-xs md:text-sm font-bold text-[#00A6B2] tracking-wider mt-0.5 whitespace-nowrap">--d : --h : --m : --s</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        eventsEmpty.classList.add('hidden');
+        eventsList.classList.remove('hidden');
+
+        // Start countdown timer loop
+        startCountdownTimer();
+    }
+
+    async function loadUpcomingEvents() {
+        try {
+            const res = await fetch('/api/v1/upcoming-events');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'success' && data.events && data.events.length > 0) {
+                    renderUpcomingEvents(data.events);
+                } else {
+                    renderUpcomingEvents(null);
+                }
+            }
+        } catch (err) {
+            console.error('Error loading upcoming events:', err);
+        }
+    }
+
+    eventsSyncBtn.addEventListener('click', async () => {
+        eventsSyncBtn.disabled = true;
+        eventsSpinner.classList.remove('hidden');
+        eventsBtnText.textContent = 'Scanning...';
+
+        try {
+            const res = await fetch('/api/v1/upcoming-events/generate', {
+                method: 'POST'
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'success' && data.events) {
+                    renderUpcomingEvents(data.events);
+                } else {
+                    alert('Failed to sync events: Empty response');
+                }
+            } else {
+                const errorData = await res.json();
+                alert(`Failed to sync events: ${errorData.detail || res.statusText}`);
+            }
+        } catch (err) {
+            console.error('Error syncing upcoming events:', err);
+            alert('An error occurred while syncing events.');
+        } finally {
+            eventsSpinner.classList.add('hidden');
+            eventsSyncBtn.disabled = false;
+            eventsBtnText.textContent = 'Scan Events';
+        }
+    });
+
+    // Load events on startup
+    loadUpcomingEvents();
 });
 </script>
 {% endblock %}

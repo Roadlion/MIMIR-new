@@ -1,5 +1,5 @@
 # backend/app/sentiment/asset_mapper.py
-# (No config import needed, just the mapping dictionaries)
+from typing import Optional
 
 # Country code mapping (ISO 3166-1 alpha-2)
 COUNTRY_TO_CODE = {
@@ -257,6 +257,7 @@ ASSET_TO_TICKER = {
     "diageo": "DEO",
     "glencore": "GLNCY",
     "endeavour": "EDV",
+    "gulf": "GULF.BK",
     # ... existing ...
     "united parks & resorts": "PRKS",
     "lucid group": "LCID",
@@ -278,12 +279,143 @@ ASSET_TO_TICKER = {
     "exodus movement": "EXOD",
 }
 
+_DYNAMIC_TICKERS = {}
+
+def load_dynamic_tickers():
+    """Load dynamic ticker mappings from the database."""
+    global _DYNAMIC_TICKERS
+    try:
+        from backend.app.database import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT asset_name, ticker FROM yggdrasil.mimir_dynamic_tickers")
+        rows = cur.fetchall()
+        for row in rows:
+            _DYNAMIC_TICKERS[row[0].lower().strip()] = row[1]
+        cur.close()
+        conn.close()
+    except Exception as e:
+        # Avoid blocking if database connection fails or table doesn't exist yet
+        pass
+
+# Initialize cache
+try:
+    load_dynamic_tickers()
+except Exception:
+    pass
+
+def resolve_ticker_online(asset_name: str) -> Optional[str]:
+    """
+    Search Yahoo Finance API for a matching ticker for the given asset name.
+    Saves the mapping to database and internal cache if found.
+    """
+    if not asset_name:
+        return None
+    
+    clean_name = asset_name.strip()
+    # Don't search for broad terms
+    if clean_name.lower() in [
+        "s&p 500", "nasdaq", "us economy", "global economy", 
+        "thai economy", "china economy", "india economy", "uk economy",
+        "geopolitical risk", "risk-on", "risk-off"
+    ]:
+        return None
+        
+    print(f"[ASSET_MAPPER] Resolving '{clean_name}' online via Yahoo Finance...")
+    try:
+        import urllib3
+        import requests
+        
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={requests.utils.quote(clean_name)}&lang=en-US&region=US"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        resp = requests.get(url, headers=headers, verify=False, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        quotes = data.get("quotes", [])
+        
+        if not quotes:
+            print(f"[ASSET_MAPPER] No online quotes found for '{clean_name}'")
+            return None
+            
+        valid_types = {"EQUITY", "ETF", "INDEX", "CRYPTOCURRENCY"}
+        filtered = [q for q in quotes if q.get("quoteType") in valid_types]
+        if not filtered:
+            filtered = quotes
+            
+        best_quote = None
+        best_score = -1
+        
+        for q in filtered:
+            symbol = q.get("symbol", "")
+            if not symbol:
+                continue
+                
+            score = 0
+            if "." not in symbol:
+                score += 10
+            exchange = q.get("exchange", "")
+            if exchange in {"NMS", "NYQ", "NYS", "NGM", "PCX"}:
+                score += 5
+                
+            if score > best_score:
+                best_score = score
+                best_quote = q
+                
+        if best_quote:
+            ticker = best_quote["symbol"]
+            print(f"[ASSET_MAPPER] Resolved '{clean_name}' -> {ticker} (Type: {best_quote.get('quoteType')})")
+            
+            # Save to Database
+            try:
+                from backend.app.database import get_db_connection
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO yggdrasil.mimir_dynamic_tickers (asset_name, ticker)
+                    VALUES (%s, %s)
+                    ON CONFLICT (asset_name) DO UPDATE SET ticker = EXCLUDED.ticker
+                """, (clean_name, ticker))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as dbe:
+                print(f"[ASSET_MAPPER] Database write error: {dbe}")
+                
+            _DYNAMIC_TICKERS[clean_name.lower().strip()] = ticker
+            return ticker
+            
+    except Exception as e:
+        print(f"[ASSET_MAPPER] Online lookup error for '{clean_name}': {e}")
+        
+    return None
+
 def resolve_ticker(asset_name: str):
-    """Return (ticker, found)."""
+    """Return (ticker, found). Checks static mappings, dynamic DB cache, and online lookup."""
+    from typing import Optional
     if not asset_name:
         return (None, False)
-    ticker = ASSET_TO_TICKER.get(asset_name.lower().strip())
-    return (ticker, ticker is not None)
+        
+    key = asset_name.lower().strip()
+    
+    # 1. Check static mapping
+    ticker = ASSET_TO_TICKER.get(key)
+    if ticker:
+        return (ticker, True)
+        
+    # 2. Check dynamic cache
+    ticker = _DYNAMIC_TICKERS.get(key)
+    if ticker:
+        return (ticker, True)
+        
+    # 3. Try online lookup
+    ticker = resolve_ticker_online(asset_name)
+    if ticker:
+        return (ticker, True)
+        
+    return (None, False)
 
 def resolve_country_code(country_name: str):
     """Convert full country name to ISO code."""

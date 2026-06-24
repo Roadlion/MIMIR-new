@@ -1,4 +1,13 @@
 # backend/app/scrapers/rss_scraper.py
+import sys
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
+import warnings
 import feedparser
 import requests
 import time
@@ -10,8 +19,14 @@ import psycopg2
 from psycopg2.extras import execute_values
 from backend.app.database import get_db_connection
 
-# --- RSS FEEDS (same as before) ---
+# ponytail: conda OpenSSL can't verify certs on this machine; skip SSL for dev scraping
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+_SCRAPER_SESSION = requests.Session()
+_SCRAPER_SESSION.verify = False
+
 FINANCIAL_RSS_FEEDS = [
+    # --- Regional Financial News (Thailand/Asia) ---
     "https://www.bangkokpost.com/rss/data/business.xml",
     "https://thestandard.co/category/wealth/feed/",
     "https://www.kaohoon.com/feed",
@@ -19,22 +34,6 @@ FINANCIAL_RSS_FEEDS = [
     "https://www.thansettakij.com/rss/feed/money_market",
     "https://www.scb.co.th/en/about-us/news/rss.xml",
     "https://www.dealstreetasia.com/feed",
-    "https://finance.yahoo.com/news/rss",
-    "http://feeds.reuters.com/reuters/businessNews",
-    "http://feeds.reuters.com/reuters/financialsNews",
-    "http://feeds.marketwatch.com/marketwatch/topstories",
-    "http://feeds.marketwatch.com/marketwatch/marketpulse",
-    "https://www.ft.com/?format=rss",
-    "https://www.ft.com/companies?format=rss",
-    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",
-    "https://seekingalpha.com/feed.xml",
-    "https://www.investing.com/rss/news_285.rss",
-    "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
-    "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
-    "https://www.economist.com/finance-and-economics/rss.xml",
-    "https://techcrunch.com/feed/",
-    "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "https://cointelegraph.com/rss",
     "https://asia.nikkei.com/rss/feed/nar",
     "https://asia.nikkei.com/rss/feed/business",
     "https://asia.nikkei.com/rss/feed/markets",
@@ -45,14 +44,75 @@ FINANCIAL_RSS_FEEDS = [
     "https://www.scmp.com/rss/318206/feed",
     "https://www.thehindubusinessline.com/?service=rss",
     "https://economictimes.indiatimes.com/rssfeedsdefault.cms",
+    "https://www.caixinglobal.com/rss/", # Caixin Global (China)
+    "https://www.moneycontrol.com/rss/MC_latestnews.xml", # India Finance
+    "https://mainichi.jp/english/rss/etc/business.xml", # Japan Business
+
+    # --- Regional Financial News (Other Regions) ---
+    "https://www.smh.com.au/rss/business.xml", # Sydney Morning Herald (Australia)
+    "https://lataminvestor.com/feed/", # LatAm Investor (Latin America)
+    "https://african.business/feed/", # African Business (Africa)
+    "https://financialpost.com/feed/", # Financial Post (Canada)
+    "https://www.telegraph.co.uk/business/rss.xml", # UK Business
+    "https://www.euractiv.com/sections/economy-jobs/feed/", # EU Economy & Jobs
+    "https://www.economist.com/the-americas/rss.xml", # LatAm Economist
+    "https://www.zawya.com/en/rss/all-news", # Middle East Business
+    "https://www.arabianbusiness.com/feed", # Arabian Business Middle East
+
+    # --- General Financial / Markets News ---
+    "https://finance.yahoo.com/news/rss",
+    "http://feeds.reuters.com/reuters/businessNews",
+    "http://feeds.reuters.com/reuters/financialsNews",
+    "http://feeds.marketwatch.com/marketwatch/topstories",
+    "http://feeds.marketwatch.com/marketwatch/marketpulse",
+    "https://www.ft.com/?format=rss",
+    "https://www.ft.com/companies?format=rss",
+    "https://www.ft.com/world?format=rss",
+    "https://www.ft.com/global-economy?format=rss",
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",
+    "https://www.cnbc.com/id/10000067/device/rss/rss.xml", # CNBC Finance
+    "https://www.cnbc.com/id/100003114/device/rss/rss.xml", # CNBC Top News
+    "https://www.cnbc.com/id/10001147/device/rss/rss.xml", # CNBC Markets
+    "https://seekingalpha.com/feed.xml",
+    "https://www.investing.com/rss/news_285.rss",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+    "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml", # WSJ US Business
+    "https://feeds.a.dj.com/rss/RSSOpinion.xml", # WSJ Opinion
+    "https://www.economist.com/finance-and-economics/rss.xml",
+    "https://techcrunch.com/feed/",
     "https://www.bloomberg.com/feeds/bproperty.xml",
     "https://www.theguardian.com/business/rss",
     "https://www.cnbc.com/id/19794221/device/rss/rss.xml",
     "https://www.cnbc.com/id/10000115/device/rss/rss.xml",
     "https://www.forbes.com/business/feed/",
     "https://www.forbes.com/money/feed/",
-    "https://www.nasdaq.com/feed/rssoutbound?category=Markets"
+    "https://www.nasdaq.com/feed/rssoutbound?category=Markets",
+
+    # --- Crypto / Digital Assets News ---
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://cointelegraph.com/rss",
+    "https://bitcoinmagazine.com/.rss/full/", # Bitcoin Magazine
+    "https://cryptonews.com/news/feed/", # Cryptonews
+    "https://www.cryptoglobe.com/latest/feed/", # CryptoGlobe
+    "https://coinjournal.net/news/feed/", # CoinJournal
+    "https://blockworks.co/feed", # Blockworks
+    "https://decrypt.co/feed", # Decrypt
+    "https://www.theblock.co/rss.xml", # The Block
+    "https://cryptoslate.com/feed", # CryptoSlate
+
+    # --- Macroeconomic Policy / Geopolitics / Breaking News ---
+    "https://www.federalreserve.gov/feeds/press_all.xml", # Federal Reserve (Rates & Decisions)
+    "https://www.ecb.europa.eu/press/pr/shared/pdf/ecb.pr.rss.xml", # European Central Bank Press Releases
+    "https://www.bankofengland.co.uk/rss/news", # Bank of England News
+    "https://www.imf.org/en/News/RSSFeeds/PressReleases", # IMF Press Releases
+    "https://services.reuters.com/info/us/num/world.xml", # Reuters World News
+    "http://feeds.bbci.co.uk/news/world/rss.xml", # BBC World News (Geopolitical conflicts)
+    "https://newsfeed.ap.org/rss/v2/featured", # AP Top News
+    "https://feeds.a.dj.com/rss/RSSWorldNews.xml", # WSJ World News
+    "https://www.aljazeera.com/xml/rss/all.xml" # Al Jazeera (Geopolitical events)
 ]
+
 
 def get_existing_title_hashes():
     """Fetch all title hashes currently in the database."""
@@ -103,7 +163,7 @@ def fetch_financial_feed_batch(feeds_list=FINANCIAL_RSS_FEEDS):
             domain = urlparse(url).netloc
             total_feeds += 1
 
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = _SCRAPER_SESSION.get(url, headers=headers, timeout=10)
             if resp.status_code == 429:
                 print(f"⚠️ Rate limited on {domain}. Sleeping 5s...")
                 time.sleep(5)

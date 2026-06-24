@@ -86,20 +86,28 @@ def get_ticker_price_data(ticker_symbol: str, conn):
     """
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # 1. Check if there is any price data in the database for this ticker
+    # 1. Check when it was last scraped
     cur.execute(f"""
-        SELECT EXISTS(
-            SELECT 1 FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
-            WHERE ticker = %s
-        )
+        SELECT MAX(scraped_at) as last_scraped FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
+        WHERE ticker = %s
     """, (ticker_symbol,))
-    has_data = cur.fetchone()["exists"]
+    row = cur.fetchone()
+    last_scraped = row["last_scraped"] if row else None
     
-    if not has_data:
-        print(f"[DATABASE] Cache miss: No data found in database for {ticker_symbol}. Fetching from yfinance...")
+    is_stale = False
+    if not last_scraped:
+        is_stale = True
+    else:
+        now_ts = datetime.now(timezone.utc)
+        if now_ts - last_scraped > timedelta(hours=1):
+            is_stale = True
+            
+    if is_stale:
+        reason = "No data found" if not last_scraped else f"stale data (last scraped {last_scraped})"
+        print(f"[DATABASE] Cache miss/stale for {ticker_symbol} ({reason}). Fetching from yfinance...")
         fetch_and_cache_ticker(ticker_symbol, conn)
     else:
-        print(f"[DATABASE] Cache hit: Found cached price data for {ticker_symbol}. Skipping yfinance API call.")
+        print(f"[DATABASE] Cache hit: Found recent cached price data for {ticker_symbol} (last scraped {last_scraped}). Skipping yfinance API call.")
         
     # 2. Get latest close price
     cur.execute(f"""
@@ -277,3 +285,52 @@ async def get_candles(
             for c in candles
         ]
     }
+
+# In-memory cache for ticker info (logo URL + short name)
+_ticker_info_cache = {}
+
+@router.get("/prices/logos")
+async def get_ticker_logos(tickers: str = Query(...)):
+    """
+    Get logo URLs and short names for the given comma-separated tickers.
+    Results are cached in memory to avoid redundant yfinance calls.
+    """
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    print(f"[DEBUG LOGOS] Ticker list: {ticker_list}")
+    result = {}
+
+    for ticker_symbol in ticker_list:
+        print(f"[DEBUG LOGOS] Processing {ticker_symbol}, in cache: {ticker_symbol in _ticker_info_cache}")
+        if ticker_symbol in _ticker_info_cache:
+            result[ticker_symbol] = _ticker_info_cache[ticker_symbol]
+            continue
+
+        try:
+            session = Session(impersonate="chrome", verify=False)
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9"
+            })
+            ticker = yf.Ticker(ticker_symbol, session=session)
+            info = ticker.info
+            if not isinstance(info, dict):
+                info = {}
+            logo_url = f"https://finance-logo.perplexity.ai/ticker/{ticker_symbol}?format=png&fallback=404&size=50&theme=dark"
+            print(f"[DEBUG LOGOS] set perplexity logo url for {ticker_symbol}: {logo_url}")
+
+            entry = {
+                "logo_url": logo_url,
+                "long_name": info.get("longName", "")
+            }
+            _ticker_info_cache[ticker_symbol] = entry
+            result[ticker_symbol] = entry
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"[TICKER_INFO] Error fetching info for {ticker_symbol}: {e}")
+            entry = {"logo_url": "", "long_name": ""}
+            _ticker_info_cache[ticker_symbol] = entry
+            result[ticker_symbol] = entry
+
+    return {"tickers": result}
+

@@ -1,8 +1,15 @@
 # scripts/push_to_db.py
 # Fully fixed: includes title_hash dedupe to prevent duplicate headlines
 
-import os
 import sys
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
+import os
 import hashlib
 import psycopg2
 from psycopg2.extras import execute_values
