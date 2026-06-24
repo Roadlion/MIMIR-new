@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+
+{% block title %}Taxonomy - MIMIR{% endblock %}
+
+{% block head_extra %}
+<style>
+    .taxonomy-table th {
+        background-color: #0C151B;
+        border-bottom: 1px solid #1A2A30;
+    }
+    .taxonomy-table td {
+        border-bottom: 1px solid #132228;
+    }
+    .source-badge {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+    .badge-static {
+        background-color: rgba(30, 41, 59, 0.6);
+        color: #94A3B8;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .badge-dynamic {
+        background-color: rgba(6, 78, 59, 0.6);
+        color: #34D399;
+        border: 1px solid rgba(52, 211, 153, 0.2);
+    }
+    .badge-missing {
+        background-color: rgba(127, 29, 29, 0.6);
+        color: #FCA5A5;
+        border: 1px solid rgba(252, 165, 165, 0.2);
+    }
+    .badge-historical {
+        background-color: rgba(120, 53, 4, 0.6);
+        color: #FCD34D;
+        border: 1px solid rgba(252, 211, 77, 0.2);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div>
+            <h1 class="text-2xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']">Asset Taxonomy Manager</h1>
+            <p class="text-sm text-[#4A6A70]">Review and map news asset names to yfinance tickers. Dynamic additions automatically update sentiment linkages and fetch hourly prices.</p>
+        </div>
+        
+        <!-- Add New Asset Card -->
+        <div class="flex items-center gap-2 bg-[#0A1216] border border-[#1A2A30] p-3 rounded-lg shadow-lg">
+            <input type="text" id="newAssetName" placeholder="Asset Name (e.g. MicroStrategy)" class="bg-[#111A20] border border-[#2A4A50] rounded px-3 py-1.5 text-xs text-[#D6E5E3] focus:outline-none focus:border-[#00A6B2] w-48 font-mono">
+            <input type="text" id="newAssetTicker" placeholder="Ticker (e.g. MSTR)" class="bg-[#111A20] border border-[#2A4A50] rounded px-3 py-1.5 text-xs text-[#D6E5E3] focus:outline-none focus:border-[#00A6B2] w-28 font-mono uppercase">
+            <button id="addMappingBtn" class="bg-[#00A6B2] text-black hover:bg-[#00E5F2] font-semibold text-xs px-3 py-1.5 rounded transition-all duration-200 uppercase tracking-wider font-mono">
+                Add
+            </button>
+        </div>
+    </div>
+
+    <!-- Toolbar: Search & Filters -->
+    <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <!-- Search -->
+        <div class="relative w-full md:w-80">
+            <input type="text" id="assetSearch" placeholder="Search by asset name or ticker..." class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-sm text-[#D6E5E3] focus:outline-none transition-all font-mono">
+        </div>
+        
+        <!-- Filters -->
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs text-[#4A6A70] uppercase font-mono mr-2">Filters:</span>
+            <button class="filter-btn active px-3 py-1.5 text-xs rounded border border-[#1A2A30] bg-[#111A20] text-[#D6E5E3] hover:border-[#00A6B2] font-mono transition-all" data-filter="all">All</button>
+            <button class="filter-btn px-3 py-1.5 text-xs rounded border border-[#1A2A30] bg-[#111A20] text-[#D6E5E3] hover:border-[#00A6B2] font-mono transition-all" data-filter="missing">Missing Tickers</button>
+            <button class="filter-btn px-3 py-1.5 text-xs rounded border border-[#1A2A30] bg-[#111A20] text-[#D6E5E3] hover:border-[#00A6B2] font-mono transition-all" data-filter="dynamic">Dynamic Mappings</button>
+            <button class="filter-btn px-3 py-1.5 text-xs rounded border border-[#1A2A30] bg-[#111A20] text-[#D6E5E3] hover:border-[#00A6B2] font-mono transition-all" data-filter="static">Static Mappings</button>
+        </div>
+    </div>
+
+    <!-- Alert Panel -->
+    <div id="statusToast" class="hidden mb-4 p-3 bg-[#0A2624] border border-[#00A6B2] rounded-lg text-xs text-[#D6E5E3] font-mono flex items-center justify-between shadow-lg">
+        <span id="toastMsg">Mapping saved successfully. Price backfilling triggered in background.</span>
+        <button onclick="document.getElementById('statusToast').style.display='none'" class="text-[#00A6B2] hover:text-[#00E5F2] ml-4 font-bold">×</button>
+    </div>
+
+    <!-- Assets List Container -->
+    <div class="bg-[#070D10] border border-[#1A2A30] rounded-lg overflow-hidden shadow-2xl">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse taxonomy-table">
+                <thead>
+                    <tr class="text-xs text-[#4A6A70] font-mono uppercase tracking-wider">
+                        <th class="p-4">Asset Name</th>
+                        <th class="p-4 w-48">Ticker</th>
+                        <th class="p-4 w-36 text-center">Source</th>
+                        <th class="p-4 w-40 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="assetsTableBody">
+                    <tr>
+                        <td colspan="4" class="p-8 text-center text-[#4A6A70] font-mono">
+                            <span class="animate-pulse">Loading Asset Database...</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <!-- Footer Info -->
+        <div class="p-4 border-t border-[#1A2A30] bg-[#0A1216] flex items-center justify-between text-xs text-[#4A6A70] font-mono">
+            <span id="assetCount">Showing -- of -- assets</span>
+            <span>Changes persist immediately.</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let allAssets = [];
+    let currentFilter = 'all';
+    
+    // Load asset list
+    async function loadAssets() {
+        try {
+            const res = await fetch('/api/v1/taxonomy/assets');
+            const data = await res.json();
+            allAssets = data.assets || [];
+            renderTable();
+        } catch (e) {
+            console.error("Failed to load taxonomy assets", e);
+            document.getElementById('assetsTableBody').innerHTML = `
+                <tr>
+                    <td colspan="4" class="p-8 text-center text-red-400 font-mono">
+                        Error loading asset database. Verify connection.
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    // Render table rows
+    function renderTable() {
+        const query = document.getElementById('assetSearch').value.toLowerCase().trim();
+        const tbody = document.getElementById('assetsTableBody');
+        
+        let filtered = allAssets.filter(asset => {
+            const nameMatch = asset.asset_name.toLowerCase().includes(query);
+            const tickerMatch = (asset.ticker || '').toLowerCase().includes(query);
+            
+            // Apply text filter first
+            if (query && !nameMatch && !tickerMatch) return false;
+            
+            // Apply category filters
+            if (currentFilter === 'missing') {
+                return !asset.ticker;
+            } else if (currentFilter === 'dynamic') {
+                return asset.source === 'dynamic';
+            } else if (currentFilter === 'static') {
+                return asset.source === 'static';
+            }
+            return true;
+        });
+
+        tbody.innerHTML = '';
+        if (filtered.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="p-8 text-center text-[#4A6A70] font-mono">
+                        No assets found matching your query or filter.
+                    </td>
+                </tr>
+            `;
+            document.getElementById('assetCount').textContent = `Showing 0 of ${allAssets.length} assets`;
+            return;
+        }
+
+        filtered.forEach(asset => {
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-[#0C151B] transition-colors duration-150";
+            
+            // Name cell
+            const nameTd = document.createElement('td');
+            nameTd.className = "p-4 font-semibold text-[#D6E5E3]";
+            nameTd.textContent = asset.asset_name;
+            
+            // Ticker input cell
+            const tickerTd = document.createElement('td');
+            tickerTd.className = "p-4";
+            
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = asset.ticker || '';
+            input.placeholder = 'MISSING';
+            input.className = "w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] focus:outline-none rounded px-2.5 py-1 text-xs text-[#D6E5E3] font-mono uppercase transition-colors";
+            
+            // Keep track of original ticker
+            const originalVal = asset.ticker || '';
+            input.dataset.original = originalVal;
+            
+            tickerTd.appendChild(input);
+            
+            // Source cell
+            const sourceTd = document.createElement('td');
+            sourceTd.className = "p-4 text-center";
+            
+            const badge = document.createElement('span');
+            badge.className = `source-badge badge-${asset.source}`;
+            badge.textContent = asset.source === 'missing' ? 'missing' : asset.source;
+            sourceTd.appendChild(badge);
+            
+            // Actions cell
+            const actionsTd = document.createElement('td');
+            actionsTd.className = "p-4 text-right flex items-center justify-end gap-2";
+            
+            const saveBtn = document.createElement('button');
+            saveBtn.className = "px-2 py-1 text-xs border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] rounded font-mono transition-all";
+            saveBtn.textContent = 'Save';
+            
+            // Disable save button until value changes
+            saveBtn.disabled = true;
+            saveBtn.style.opacity = '0.5';
+            
+            // Monitor changes
+            input.addEventListener('input', () => {
+                const changed = input.value.trim().toUpperCase() !== originalVal.toUpperCase();
+                saveBtn.disabled = !changed;
+                saveBtn.style.opacity = changed ? '1.0' : '0.5';
+            });
+            
+            saveBtn.addEventListener('click', () => updateAsset(asset.asset_name, input.value.trim()));
+            
+            actionsTd.appendChild(saveBtn);
+            
+            // If dynamic source, show Clear button to reset mapping
+            if (asset.source === 'dynamic') {
+                const clearBtn = document.createElement('button');
+                clearBtn.className = "px-2 py-1 text-xs border border-red-900/60 hover:border-red-500 hover:text-red-400 text-red-500/80 rounded font-mono transition-all";
+                clearBtn.textContent = 'Clear';
+                clearBtn.addEventListener('click', () => updateAsset(asset.asset_name, ''));
+                actionsTd.appendChild(clearBtn);
+            }
+            
+            tr.appendChild(nameTd);
+            tr.appendChild(tickerTd);
+            tr.appendChild(sourceTd);
+            tr.appendChild(actionsTd);
+            
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('assetCount').textContent = `Showing ${filtered.length} of ${allAssets.length} assets`;
+    }
+
+    // Save/Update asset mapping
+    async function updateAsset(assetName, ticker) {
+        try {
+            const res = await fetch('/api/v1/taxonomy/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ asset_name: assetName, ticker: ticker })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                showToast(assetName, ticker);
+                loadAssets();
+            }
+        } catch (e) {
+            console.error("Failed to update mapping", e);
+        }
+    }
+
+    // Show toast message
+    function showToast(name, ticker) {
+        const toast = document.getElementById('statusToast');
+        const msg = document.getElementById('toastMsg');
+        if (ticker) {
+            msg.textContent = `✅ Mapping saved: '${name}' resolved to ticker '${ticker}'. Price caching triggered in background thread!`;
+        } else {
+            msg.textContent = `❌ Removed ticker mapping for '${name}'. Linked indexes updated.`;
+        }
+        toast.style.display = 'flex';
+        
+        // Auto hide after 8s
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, 8000);
+    }
+
+    // Setup Event Listeners
+    document.getElementById('assetSearch').addEventListener('input', renderTable);
+    
+    // Add mapping button
+    document.getElementById('addMappingBtn').addEventListener('click', () => {
+        const nameInput = document.getElementById('newAssetName');
+        const tickerInput = document.getElementById('newAssetTicker');
+        const name = nameInput.value.trim();
+        const ticker = tickerInput.value.trim();
+        
+        if (!name || !ticker) {
+            alert('Please fill out both Asset Name and Ticker fields.');
+            return;
+        }
+        
+        updateAsset(name, ticker);
+        nameInput.value = '';
+        tickerInput.value = '';
+    });
+
+    // Filter Buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active', 'border-[#00A6B2]', 'text-[#00A6B2]'));
+            btn.classList.add('active', 'border-[#00A6B2]', 'text-[#00A6B2]');
+            currentFilter = btn.dataset.filter;
+            renderTable();
+        });
+    });
+
+    // Load assets on start
+    window.addEventListener('DOMContentLoaded', loadAssets);
+</script>
+{% endblock %}

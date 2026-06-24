@@ -19,6 +19,7 @@ from pathlib import Path
 # Add project root to path so we can import the scraper
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from backend.app.scrapers.rss_scraper import fetch_financial_feed_batch
+from backend.app.scrapers.newsapi_scraper import fetch_newsapi_articles, fetch_gnews_articles
 
 # Load .env
 dotenv_path = Path(__file__).parent.parent / '.env'
@@ -143,6 +144,19 @@ def insert_articles(records):
 if __name__ == "__main__":
     print("Scrapin' yer shite...")
     records = fetch_financial_feed_batch()
-    print(f"Got {len(records)} articles. Shovin' em in DB...")
+    
+    try:
+        newsapi_records = fetch_newsapi_articles()
+        records.extend(newsapi_records)
+    except Exception as ne:
+        print(f"⚠️ Failed to fetch from NewsAPI: {ne}")
+        
+    try:
+        gnews_records = fetch_gnews_articles()
+        records.extend(gnews_records)
+    except Exception as ge:
+        print(f"⚠️ Failed to fetch from GNews: {ge}")
+        
+    print(f"Got {len(records)} total articles. Shovin' em in DB...")
     insert_articles(records)
     print("Done. Go drink.")

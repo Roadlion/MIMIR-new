@@ -114,6 +114,80 @@
             </div>
         </div>
 
+        <!-- Market Heatmap Section -->
+        <div class="heatmap-section mt-5">
+            <!-- Index Tabs -->
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Market Heatmap</h2>
+                <span id="heatmap-cache-badge" class="heatmap-cache-badge hidden">CACHED · 15m</span>
+            </div>
+
+            <div class="heatmap-tabs" id="heatmap-tabs">
+                <button class="heatmap-tab active" data-index="sp500">S&P 500</button>
+                <button class="heatmap-tab" data-index="set50">SET 50</button>
+                <button class="heatmap-tab" data-index="kospi200">KOSPI 200</button>
+                <button class="heatmap-tab" data-index="nifty50">NIFTY 50</button>
+                <button class="heatmap-tab" data-index="nikkei225">Nikkei 225</button>
+                <button class="heatmap-tab" data-index="ftse100">FTSE 100</button>
+                <button class="heatmap-tab" data-index="dax">DAX</button>
+                <button class="heatmap-tab" data-index="cac40">CAC 40</button>
+                <button class="heatmap-tab" data-index="stoxx600">STOXX 600</button>
+            </div>
+
+            <div class="heatmap-card">
+                <!-- Header -->
+                <div class="heatmap-header">
+                    <div class="heatmap-title-group">
+                        <span id="heatmap-index-label" class="heatmap-index-label">S&P 500 Heatmap</span>
+                        <span id="heatmap-loading-badge" class="heatmap-loading-badge">
+                            <svg class="animate-spin" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                                <path d="M12 2a10 10 0 0 1 10 10"></path>
+                            </svg>
+                            Fetching live data...
+                        </span>
+                    </div>
+                    <div class="heatmap-legend">
+                        <span>-3%</span>
+                        <div class="heatmap-legend-bar"></div>
+                        <span>+3%</span>
+                    </div>
+                </div>
+
+                <!-- Treemap Canvas -->
+                <div class="heatmap-treemap-wrapper">
+                    <canvas id="heatmap-canvas" height="380"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tooltip (global, rendered outside the card) -->
+        <div id="heatmap-tooltip" class="heatmap-tooltip">
+            <div class="heatmap-tooltip-inner">
+                <div id="ht-sector" class="heatmap-tooltip-sector">—</div>
+                <div id="ht-ticker" class="heatmap-tooltip-ticker">—</div>
+                <div id="ht-name" class="heatmap-tooltip-name">—</div>
+                <div class="heatmap-tooltip-price-row">
+                    <span id="ht-price" class="heatmap-tooltip-price">—</span>
+                    <span id="ht-change" class="heatmap-tooltip-change flat">—</span>
+                </div>
+                <div class="heatmap-tooltip-sub">
+                    <div class="heatmap-tooltip-sub-item">
+                        <span class="heatmap-tooltip-sub-label">Prev. Close</span>
+                        <span id="ht-prev" class="heatmap-tooltip-sub-val">—</span>
+                    </div>
+                    <div class="heatmap-tooltip-sub-item">
+                        <span class="heatmap-tooltip-sub-label">Volume</span>
+                        <span id="ht-vol" class="heatmap-tooltip-sub-val">—</span>
+                    </div>
+                    <div class="heatmap-tooltip-sub-item">
+                        <span class="heatmap-tooltip-sub-label">Sector</span>
+                        <span id="ht-sector-tag" class="heatmap-tooltip-sub-val">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Upcoming Events Section -->
         <div class="upcoming-events-section mt-5">
             <div class="flex items-center justify-between mb-3">
@@ -154,7 +228,7 @@
     </div>
 
     <!-- Right: Watchlist Panel (1/3) -->
-    <div class="w-full lg:w-1/3">
+    <div class="w-full lg:w-1/3 flex flex-col gap-5">
         <div class="watchlist-panel">
             <!-- Header -->
             <div class="watchlist-header">
@@ -191,6 +265,18 @@
                     <p class="watchlist-empty-title">No assets yet</p>
                     <p class="watchlist-empty-sub">Search for a ticker above to start building your watchlist</p>
                 </div>
+            </div>
+        </div>
+
+        <!-- Popular Cryptocurrencies Panel -->
+        <div class="watchlist-panel" style="height: auto; max-height: none;">
+            <!-- Header -->
+            <div class="watchlist-header">
+                <span class="watchlist-title">Popular Cryptocurrencies</span>
+            </div>
+            <!-- Crypto Items -->
+            <div id="crypto-items" class="watchlist-items">
+                <!-- Dynamically populated -->
             </div>
         </div>
     </div>
@@ -330,6 +416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ==================== WATCHLIST ====================
     const WATCHLIST_KEY = 'mimir_watchlist';
     const WATCHLIST_STARRED_KEY = 'mimir_watchlist_starred';
+    const CRYPTO_TICKERS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "BNB-USD", "ADA-USD"];
 
     // Available assets loaded from the database (mimir_sentiment_impacts)
     let KNOWN_ASSETS = [];
@@ -426,7 +513,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function loadWatchlistTickerInfo() {
-        const list = getWatchlist();
+        const list = [...new Set([...getWatchlist(), ...CRYPTO_TICKERS])];
         if (list.length === 0) return;
 
         const cached = getTickerInfoCache();
@@ -454,7 +541,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function loadWatchlistPrices() {
-        const list = getWatchlist();
+        const list = [...new Set([...getWatchlist(), ...CRYPTO_TICKERS])];
         if (list.length === 0) return;
 
         try {
@@ -475,7 +562,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function loadWatchlistSentiment() {
-        const list = getWatchlist();
+        const list = [...new Set([...getWatchlist(), ...CRYPTO_TICKERS])];
         if (list.length === 0) return;
 
         try {
@@ -619,6 +706,82 @@ document.addEventListener('DOMContentLoaded', async () => {
                 e.stopPropagation();
                 removeFromWatchlist(btn.dataset.ticker);
             });
+        });
+
+        renderCryptoList();
+    }
+
+    function renderCryptoList() {
+        const container = document.getElementById('crypto-items');
+        if (!container) return;
+        container.innerHTML = '';
+        const tickerInfoCache = getTickerInfoCache();
+
+        CRYPTO_TICKERS.forEach(ticker => {
+            let defaultName = ticker;
+            if (ticker === 'BTC-USD') defaultName = 'Bitcoin';
+            else if (ticker === 'ETH-USD') defaultName = 'Ethereum';
+            else if (ticker === 'SOL-USD') defaultName = 'Solana';
+            else if (ticker === 'XRP-USD') defaultName = 'XRP';
+            else if (ticker === 'BNB-USD') defaultName = 'Binance Coin';
+            else if (ticker === 'ADA-USD') defaultName = 'Cardano';
+
+            const info = getAssetInfo(ticker);
+            const priceData = watchlistPriceData[ticker];
+            const sentData = watchlistSentimentData[ticker];
+            const tickerInfo = tickerInfoCache[ticker] || {};
+            const logoUrl = tickerInfo.logo_url || '';
+            const longName = tickerInfo.long_name || '';
+
+            const displayName = longName || info.name || defaultName;
+
+            const iconInner = logoUrl
+                ? `<img src="${logoUrl}" alt="${ticker}" onerror="this.parentElement.innerHTML='${ticker.substring(0, 2)}'">`
+                : ticker.substring(0, 2);
+
+            const priceStr = priceData
+                ? getCurrencySymbol(ticker) + Number(priceData.current_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : '—';
+            const priceChangeStr = priceData
+                ? (priceData.change_percent >= 0 ? '+' : '') + priceData.change_percent.toFixed(2) + '%'
+                : '—';
+            const priceChangeClass = priceData ? (priceData.change_percent >= 0 ? 'up' : 'down') : '';
+
+            const sentStr = sentData && sentData.current_sentiment !== null
+                ? sentData.current_sentiment.toFixed(2)
+                : '—';
+            const sentChangeStr = sentData && sentData.sentiment_change_percent !== null
+                ? (sentData.sentiment_change_percent >= 0 ? '+' : '') + sentData.sentiment_change_percent.toFixed(1) + '%'
+                : '—';
+            const sentChangeClass = sentData && sentData.sentiment_change_percent !== null
+                ? (sentData.sentiment_change_percent >= 0 ? 'up' : 'down')
+                : '';
+
+            const item = document.createElement('div');
+            item.className = 'watchlist-item';
+            item.innerHTML = `
+                <div class="watchlist-item-left">
+                    <div class="watchlist-item-icon">${iconInner}</div>
+                    <div class="watchlist-item-info">
+                        <span class="watchlist-item-name">${displayName}</span>
+                        <span class="watchlist-item-ticker">${ticker}</span>
+                    </div>
+                </div>
+                <div class="watchlist-item-right">
+                    <div class="watchlist-item-data-col">
+                        <span class="watchlist-item-data-label">Price</span>
+                        <span class="watchlist-item-data-val">${priceStr}</span>
+                        <span class="watchlist-item-change ${priceChangeClass}">${priceChangeStr}</span>
+                    </div>
+                    <div class="watchlist-data-divider"></div>
+                    <div class="watchlist-item-data-col">
+                        <span class="watchlist-item-data-label">Sentiment</span>
+                        <span class="watchlist-item-data-val">${sentStr}</span>
+                        <span class="watchlist-item-change ${sentChangeClass}">${sentChangeStr}</span>
+                    </div>
+                </div>
+            `;
+            container.appendChild(item);
         });
     }
 
@@ -1050,6 +1213,455 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Load events on startup
     loadUpcomingEvents();
+
+    // ==================== MARKET HEATMAP ====================
+    (function() {
+        const canvas = document.getElementById('heatmap-canvas');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('heatmap-tooltip');
+        const loadingBadge = document.getElementById('heatmap-loading-badge');
+        const indexLabel = document.getElementById('heatmap-index-label');
+        const cacheBadge = document.getElementById('heatmap-cache-badge');
+        const tabs = document.querySelectorAll('.heatmap-tab');
+
+        let heatmapData = [];      // flat array of constituent objects
+        let treemapRects = [];     // [{rect, constituent}] for hover detection
+        let currentIndex = 'sp500';
+        let hoveredRect = null;
+        let animFrame = null;
+
+        // ---- Color scale ----
+        function changeColor(pct) {
+            // pct: percentage change, clamp to [-3, +3]
+            const clamped = Math.max(-3, Math.min(3, pct));
+            if (Math.abs(clamped) < 0.05) {
+                // Near neutral: dark charcoal
+                return { r: 38, g: 50, b: 56 };
+            }
+            if (clamped > 0) {
+                // Green: from neutral dark green → bright green
+                const t = clamped / 3; // 0..1
+                return {
+                    r: Math.round(16 + (0 - 16) * t),
+                    g: Math.round(60 + (210 - 60) * t),
+                    b: Math.round(30 + (50 - 30) * t)
+                };
+            } else {
+                // Red: from neutral dark red → bright red
+                const t = (-clamped) / 3; // 0..1
+                return {
+                    r: Math.round(80 + (220 - 80) * t),
+                    g: Math.round(20 + (40 - 20) * t),
+                    b: Math.round(20 + (50 - 20) * t)
+                };
+            }
+        }
+
+        function toRgb(c) {
+            return `rgb(${c.r},${c.g},${c.b})`;
+        }
+
+        function darken(c, amount = 0.7) {
+            return `rgb(${Math.round(c.r*amount)},${Math.round(c.g*amount)},${Math.round(c.b*amount)})`;
+        }
+
+        // ---- Squarified Treemap Algorithm ----
+        function squarify(items, rect) {
+            // items: [{value, ...}], rect: {x,y,w,h}
+            const rects = [];
+            squarifyRecurse(items.slice(), rect, rects);
+            return rects;
+        }
+
+        function squarifyRecurse(items, rect, rects) {
+            if (items.length === 0) return;
+            if (rect.w < 1 || rect.h < 1) return;
+            if (items.length === 1) {
+                rects.push({ rect: { ...rect }, item: items[0] });
+                return;
+            }
+
+            const totalValue = items.reduce((s, i) => s + i.value, 0);
+            const area = rect.w * rect.h;
+
+            // Try to lay out items in a row along the shorter side
+            const horizontal = rect.w >= rect.h;
+            const side = horizontal ? rect.h : rect.w;
+
+            let rowItems = [];
+            let rowValue = 0;
+            let bestAspect = Infinity;
+
+            for (let i = 0; i < items.length; i++) {
+                rowItems.push(items[i]);
+                rowValue += items[i].value;
+
+                const rowArea = (rowValue / totalValue) * area;
+                const rowSide = rowArea / side;
+
+                // Check worst aspect ratio in this row
+                let worst = 0;
+                for (const ri of rowItems) {
+                    const riArea = (ri.value / totalValue) * area;
+                    const riSide = riArea / rowSide;
+                    const aspect = Math.max(rowSide / riSide, riSide / rowSide);
+                    worst = Math.max(worst, aspect);
+                }
+
+                if (worst > bestAspect) {
+                    // Backing off: commit previous row
+                    rowItems.pop();
+                    rowValue -= items[i].value;
+                    break;
+                }
+                bestAspect = worst;
+            }
+
+            // Ensure at least 1 item in the row to avoid infinite recursion
+            if (rowItems.length === 0) {
+                rowItems.push(items[0]);
+                rowValue = items[0].value;
+            }
+
+            // Lay out the committed row
+            const rowArea = (rowValue / totalValue) * area;
+            const rowSide = Math.max(rowArea / side, 0.001);
+
+            let offset = 0;
+            for (const ri of rowItems) {
+                const riArea = (ri.value / rowValue) * rowArea;
+                const riSide = riArea / rowSide;
+                let r;
+                if (horizontal) {
+                    r = { x: rect.x, y: rect.y + offset, w: rowSide, h: riSide };
+                } else {
+                    r = { x: rect.x + offset, y: rect.y, w: riSide, h: rowSide };
+                }
+                rects.push({ rect: r, item: ri });
+                offset += riSide;
+            }
+
+            // Recurse on remaining items with remaining rect
+            const remaining = items.slice(rowItems.length);
+            let newRect;
+            if (horizontal) {
+                newRect = { x: rect.x + rowSide, y: rect.y, w: rect.w - rowSide, h: rect.h };
+            } else {
+                newRect = { x: rect.x, y: rect.y + rowSide, w: rect.w, h: rect.h - rowSide };
+            }
+            squarifyRecurse(remaining, newRect, rects);
+        }
+
+        // ---- Group by sector ----
+        function groupBySector(items) {
+            const sectors = {};
+            items.forEach(c => {
+                if (!sectors[c.sector]) sectors[c.sector] = [];
+                sectors[c.sector].push(c);
+            });
+            return sectors;
+        }
+
+        // ---- Render ----
+        function renderHeatmap() {
+            if (heatmapData.length === 0) return;
+
+            // Ensure canvas matches display size
+            const wrapper = canvas.parentElement;
+            const dpr = window.devicePixelRatio || 1;
+            const displayW = wrapper.clientWidth - 16; // subtract padding
+            const displayH = 380;
+            canvas.width = displayW * dpr;
+            canvas.height = displayH * dpr;
+            canvas.style.width = displayW + 'px';
+            canvas.style.height = displayH + 'px';
+            ctx.scale(dpr, dpr);
+
+            ctx.clearRect(0, 0, displayW, displayH);
+
+            // Group by sector, compute sector aggregate weights
+            const sectors = groupBySector(heatmapData);
+            const sectorList = Object.keys(sectors).map(name => ({
+                name,
+                value: sectors[name].reduce((s, c) => s + Math.max(c.weight, 1), 0),
+                items: sectors[name]
+            })).sort((a, b) => b.value - a.value);
+
+            // Build sector treemap
+            const sectorItems = sectorList.map(s => ({ ...s, value: s.value }));
+            const totalRect = { x: 0, y: 0, w: displayW, h: displayH };
+            const sectorRects = squarify(sectorItems, totalRect);
+
+            treemapRects = [];
+            const GAP = 2; // gap between cells
+
+            for (const sr of sectorRects) {
+                const { rect: sRect, item: sectorItem } = sr;
+                const items = sectorItem.items.map(c => ({ ...c, value: Math.max(c.weight, 1) }))
+                    .sort((a, b) => b.value - a.value);
+
+                // Inner rect with sector label reservation
+                const LABEL_H = sRect.h > 60 ? 18 : 0;
+                const innerRect = {
+                    x: sRect.x + GAP,
+                    y: sRect.y + GAP + LABEL_H,
+                    w: Math.max(sRect.w - GAP * 2, 1),
+                    h: Math.max(sRect.h - GAP * 2 - LABEL_H, 1)
+                };
+
+                // Draw sector background
+                ctx.fillStyle = '#0D1418';
+                ctx.fillRect(sRect.x, sRect.y, sRect.w, sRect.h);
+
+                // Draw sector label
+                if (LABEL_H > 0 && sRect.w > 40) {
+                    // Sector aggregate change
+                    const sectorChange = sectorItem.items.reduce((s, c) => s + c.change_percent, 0) / sectorItem.items.length;
+                    const changeColor = sectorChange >= 0.05 ? '#00E676' : sectorChange <= -0.05 ? '#FF5252' : '#FFD740';
+                    const sign = sectorChange >= 0 ? '+' : '';
+
+                    ctx.fillStyle = '#3A5A60';
+                    ctx.font = `600 ${Math.min(10, sRect.w / 8)}px 'JetBrains Mono', monospace`;
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(
+                        sectorItem.name.substring(0, Math.floor(sRect.w / 7)),
+                        sRect.x + GAP + 4,
+                        sRect.y + GAP + LABEL_H / 2
+                    );
+
+                    // Sector % change
+                    ctx.fillStyle = changeColor;
+                    ctx.font = `500 9px 'JetBrains Mono', monospace`;
+                    const changeStr = `${sign}${sectorChange.toFixed(2)}%`;
+                    const textW = ctx.measureText(changeStr).width;
+                    if (textW + 12 < sRect.w) {
+                        ctx.fillText(changeStr, sRect.x + sRect.w - textW - GAP - 4, sRect.y + GAP + LABEL_H / 2);
+                    }
+                }
+
+                // Squarify items within the sector
+                const itemRects = squarify(items, innerRect);
+
+                for (const ir of itemRects) {
+                    const { rect: iRect, item } = ir;
+                    const constituent = item;
+
+                    // Don't render tiny cells
+                    if (iRect.w < 2 || iRect.h < 2) continue;
+
+                    const color = changeColor(constituent.change_percent);
+                    const cellX = iRect.x + 0.5;
+                    const cellY = iRect.y + 0.5;
+                    const cellW = Math.max(iRect.w - 1, 0);
+                    const cellH = Math.max(iRect.h - 1, 0);
+
+                    // Check if hovered
+                    const isHovered = hoveredRect && hoveredRect.constituent === constituent;
+
+                    // Fill
+                    ctx.fillStyle = isHovered ? toRgb({ r: Math.min(255, color.r + 40), g: Math.min(255, color.g + 40), b: Math.min(255, color.b + 40) }) : toRgb(color);
+                    ctx.fillRect(cellX, cellY, cellW, cellH);
+
+                    // Border
+                    ctx.strokeStyle = isHovered ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.3)';
+                    ctx.lineWidth = isHovered ? 1.5 : 0.5;
+                    ctx.strokeRect(cellX, cellY, cellW, cellH);
+
+                    // Store for hover detection
+                    treemapRects.push({ rect: iRect, constituent });
+
+                    // Draw ticker label if cell is large enough
+                    if (cellW > 28 && cellH > 20) {
+                        const fontSize = Math.min(Math.max(Math.floor(Math.min(cellW / 5, cellH / 3.5)), 8), 16);
+                        ctx.font = `700 ${fontSize}px 'JetBrains Mono', monospace`;
+                        ctx.textBaseline = 'middle';
+                        ctx.textAlign = 'center';
+                        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+
+                        const ticker = constituent.ticker.replace(/\.[A-Z]+$/, ''); // strip suffix for display
+                        const cx = cellX + cellW / 2;
+                        const cy = cellY + cellH / 2;
+
+                        // Clip the text to the cell
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(cellX, cellY, cellW, cellH);
+                        ctx.clip();
+
+                        ctx.fillText(ticker, cx, cellH > 36 ? cy - fontSize * 0.5 : cy);
+
+                        // Draw change % under ticker if enough space
+                        if (cellH > 36) {
+                            const sign = constituent.change_percent >= 0 ? '+' : '';
+                            const changeFontSize = Math.max(fontSize - 3, 7);
+                            ctx.font = `500 ${changeFontSize}px 'JetBrains Mono', monospace`;
+                            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                            ctx.fillText(`${sign}${constituent.change_percent.toFixed(2)}%`, cx, cy + fontSize * 0.7);
+                        }
+
+                        ctx.restore();
+                        ctx.textAlign = 'left';
+                    }
+                }
+            }
+        }
+
+        // ---- Tooltip helpers ----
+        function formatVolume(v) {
+            if (!v || v === 0) return '—';
+            if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+            if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+            if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+            return v.toString();
+        }
+
+        function formatPrice(p, ticker) {
+            if (p == null) return '—';
+            // Detect currency from ticker suffix
+            const t = ticker.toUpperCase();
+            let sym = '';
+            if (t.endsWith('.BK')) sym = '฿';
+            else if (t.endsWith('.NS')) sym = '₹';
+            else if (t.endsWith('.L')) sym = '£';
+            else if (t.endsWith('.PA') || t.endsWith('.DE') || t.endsWith('.AS') || t.endsWith('.SW') || t.endsWith('.CO')) sym = '€';
+            else if (t.endsWith('.KS') || t.endsWith('.KQ')) sym = '₩';
+            else if (t.endsWith('.T')) sym = '¥';
+            else if (/^[A-Z0-9\-^=]+$/.test(t)) sym = '$';
+            const formatted = Number(p).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+            return sym + formatted;
+        }
+
+        function showTooltip(constituent, mouseX, mouseY) {
+            document.getElementById('ht-sector').textContent = constituent.sector;
+            document.getElementById('ht-ticker').textContent = constituent.ticker.replace(/\.[A-Z]+$/, '');
+            document.getElementById('ht-name').textContent = constituent.name;
+            document.getElementById('ht-price').textContent = formatPrice(constituent.current_price, constituent.ticker);
+            document.getElementById('ht-prev').textContent = formatPrice(constituent.prev_price, constituent.ticker);
+            document.getElementById('ht-vol').textContent = formatVolume(constituent.volume);
+            document.getElementById('ht-sector-tag').textContent = constituent.sector;
+
+            const changeEl = document.getElementById('ht-change');
+            const pct = constituent.change_percent;
+            const sign = pct >= 0 ? '+' : '';
+            changeEl.textContent = `${sign}${pct.toFixed(2)}% at Close`;
+            changeEl.className = 'heatmap-tooltip-change ' + (pct > 0.05 ? 'up' : pct < -0.05 ? 'down' : 'flat');
+
+            // Position tooltip near mouse, avoid going off-screen
+            const ttW = 260;
+            const ttH = 160;
+            let tx = mouseX + 16;
+            let ty = mouseY - 20;
+            if (tx + ttW > window.innerWidth) tx = mouseX - ttW - 16;
+            if (ty + ttH > window.innerHeight) ty = window.innerHeight - ttH - 10;
+            if (ty < 10) ty = 10;
+
+            tooltip.style.left = tx + 'px';
+            tooltip.style.top = ty + 'px';
+            tooltip.classList.add('visible');
+        }
+
+        function hideTooltip() {
+            tooltip.classList.remove('visible');
+        }
+
+        // ---- Mouse events ----
+        canvas.addEventListener('mousemove', (e) => {
+            const canvasRect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / (window.devicePixelRatio || 1) / canvasRect.width;
+            const scaleY = canvas.height / (window.devicePixelRatio || 1) / canvasRect.height;
+            const mx = (e.clientX - canvasRect.left) * scaleX;
+            const my = (e.clientY - canvasRect.top) * scaleY;
+
+            let found = null;
+            for (let i = treemapRects.length - 1; i >= 0; i--) {
+                const { rect, constituent } = treemapRects[i];
+                if (mx >= rect.x && mx <= rect.x + rect.w && my >= rect.y && my <= rect.y + rect.h) {
+                    found = { rect, constituent };
+                    break;
+                }
+            }
+
+            if (found !== hoveredRect) {
+                hoveredRect = found;
+                if (animFrame) cancelAnimationFrame(animFrame);
+                animFrame = requestAnimationFrame(renderHeatmap);
+            }
+
+            if (found) {
+                showTooltip(found.constituent, e.clientX, e.clientY);
+            } else {
+                hideTooltip();
+            }
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            hoveredRect = null;
+            hideTooltip();
+            if (animFrame) cancelAnimationFrame(animFrame);
+            animFrame = requestAnimationFrame(renderHeatmap);
+        });
+
+        // ---- Fetch and load data ----
+        async function loadHeatmap(indexKey) {
+            loadingBadge.classList.add('visible');
+            canvas.classList.add('loading');
+            cacheBadge.classList.add('hidden');
+            indexLabel.textContent = Array.from(tabs).find(t => t.dataset.index === indexKey)?.textContent + ' Heatmap' || indexKey + ' Heatmap';
+
+            try {
+                const res = await fetch(`/api/v1/prices/heatmap?index=${indexKey}`);
+                if (!res.ok) {
+                    console.error('[HEATMAP] API error:', res.status);
+                    return;
+                }
+                const data = await res.json();
+                heatmapData = data.constituents || [];
+                hoveredRect = null;
+                treemapRects = [];
+
+                indexLabel.textContent = data.label + ' Heatmap';
+
+                if (data.cached) {
+                    cacheBadge.classList.remove('hidden');
+                }
+
+                if (animFrame) cancelAnimationFrame(animFrame);
+                animFrame = requestAnimationFrame(renderHeatmap);
+            } catch (err) {
+                console.error('[HEATMAP] Fetch error:', err);
+            } finally {
+                loadingBadge.classList.remove('visible');
+                canvas.classList.remove('loading');
+            }
+        }
+
+        // ---- Tab switching ----
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                currentIndex = tab.dataset.index;
+                heatmapData = [];
+                treemapRects = [];
+                hoveredRect = null;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                loadHeatmap(currentIndex);
+            });
+        });
+
+        // ---- Responsive resize ----
+        const resizeObserver = new ResizeObserver(() => {
+            if (heatmapData.length > 0) {
+                if (animFrame) cancelAnimationFrame(animFrame);
+                animFrame = requestAnimationFrame(renderHeatmap);
+            }
+        });
+        resizeObserver.observe(canvas.parentElement);
+
+        // ---- Initial load ----
+        loadHeatmap(currentIndex);
+    })();
+
 });
 </script>
 {% endblock %}

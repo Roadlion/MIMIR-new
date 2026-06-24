@@ -120,8 +120,37 @@ async def refresh_stream():
                 
                 # Run database cache insertion in a separate thread to avoid blocking async loop
                 def run_fetch(t):
+                    from datetime import datetime, timezone, timedelta
+                    from ..config import get_settings
+                    settings = get_settings()
                     conn = get_db_connection()
                     try:
+                        cur = conn.cursor()
+                        cur.execute(f"""
+                            SELECT MAX(scraped_at) as last_scraped 
+                            FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
+                            WHERE ticker = %s
+                        """, (t,))
+                        row = cur.fetchone()
+                        last_scraped = row[0] if row else None
+                        cur.close()
+                        
+                        is_stale = False
+                        if not last_scraped:
+                            is_stale = True
+                        else:
+                            now_ts = datetime.now(timezone.utc)
+                            if last_scraped.tzinfo is not None:
+                                if now_ts - last_scraped > timedelta(hours=1):
+                                    is_stale = True
+                            else:
+                                if datetime.now() - last_scraped > timedelta(hours=1):
+                                    is_stale = True
+                                    
+                        if not is_stale:
+                            safe_print(f"[REFRESH] Cache hit: Found recent cached price data for {t} (last scraped {last_scraped}). Skipping yfinance fetch.")
+                            return
+                            
                         fetch_and_cache_ticker(t, conn)
                     finally:
                         conn.close()
