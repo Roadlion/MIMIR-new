@@ -511,6 +511,173 @@ a:hover {
     text-shadow: 0 0 8px rgba(0, 166, 178, 0.2);
 }
 
+/* Calendar Styles */
+.calendar-wrapper {
+    background: #091013;
+}
+
+#calendar-days-grid {
+    border-top: 1px solid rgba(26, 42, 48, 0.4);
+    border-left: 1px solid rgba(26, 42, 48, 0.4);
+}
+
+.calendar-day-cell {
+    position: relative;
+    min-height: 110px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    border-radius: 0 !important;
+    border: none !important;
+    border-right: 1px solid rgba(26, 42, 48, 0.4) !important;
+    border-bottom: 1px solid rgba(26, 42, 48, 0.4) !important;
+    background: rgba(12, 20, 23, 0.15);
+    transition: all 0.2s ease;
+    user-select: none;
+    padding: 6px;
+    box-sizing: border-box;
+}
+
+.calendar-day-cell:hover:not(.prev-next-month) {
+    background: rgba(26, 42, 48, 0.6);
+}
+
+.calendar-day-cell.prev-next-month {
+    color: rgba(74, 106, 112, 0.25);
+    background: rgba(12, 20, 23, 0.03);
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Highlight today using inset shadow to prevent cell sizing mismatch */
+.calendar-day-cell.today {
+    box-shadow: inset 0 0 0 1px rgba(0, 166, 178, 0.5);
+    background: rgba(0, 166, 178, 0.02);
+}
+
+/* Highlight selected using inset shadow to prevent cell sizing mismatch */
+.calendar-day-cell.selected {
+    background: rgba(0, 166, 178, 0.08) !important;
+    box-shadow: inset 0 0 0 1.5px #00A6B2 !important;
+}
+
+.calendar-day-cell.has-events {
+    color: #D6E5E3;
+}
+
+.calendar-day-header {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+    padding-right: 2px;
+}
+
+.calendar-day-number {
+    font-size: 0.68rem;
+    color: #4A6A70;
+    font-weight: 500;
+    padding: 2px;
+    min-width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.calendar-day-cell.prev-next-month .calendar-day-number {
+    color: rgba(74, 106, 112, 0.25);
+}
+
+.calendar-day-number.first-day {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #8A9E9B;
+}
+
+/* Solid circular blue badge for current date indicator */
+.calendar-day-number.today-indicator {
+    background-color: #00A6B2;
+    color: #091013 !important;
+    border-radius: 50%;
+    font-weight: bold;
+    min-width: 20px;
+    height: 20px;
+    box-shadow: 0 0 6px rgba(0, 166, 178, 0.4);
+}
+
+.calendar-cell-events {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+}
+
+/* Event ribbon labels (Google Calendar Style) */
+.calendar-event-label {
+    font-size: 0.62rem;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 2px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    border: 1px solid transparent;
+    line-height: 1.3;
+    font-weight: 500;
+    transition: filter 0.15s ease;
+}
+
+.calendar-event-label:hover {
+    filter: brightness(1.15);
+}
+
+.calendar-event-label.critical {
+    background: rgba(255, 82, 82, 0.15);
+    color: #FF8A8A;
+    border: 1px solid rgba(255, 82, 82, 0.3);
+    border-left: 3px solid #FF5252;
+}
+
+.calendar-event-label.high {
+    background: rgba(255, 145, 0, 0.15);
+    color: #FFB74D;
+    border: 1px solid rgba(255, 145, 0, 0.3);
+    border-left: 3px solid #FF9100;
+}
+
+.calendar-event-label.medium {
+    background: rgba(0, 230, 118, 0.15);
+    color: #69F0AE;
+    border: 1px solid rgba(0, 230, 118, 0.3);
+    border-left: 3px solid #00E676;
+}
+
+.calendar-event-label.other {
+    background: rgba(0, 166, 178, 0.15);
+    color: #80DEEA;
+    border: 1px solid rgba(0, 166, 178, 0.3);
+    border-left: 3px solid #00A6B2;
+}
+
+/* Custom scrollbar for events list */
+#calendar-events-list::-webkit-scrollbar {
+    width: 4px;
+}
+#calendar-events-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+#calendar-events-list::-webkit-scrollbar-thumb {
+    background: #1A2A30;
+    border-radius: 2px;
+}
+#calendar-events-list::-webkit-scrollbar-thumb:hover {
+    background: #2A4A50;
+}
+
 /* ==================== HEATMAP ==================== */
 .heatmap-section {
     margin-top: 1.25rem;

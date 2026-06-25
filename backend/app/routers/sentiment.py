@@ -488,7 +488,7 @@ Ensure the output is valid JSON, containing only the JSON structure. Do not incl
     }
     
     payload = {
-        "model": settings.deepseek_model,
+        "model": 'deepseek-v4-pro',
         "messages": [
             {
                 "role": "system",
@@ -559,9 +559,7 @@ async def get_upcoming_events():
         cur.execute(f"""
             SELECT id, event_title, event_description, event_time, event_category, importance, source_article_id
             FROM {settings.mimir_schema}.mimir_upcoming_events
-            WHERE event_time > NOW() - INTERVAL '1 hour'
             ORDER BY event_time ASC
-            LIMIT 10
         """)
         results = cur.fetchall()
         
@@ -633,9 +631,12 @@ async def generate_upcoming_events():
             articles_text += f"Title: {art['title']}\n"
             articles_text += f"Summary: {summary_text}\n\n"
             
+        current_date = datetime.now(timezone.utc)
+        current_date_str = current_date.strftime("%B %d, %Y")
+        
         prompt = f"""Analyze the provided financial news articles to extract a list of 4 to 6 UPCOMING major scheduled events, key decisions, corporate milestones (IPOs, earnings), or geopolitical events mentioned.
 
-Today's date is June 23, 2026. All extracted events MUST have their date set in the FUTURE (greater than June 23, 2026).
+Today's date is {current_date_str}. All extracted events MUST have their date set in the FUTURE (greater than {current_date_str}).
 
 CRITICAL REQUIREMENT:
 You MUST return at least 4 events. If the articles do not specify an exact date, you MUST estimate a logical date and time in late June or July 2026 based on the context of the upcoming event (e.g. if an article talks about SpaceX/OpenAI IPOs, set it to July 15, 2026; if it talks about Best Buy management meetings or Goldman Sachs earnings, set it to mid-July; if it talks about US-Iran peace talks or MSCI Indonesia standing, set it to late June 2026). Do not output an empty list!
@@ -643,7 +644,7 @@ You MUST return at least 4 events. If the articles do not specify an exact date,
 For each event:
 1. "title": Punchy, descriptive title (under 10 words, e.g. 'SpaceX & OpenAI IPO Pipeline Catalyst', 'Goldman Sachs Q2 Earnings Release').
 2. "description": A short paragraph (2-3 sentences) explaining what the event is and why it will shake up the stock market or the world.
-3. "event_time": The estimated future date in ISO 8601 UTC format (e.g. '2026-07-15T13:30:00Z'). Must be after today (2026-06-23).
+3. "event_time": The estimated future date in ISO 8601 UTC format (e.g. '2026-07-15T13:30:00Z'). Must be after today ({current_date_str}).
 4. "category": POLICY, CORPORATE, GEOPOLITICAL, or ECONOMIC.
 5. "importance": CRITICAL, HIGH, or MEDIUM.
 6. "source_article_id": The ID of the article mentioning the event.
@@ -700,13 +701,22 @@ Ensure the output is valid JSON, containing only the JSON structure.
         if not isinstance(events, list):
             events = []
             
-        cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_upcoming_events")
-        
         inserted_events = []
         for event in events[:6]:
             try:
                 event_time_str = event["event_time"]
                 if not event.get("title") or not event_time_str:
+                    continue
+                
+                # Check for duplicates on the same day (case-insensitive title and date comparison)
+                cur.execute(f"""
+                    SELECT id FROM {settings.mimir_schema}.mimir_upcoming_events
+                    WHERE LOWER(TRIM(event_title)) = LOWER(TRIM(%s))
+                      AND event_time::date = %s::date
+                """, (event["title"], event_time_str))
+                
+                if cur.fetchone():
+                    # Event already exists on this day, skip insertion
                     continue
                 
                 cur.execute(f"""
@@ -730,7 +740,27 @@ Ensure the output is valid JSON, containing only the JSON structure.
                 continue
                 
         conn.commit()
-        return {"status": "success", "events": inserted_events}
+        
+        # Fetch all events to return to the frontend calendar
+        cur.execute(f"""
+            SELECT id, event_title, event_description, event_time, event_category, importance, source_article_id
+            FROM {settings.mimir_schema}.mimir_upcoming_events
+            ORDER BY event_time ASC
+        """)
+        results = cur.fetchall()
+        all_events = []
+        for r in results:
+            all_events.append({
+                "id": r["id"],
+                "title": r["event_title"],
+                "description": r["event_description"],
+                "event_time": r["event_time"].isoformat(),
+                "category": r["event_category"],
+                "importance": r["importance"],
+                "source_article_id": r["source_article_id"]
+            })
+            
+        return {"status": "success", "events": all_events}
         
     except Exception as e:
         conn.rollback()
@@ -740,4 +770,4 @@ Ensure the output is valid JSON, containing only the JSON structure.
         conn.close()
 
 
-
+

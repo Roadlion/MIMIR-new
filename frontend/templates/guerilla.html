@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="px-8 py-6 max-w-7xl mx-auto space-y-6">
+    
+    <!-- Header -->
+    <div class="flex items-end justify-between border-b border-[#1A2A30] pb-4 mb-6">
+        <div>
+            <h1 class="text-3xl font-bold font-mono tracking-tight text-[#E8F1F0]">GUERILLA QUANT</h1>
+            <p class="text-sm text-[#4A6A70] font-mono mt-1">Niche Markets • Stat-Arb • Hybrid Sentiment</p>
+        </div>
+        <div class="flex gap-3">
+            <button id="run-scanner-btn" class="flex items-center gap-2 px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]">
+                <span>Run Master Scanner</span>
+                <svg id="scanner-spinner" class="animate-spin hidden" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                    <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                    <path d="M12 2a10 10 0 0 1 10 10"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Active Scanners</span>
+            <span class="text-2xl font-bold text-[#D6E5E3]">3</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Monitored Pairs</span>
+            <span class="text-2xl font-bold text-[#00A6B2]">15</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Data Sources</span>
+            <span class="text-2xl font-bold text-[#D6E5E3]">USDA, NOAA</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)]">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">High Conviction</span>
+            <span id="high-conviction-count" class="text-2xl font-bold text-[#ffd700]">0</span>
+        </div>
+    </div>
+
+    <!-- Scanner Results Table -->
+    <div class="card p-0 overflow-hidden">
+        <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+            <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Live Arb Opportunities</h2>
+            <span class="text-xs text-[#00A6B2] font-mono">Real-time Hybrid Signal</span>
+        </div>
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                    <th class="px-5 py-3">Pair (T1 / T2)</th>
+                    <th class="px-5 py-3">Math (Z-Score)</th>
+                    <th class="px-5 py-3">Spread (Mean -> Cur)</th>
+                    <th class="px-5 py-3">Base Signal</th>
+                    <th class="px-5 py-3">NLP Sentiment (T1/T2)</th>
+                    <th class="px-5 py-3">Conviction</th>
+                </tr>
+            </thead>
+            <tbody id="scanner-results" class="text-sm font-mono text-[#D6E5E3]">
+                <tr>
+                    <td colspan="6" class="px-5 py-8 text-center text-[#4A6A70]">Click 'Run Master Scanner' to analyze niche markets.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const runBtn = document.getElementById('run-scanner-btn');
+    const spinner = document.getElementById('scanner-spinner');
+    const resultsTable = document.getElementById('scanner-results');
+    const convictionCount = document.getElementById('high-conviction-count');
+
+    runBtn.addEventListener('click', async () => {
+        if (runBtn.disabled) return;
+        
+        runBtn.disabled = true;
+        spinner.classList.remove('hidden');
+        resultsTable.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-[#00A6B2] animate-pulse">Running Math + NLP Hybrid Analysis...</td></tr>`;
+        
+        try {
+            const res = await fetch('/api/v1/niche/opportunities');
+            if (!res.ok) throw new Error('API Error');
+            const data = await res.json();
+            
+            resultsTable.innerHTML = '';
+            let highConvCount = 0;
+
+            if (data.opportunities && data.opportunities.length > 0) {
+                data.opportunities.forEach(opp => {
+                    const tr = document.createElement('tr');
+                    tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+                    
+                    let signalColor = "#4A6A70";
+                    if (opp.signal.includes("LONG")) signalColor = "#00A6B2";
+                    if (opp.signal.includes("SHORT")) signalColor = "#ff4d4d";
+                    
+                    let convictionColor = "#D6E5E3";
+                    if (opp.conviction.includes("HIGH")) {
+                        convictionColor = "#ffd700"; // Gold
+                        highConvCount++;
+                    }
+                    if (opp.conviction.includes("WARNING")) convictionColor = "#ff4d4d"; // Red
+
+                    tr.innerHTML = `
+                        <td class="px-5 py-4 font-bold tracking-wide">${opp.pair}</td>
+                        <td class="px-5 py-4" style="color: ${opp.z_score > 2 || opp.z_score < -2 ? '#ffd700' : '#D6E5E3'}">${opp.z_score.toFixed(2)}</td>
+                        <td class="px-5 py-4">${opp.mean_spread.toFixed(2)} &rarr; ${opp.current_spread.toFixed(2)}</td>
+                        <td class="px-5 py-4 font-bold" style="color: ${signalColor}">${opp.signal}</td>
+                        <td class="px-5 py-4 text-xs font-mono text-[#8A9E9B]">${opp.sentiment_t1.toFixed(2)} / ${opp.sentiment_t2.toFixed(2)}</td>
+                        <td class="px-5 py-4 font-bold text-xs" style="color: ${convictionColor}">${opp.conviction}</td>
+                    `;
+                    resultsTable.appendChild(tr);
+                });
+                convictionCount.textContent = highConvCount;
+            } else {
+                resultsTable.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-[#4A6A70]">No significant stat-arb opportunities found.</td></tr>`;
+            }
+        } catch (err) {
+            console.error('Niche Scan Error:', err);
+            resultsTable.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-red-500/70">Failed to load scanner results.</td></tr>`;
+        } finally {
+            runBtn.disabled = false;
+            spinner.classList.add('hidden');
+        }
+    });
+});
+</script>
+{% endblock %}

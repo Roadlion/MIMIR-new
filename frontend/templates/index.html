@@ -114,6 +114,7 @@
             </div>
         </div>
 
+
         <!-- Market Heatmap Section -->
         <div class="heatmap-section mt-5">
             <!-- Index Tabs -->
@@ -189,43 +190,7 @@
             </div>
         </div>
 
-        <!-- Upcoming Events Section -->
-        <div class="upcoming-events-section mt-5">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-3">
-                    <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Upcoming Major Events</h2>
-                    <span id="upcoming-events-syncing" class="text-xs text-[#00A6B2] font-mono hidden">Syncing...</span>
-                </div>
-                <button id="upcoming-events-sync-btn" class="upcoming-events-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer" title="Scan articles to sync upcoming events">
-                    <span id="upcoming-events-btn-text">Scan Events</span>
-                    <!-- Sync icon / loading spinner -->
-                    <svg id="upcoming-events-spinner" class="animate-spin hidden" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
-                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25" class="stroke-[#00A6B2]"></circle>
-                        <path d="M12 2a10 10 0 0 1 10 10" class="stroke-[#00A6B2]"></path>
-                    </svg>
-                </button>
-            </div>
-            
-            <!-- Events Card -->
-            <div id="upcoming-events-container" class="upcoming-events-card card p-0 overflow-hidden flex flex-col">
-                <!-- Empty State -->
-                <div id="upcoming-events-empty" class="p-8 text-center flex flex-col items-center justify-center gap-3">
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2A4A50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <polyline points="12 6 12 12 16 14"></polyline>
-                    </svg>
-                    <div>
-                        <p class="text-sm font-bold text-[#8A9E9B]">No upcoming events synced</p>
-                        <p class="text-xs text-[#4A6A70] mt-1 font-mono">Press 'Scan Events' to parse forward-looking events from recent news.</p>
-                    </div>
-                </div>
 
-                <!-- Events List -->
-                <div id="upcoming-events-list" class="hidden divide-y divide-[#1A2A30]/50">
-                    <!-- Populated dynamically -->
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Right: Watchlist Panel (1/3) -->
@@ -282,6 +247,83 @@
         </div>
     </div>
 </div>
+
+        <!-- Upcoming Events Section -->
+        <div class="upcoming-events-section mt-5">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Upcoming Major Events</h2>
+                    <span id="upcoming-events-syncing" class="text-xs text-[#00A6B2] font-mono hidden">Syncing...</span>
+                </div>
+                <button id="upcoming-events-sync-btn" class="upcoming-events-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer" title="Scan articles to sync upcoming events">
+                    <span id="upcoming-events-btn-text">Scan Events</span>
+                    <!-- Sync icon / loading spinner -->
+                    <svg id="upcoming-events-spinner" class="animate-spin hidden" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25" class="stroke-[#00A6B2]"></circle>
+                        <path d="M12 2a10 10 0 0 1 10 10" class="stroke-[#00A6B2]"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Events Card -->
+            <div id="upcoming-events-container" class="upcoming-events-card card p-0 overflow-hidden flex flex-col">
+                <!-- Empty State -->
+                <div id="upcoming-events-empty" class="p-8 text-center flex flex-col items-center justify-center gap-3">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2A4A50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <div>
+                        <p class="text-sm font-bold text-[#8A9E9B]">No upcoming events synced</p>
+                        <p class="text-xs text-[#4A6A70] mt-1 font-mono">Press 'Scan Events' to parse forward-looking events from recent news.</p>
+                    </div>
+                </div>
+
+                <!-- Calendar Wrapper (hidden when empty) -->
+                <div id="calendar-wrapper" class="calendar-wrapper hidden flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-[#1A2A30]/50">
+                    <!-- Left Side: Calendar Grid -->
+                    <div class="calendar-grid-side p-4 lg:w-[72%] flex-1">
+                        <!-- Month Selector Header -->
+                        <div class="calendar-header flex items-center justify-between mb-4">
+                            <button id="cal-prev-btn" class="p-1 text-[#4A6A70] hover:text-[#00A6B2] hover:bg-[#1A2A30]/50 rounded transition-all cursor-pointer" title="Previous Month">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="15 18 9 12 15 6"></polyline>
+                                </svg>
+                            </button>
+                            <span id="cal-month-year" class="text-xs font-mono font-bold text-[#D6E5E3] uppercase tracking-wider">—</span>
+                            <button id="cal-next-btn" class="p-1 text-[#4A6A70] hover:text-[#00A6B2] hover:bg-[#1A2A30]/50 rounded transition-all cursor-pointer" title="Next Month">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="9 18 15 12 9 6"></polyline>
+                                </svg>
+                            </button>
+                        </div>
+                        
+                        <!-- Week Days Header -->
+                        <div class="calendar-weekdays grid grid-cols-7 text-center text-[10px] font-mono text-[#4A6A70] mb-2 font-bold uppercase tracking-wider">
+                            <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+                        </div>
+                        
+                        <!-- Days Grid -->
+                        <div id="calendar-days-grid" class="grid grid-cols-7">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                    
+                    <!-- Right Side: Selected Date Events List -->
+                    <div class="calendar-events-side p-4 lg:w-[28%] flex flex-col">
+                        <div class="flex items-center justify-between mb-3 border-b border-[#1A2A30]/30 pb-2">
+                            <span id="cal-events-title" class="text-[10px] font-mono text-[#4A6A70] uppercase font-bold tracking-wider truncate mr-2">Events</span>
+                            <button id="cal-show-all-btn" class="text-[9px] font-mono text-[#00A6B2] hover:text-[#00c5d3] bg-[#1A2A30]/50 hover:bg-[#1A2A30]/80 px-2 py-0.5 rounded transition-all cursor-pointer whitespace-nowrap">
+                                Show Month All
+                            </button>
+                        </div>
+                        <div id="calendar-events-list" class="flex-1 overflow-y-auto max-h-[540px] divide-y divide-[#1A2A30]/30 pr-1">
+                            <!-- Events populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1058,11 +1100,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ==================== UPCOMING EVENTS ====================
     const eventsContainer = document.getElementById('upcoming-events-container');
     const eventsEmpty = document.getElementById('upcoming-events-empty');
-    const eventsList = document.getElementById('upcoming-events-list');
+    const calendarWrapper = document.getElementById('calendar-wrapper');
+    const calendarDaysGrid = document.getElementById('calendar-days-grid');
+    const calendarMonthYear = document.getElementById('cal-month-year');
+    const calendarEventsTitle = document.getElementById('cal-events-title');
+    const calendarEventsList = document.getElementById('calendar-events-list');
+    const calendarPrevBtn = document.getElementById('cal-prev-btn');
+    const calendarNextBtn = document.getElementById('cal-next-btn');
+    const calendarShowAllBtn = document.getElementById('cal-show-all-btn');
     const eventsSyncBtn = document.getElementById('upcoming-events-sync-btn');
     const eventsBtnText = document.getElementById('upcoming-events-btn-text');
     const eventsSpinner = document.getElementById('upcoming-events-spinner');
 
+    let allEvents = [];
+    const todayDate = new Date();
+    let currentYear = todayDate.getFullYear();
+    let currentMonth = todayDate.getMonth();
+    let selectedDateStr = null;
     let countdownIntervalId = null;
 
     function startCountdownTimer() {
@@ -1100,30 +1154,224 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const sStr = String(seconds).padStart(2, '0');
                 
                 tickerEl.textContent = `${dStr}d : ${hStr}h : ${mStr}m : ${sStr}s`;
-                tickerEl.className = 'countdown-ticker font-mono text-xs md:text-sm font-bold text-[#00A6B2] tracking-wider mt-0.5 whitespace-nowrap';
+                tickerEl.className = 'countdown-ticker font-mono text-[10px] font-bold text-[#00A6B2] tracking-wider whitespace-nowrap';
             } else {
                 const twoHoursMs = 2 * 60 * 60 * 1000;
                 if (Math.abs(diff) < twoHoursMs) {
                     tickerEl.textContent = 'IN PROGRESS';
-                    tickerEl.className = 'countdown-ticker font-mono text-xs font-bold text-[#FFD740] tracking-wider mt-0.5 whitespace-nowrap animate-pulse';
+                    tickerEl.className = 'countdown-ticker font-mono text-[10px] font-bold text-[#FFD740] tracking-wider whitespace-nowrap animate-pulse';
                 } else {
                     tickerEl.textContent = 'COMPLETED';
-                    tickerEl.className = 'countdown-ticker font-mono text-[10px] font-semibold text-[#4A6A70] tracking-wider mt-0.5 whitespace-nowrap';
+                    tickerEl.className = 'countdown-ticker font-mono text-[9px] font-semibold text-[#4A6A70] tracking-wider whitespace-nowrap';
                 }
             }
         });
     }
 
-    function renderUpcomingEvents(events) {
-        if (!events || events.length === 0) {
+    function handleEventsState() {
+        if (!allEvents || allEvents.length === 0) {
             eventsEmpty.classList.remove('hidden');
-            eventsList.classList.add('hidden');
+            calendarWrapper.classList.add('hidden');
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+        } else {
+            eventsEmpty.classList.add('hidden');
+            calendarWrapper.classList.remove('hidden');
+        }
+    }
+
+    function renderCalendar() {
+        calendarDaysGrid.innerHTML = '';
+        
+        const monthNames = [
+            "January", "February", "March", "April", "May", "June", 
+            "July", "August", "September", "October", "November", "December"
+        ];
+        calendarMonthYear.textContent = `${monthNames[currentMonth]} ${currentYear}`;
+        
+        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        const firstDayIndex = new Date(currentYear, currentMonth, 1).getDay();
+        const prevMonthDays = new Date(currentYear, currentMonth, 0).getDate();
+        
+        // 1. Pad previous month's days
+        for (let i = firstDayIndex - 1; i >= 0; i--) {
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day-cell prev-next-month';
+            
+            const dayHeader = document.createElement('div');
+            dayHeader.className = 'calendar-day-header';
+            
+            const dayNum = document.createElement('span');
+            dayNum.className = 'calendar-day-number';
+            dayNum.textContent = prevMonthDays - i;
+            
+            dayHeader.appendChild(dayNum);
+            cell.appendChild(dayHeader);
+            calendarDaysGrid.appendChild(cell);
+        }
+        
+        // 2. Render current month's days
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day-cell';
+            cell.setAttribute('data-date', dateStr);
+            
+            // Create day header
+            const dayHeader = document.createElement('div');
+            dayHeader.className = 'calendar-day-header';
+            
+            const dayNum = document.createElement('span');
+            dayNum.className = 'calendar-day-number';
+            
+            // Display month name for the first day of the month (e.g. "Jun 1")
+            if (day === 1) {
+                const monthNamesShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                dayNum.textContent = `${monthNamesShort[currentMonth]} 1`;
+                dayNum.classList.add('first-day');
+            } else {
+                dayNum.textContent = day;
+            }
+            
+            // Handle today indicator circle
+            if (dateStr === todayStr) {
+                dayNum.classList.add('today-indicator');
+            }
+            
+            dayHeader.appendChild(dayNum);
+            cell.appendChild(dayHeader);
+            
+            const dayEvents = allEvents.filter(e => {
+                const eDate = new Date(e.event_time);
+                const eDateStr = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2, '0')}-${String(eDate.getDate()).padStart(2, '0')}`;
+                return eDateStr === dateStr;
+            });
+            
+            // Create events container inside cell
+            const cellEventsContainer = document.createElement('div');
+            cellEventsContainer.className = 'calendar-cell-events';
+            
+            if (dayEvents.length > 0) {
+                cell.classList.add('has-events');
+                
+                const importanceWeight = { 'CRITICAL': 3, 'HIGH': 2, 'MEDIUM': 1, 'OTHER': 0 };
+                const sortedEvents = [...dayEvents].sort((a, b) => {
+                    return (importanceWeight[b.importance] || 0) - (importanceWeight[a.importance] || 0);
+                });
+                
+                sortedEvents.forEach(ev => {
+                    const label = document.createElement('div');
+                    let impClass = 'other';
+                    if (ev.importance === 'CRITICAL') impClass = 'critical';
+                    else if (ev.importance === 'HIGH') impClass = 'high';
+                    else if (ev.importance === 'MEDIUM') impClass = 'medium';
+                    
+                    label.className = `calendar-event-label ${impClass}`;
+                    label.textContent = ev.title;
+                    label.title = ev.title;
+                    
+                    // Click on event should select the day
+                    label.addEventListener('click', (e) => {
+                        e.stopPropagation(); // prevent double triggers
+                        cell.click();
+                    });
+                    
+                    cellEventsContainer.appendChild(label);
+                });
+            }
+            cell.appendChild(cellEventsContainer);
+            
+            if (dateStr === todayStr) {
+                cell.classList.add('today');
+            }
+            
+            if (dateStr === selectedDateStr) {
+                cell.classList.add('selected');
+            }
+            
+            cell.addEventListener('click', () => {
+                const prevSelected = calendarDaysGrid.querySelector('.calendar-day-cell.selected');
+                if (prevSelected) prevSelected.classList.remove('selected');
+                
+                cell.classList.add('selected');
+                selectedDateStr = dateStr;
+                
+                renderEventsList();
+            });
+            
+            calendarDaysGrid.appendChild(cell);
+        }
+        
+        // 3. Pad next month's days to fill standard 42 cell grid (6 rows)
+        const totalCellsUsed = firstDayIndex + daysInMonth;
+        const totalCellsNeeded = 42;
+        const nextMonthPadding = totalCellsNeeded - totalCellsUsed;
+        
+        for (let i = 1; i <= nextMonthPadding; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day-cell prev-next-month';
+            
+            const dayHeader = document.createElement('div');
+            dayHeader.className = 'calendar-day-header';
+            
+            const dayNum = document.createElement('span');
+            dayNum.className = 'calendar-day-number';
+            dayNum.textContent = i;
+            
+            dayHeader.appendChild(dayNum);
+            cell.appendChild(dayHeader);
+            calendarDaysGrid.appendChild(cell);
+        }
+    }
+
+    function renderEventsList() {
+        if (!allEvents || allEvents.length === 0) {
+            calendarEventsList.innerHTML = '<div class="p-4 text-center text-xs text-[#4A6A70]">No events synced</div>';
+            return;
+        }
+        
+        let filteredEvents = [];
+        
+        if (selectedDateStr) {
+            const selectedDate = new Date(selectedDateStr + 'T00:00:00');
+            calendarEventsTitle.textContent = `Events: ${selectedDate.toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'})}`;
+            
+            filteredEvents = allEvents.filter(e => {
+                const eDate = new Date(e.event_time);
+                const eDateStr = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2, '0')}-${String(eDate.getDate()).padStart(2, '0')}`;
+                return eDateStr === selectedDateStr;
+            });
+        } else {
+            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            calendarEventsTitle.textContent = `All Events: ${monthNames[currentMonth]} ${currentYear}`;
+            
+            filteredEvents = allEvents.filter(e => {
+                const eDate = new Date(e.event_time);
+                return eDate.getFullYear() === currentYear && eDate.getMonth() === currentMonth;
+            });
+        }
+        
+        if (filteredEvents.length === 0) {
+            calendarEventsList.innerHTML = `
+                <div class="p-8 text-center flex flex-col items-center justify-center gap-2">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2A4A50" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    <span class="text-xs font-mono text-[#4A6A70]">No events scheduled</span>
+                </div>
+            `;
             if (countdownIntervalId) clearInterval(countdownIntervalId);
             return;
         }
-
-        eventsList.innerHTML = events.map(event => {
-            let importanceColor = '#00E676'; // Medium
+        
+        calendarEventsList.innerHTML = filteredEvents.map(event => {
+            let importanceColor = '#00E676';
             let importanceBg = 'bg-[#00E676]/10';
             let importanceText = 'text-[#00E676]';
             
@@ -1137,32 +1385,31 @@ document.addEventListener('DOMContentLoaded', async () => {
                 importanceText = 'text-[#FF9100]';
             }
             
+            const eventDate = new Date(event.event_time);
+            const dateDisplayStr = `${eventDate.toLocaleDateString()} ${eventDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+            
             return `
-                <div class="upcoming-event-item p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 hover:bg-[#0c1417]/20 transition-colors" data-time="${event.event_time}">
-                    <div class="flex items-start gap-3 flex-1 min-w-0">
-                        <div class="w-1 self-stretch rounded-full" style="background-color: ${importanceColor}; min-height: 24px;"></div>
+                <div class="upcoming-event-item py-3 flex flex-col gap-2 hover:bg-[#0c1417]/20 transition-colors" data-time="${event.event_time}">
+                    <div class="flex items-start gap-2 flex-1 min-w-0">
+                        <div class="w-1 self-stretch rounded-full" style="background-color: ${importanceColor}; min-height: 20px;"></div>
                         <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap mb-1">
-                                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${importanceBg} ${importanceText} font-bold">${event.importance}</span>
-                                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1A2A30] text-[#8A9E9B] uppercase">${event.category}</span>
-                                <span class="text-[10px] text-[#4A6A70] font-mono">${new Date(event.event_time).toLocaleDateString()} ${new Date(event.event_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                            <div class="flex items-center gap-1.5 flex-wrap mb-1">
+                                <span class="text-[9px] font-mono px-1 py-0.2 rounded ${importanceBg} ${importanceText} font-bold">${event.importance}</span>
+                                <span class="text-[9px] font-mono px-1 py-0.2 rounded bg-[#1A2A30] text-[#8A9E9B] uppercase">${event.category}</span>
+                                <span class="text-[9px] text-[#4A6A70] font-mono">${dateDisplayStr}</span>
                             </div>
-                            <h4 class="text-sm font-semibold text-[#D6E5E3] leading-snug">${event.title}</h4>
-                            <p class="text-xs text-[#8A9E9B] mt-1">${event.description}</p>
+                            <h4 class="text-xs font-semibold text-[#D6E5E3] leading-snug">${event.title}</h4>
+                            <p class="text-[11px] text-[#8A9E9B] mt-0.5 leading-normal">${event.description}</p>
                         </div>
                     </div>
-                    <div class="flex flex-col items-start md:items-end justify-center flex-shrink-0">
-                        <span class="text-[9px] text-[#4A6A70] font-mono uppercase tracking-wider">Countdown</span>
-                        <span class="countdown-ticker font-mono text-xs md:text-sm font-bold text-[#00A6B2] tracking-wider mt-0.5 whitespace-nowrap">--d : --h : --m : --s</span>
+                    <div class="flex flex-row items-center justify-between border-t border-[#1A2A30]/20 pt-1.5 mt-0.5">
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase tracking-wider">Countdown:</span>
+                        <span class="countdown-ticker font-mono text-[10px] font-bold text-[#00A6B2] tracking-wider whitespace-nowrap">--d : --h : --m : --s</span>
                     </div>
                 </div>
             `;
         }).join('');
-
-        eventsEmpty.classList.add('hidden');
-        eventsList.classList.remove('hidden');
-
-        // Start countdown timer loop
+        
         startCountdownTimer();
     }
 
@@ -1171,16 +1418,49 @@ document.addEventListener('DOMContentLoaded', async () => {
             const res = await fetch('/api/v1/upcoming-events');
             if (res.ok) {
                 const data = await res.json();
-                if (data.status === 'success' && data.events && data.events.length > 0) {
-                    renderUpcomingEvents(data.events);
+                if (data.status === 'success' && data.events) {
+                    allEvents = data.events;
+                    handleEventsState();
+                    renderCalendar();
+                    renderEventsList();
                 } else {
-                    renderUpcomingEvents(null);
+                    allEvents = [];
+                    handleEventsState();
                 }
             }
         } catch (err) {
             console.error('Error loading upcoming events:', err);
         }
     }
+
+    calendarPrevBtn.addEventListener('click', () => {
+        currentMonth--;
+        if (currentMonth < 0) {
+            currentMonth = 11;
+            currentYear--;
+        }
+        selectedDateStr = null;
+        renderCalendar();
+        renderEventsList();
+    });
+
+    calendarNextBtn.addEventListener('click', () => {
+        currentMonth++;
+        if (currentMonth > 11) {
+            currentMonth = 0;
+            currentYear++;
+        }
+        selectedDateStr = null;
+        renderCalendar();
+        renderEventsList();
+    });
+
+    calendarShowAllBtn.addEventListener('click', () => {
+        selectedDateStr = null;
+        const prevSelected = calendarDaysGrid.querySelector('.calendar-day-cell.selected');
+        if (prevSelected) prevSelected.classList.remove('selected');
+        renderEventsList();
+    });
 
     eventsSyncBtn.addEventListener('click', async () => {
         eventsSyncBtn.disabled = true;
@@ -1194,7 +1474,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (res.ok) {
                 const data = await res.json();
                 if (data.status === 'success' && data.events) {
-                    renderUpcomingEvents(data.events);
+                    allEvents = data.events;
+                    handleEventsState();
+                    renderCalendar();
+                    renderEventsList();
                 } else {
                     alert('Failed to sync events: Empty response');
                 }
@@ -1663,6 +1946,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ---- Initial load ----
         loadHeatmap(currentIndex);
     })();
+
+
 
 });
 </script>

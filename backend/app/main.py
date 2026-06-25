@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy
+from .routers import articles, sentiment, prices, refresh, taxonomy, niche
 from .config import get_settings
 
 settings = get_settings()
@@ -22,7 +22,7 @@ app.include_router(sentiment.router, prefix="/api/v1", tags=["sentiment"])
 app.include_router(prices.router, prefix="/api/v1", tags=["prices"])
 app.include_router(refresh.router, prefix="/api/v1", tags=["refresh"])
 app.include_router(taxonomy.router, prefix="/api/v1", tags=["taxonomy"])
-
+app.include_router(niche.router, prefix="/api/v1", tags=["niche"])
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(BASE_DIR, "frontend", "static")
@@ -49,6 +49,10 @@ async def watchlist_page(request: Request):
 @app.get("/taxonomy", response_class=HTMLResponse)
 async def taxonomy_page(request: Request):
     return templates.TemplateResponse(request, "taxonomy.html")
+
+@app.get("/guerilla", response_class=HTMLResponse)
+async def guerilla_page(request: Request):
+    return templates.TemplateResponse(request, "guerilla.html")
 
 @app.get("/health")
 async def health():
