@@ -6,10 +6,13 @@ import asyncio
 import queue
 import threading
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from .prices import DEFAULT_TICKERS, fetch_and_cache_ticker
 from ..database import get_db_connection
+from ..config import get_settings
+from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
 
@@ -106,60 +109,78 @@ async def refresh_stream():
                 conn.close()
                 
                 combined_tickers = set(tickers_to_fetch + impact_tickers + dynamic_tickers)
-                tickers_to_fetch = sorted(list(combined_tickers))
+                cleaned = [t.strip().lstrip('$').upper() for t in combined_tickers if t]
+                tickers_to_fetch = sorted(list(set(cleaned)))
                 safe_print(f"[REFRESH] Combined tickers to fetch ({len(tickers_to_fetch)}): {tickers_to_fetch}")
             except Exception as dbe:
                 safe_print(f"[REFRESH] Error retrieving dynamic tickers from DB: {dbe}")
 
-            num_tickers = len(tickers_to_fetch)
-            for i, ticker in enumerate(tickers_to_fetch):
-                pct = int((i / num_tickers) * 30)
-                yield f"data: {json.dumps({'type': 'progress', 'step': 'prices', 'percentage': pct, 'message': f'Updating price for {ticker}...'})}\n\n"
+            # 1. Bulk check cache freshness for all combined tickers
+            settings = get_settings()
+            stale_tickers = []
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute(f"""
+                    SELECT ticker, MAX(scraped_at) as last_scraped 
+                    FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
+                    WHERE ticker = ANY(%s)
+                    GROUP BY ticker
+                """, (tickers_to_fetch,))
+                rows = cur.fetchall()
+                cur.close()
+                conn.close()
                 
-                safe_print(f"[REFRESH] Fetching price for {ticker} ({i+1}/{num_tickers})...")
+                last_scraped_map = {row[0]: row[1] for row in rows}
+                now_ts = datetime.now(timezone.utc)
                 
-                # Run database cache insertion in a separate thread to avoid blocking async loop
-                def run_fetch(t):
-                    from datetime import datetime, timezone, timedelta
-                    from ..config import get_settings
-                    settings = get_settings()
-                    conn = get_db_connection()
-                    try:
-                        cur = conn.cursor()
-                        cur.execute(f"""
-                            SELECT MAX(scraped_at) as last_scraped 
-                            FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
-                            WHERE ticker = %s
-                        """, (t,))
-                        row = cur.fetchone()
-                        last_scraped = row[0] if row else None
-                        cur.close()
-                        
-                        is_stale = False
-                        if not last_scraped:
-                            is_stale = True
+                for t in tickers_to_fetch:
+                    last_scraped = last_scraped_map.get(t)
+                    is_stale = False
+                    if not last_scraped:
+                        is_stale = True
+                    else:
+                        if last_scraped.tzinfo is not None:
+                            if now_ts - last_scraped > timedelta(minutes=2):
+                                is_stale = True
                         else:
-                            now_ts = datetime.now(timezone.utc)
-                            if last_scraped.tzinfo is not None:
-                                if now_ts - last_scraped > timedelta(hours=1):
-                                    is_stale = True
-                            else:
-                                if datetime.now() - last_scraped > timedelta(hours=1):
-                                    is_stale = True
-                                    
-                        if not is_stale:
-                            safe_print(f"[REFRESH] Cache hit: Found recent cached price data for {t} (last scraped {last_scraped}). Skipping yfinance fetch.")
-                            return
-                            
-                        fetch_and_cache_ticker(t, conn)
-                    finally:
-                        conn.close()
+                            if datetime.now() - last_scraped > timedelta(minutes=2):
+                                is_stale = True
+                    if is_stale:
+                        stale_tickers.append(t)
+            except Exception as e:
+                safe_print(f"[REFRESH] Error checking bulk price cache: {e}")
+                stale_tickers = tickers_to_fetch
+
+            safe_print(f"[REFRESH] Out of {len(tickers_to_fetch)} tickers, {len(stale_tickers)} are stale/missing and will be fetched from yfinance.")
+
+            if stale_tickers:
+                futures = {}
+                max_workers = min(len(stale_tickers), 5)
+                completed_count = 0
                 
-                try:
-                    await asyncio.to_thread(run_fetch, ticker)
-                except Exception as e:
-                    safe_print(f"[REFRESH] Error fetching price for {ticker}: {e}")
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    for ticker in stale_tickers:
+                        def run_fetch(t):
+                            try:
+                                return fetch_and_cache_ticker(t, None)
+                            except Exception as ex:
+                                safe_print(f"[REFRESH] Error fetching {t}: {ex}")
+                                return False
+                        fut = executor.submit(run_fetch, ticker)
+                        futures[fut] = ticker
                     
+                    for fut in as_completed(futures):
+                        ticker = futures[fut]
+                        completed_count += 1
+                        pct = int((completed_count / len(stale_tickers)) * 30)
+                        success = fut.result()
+                        msg = f"Price for {ticker} updated." if success else f"Failed to update price for {ticker}."
+                        yield f"data: {json.dumps({'type': 'progress', 'step': 'prices', 'percentage': pct, 'message': msg})}\n\n"
+                        safe_print(f"[REFRESH] Price for {ticker} updated ({completed_count}/{len(stale_tickers)}).")
+            else:
+                yield f"data: {json.dumps({'type': 'progress', 'step': 'prices', 'percentage': 30, 'message': 'All prices are already up to date.'})}\n\n"
+                
             yield f"data: {json.dumps({'type': 'progress', 'step': 'prices', 'percentage': 30, 'message': 'Price updates completed.'})}\n\n"
             safe_print("[REFRESH] All ticker price updates completed.")
             

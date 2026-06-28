@@ -1,0 +1,923 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR — Geopolitical Sentiment Map{% endblock %}
+
+{% block head_extra %}
+<!-- Load amCharts 5 Libraries -->
+<script src="https://cdn.amcharts.com/lib/5/index.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/map.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/geodata/worldLow.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/themes/Animated.js"></script>
+
+<style>
+    /* Styling for amCharts tooltip container overrides if necessary */
+    .am5-tooltip-container {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 11px !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex flex-col lg:flex-row gap-6 w-full">
+    <!-- Left 2/3: Metrics Cards + Map -->
+    <div class="w-full lg:w-2/3 flex flex-col gap-6">
+        <!-- Timeframe & Header bar -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#1A2A30] pb-4">
+            <div class="flex flex-wrap items-center gap-4">
+                <div>
+                    <h1 class="text-xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']">Geopolitical Sentiment</h1>
+                    <p class="text-xs text-[#4A6A70] font-mono mt-0.5">Global macro sentiment indicators mapping news flow to geography</p>
+                </div>
+                <!-- Active Filter Badge -->
+                <div id="active-filter-badge" class="hidden flex items-center gap-2 bg-[#00A6B2]/10 border border-[#00A6B2]/30 px-3 py-1 rounded text-xs font-mono text-[#00A6B2] shadow-sm animate-fade-in">
+                    <span id="active-filter-text">Global</span>
+                    <button onclick="clearFilter()" class="hover:text-[#00E5F2] font-bold ml-1.5 focus:outline-none" title="Clear Filter">✕</button>
+                </div>
+            </div>
+            
+            <!-- Timeframe selector -->
+            <div class="flex items-center gap-1 bg-[#111A20] border border-[#1A2A30] p-0.5 rounded text-xs font-mono">
+                <button id="tf-24h" onclick="changeTimeframe(1, this)" class="timeframe-btn px-2.5 py-1 rounded text-[#4A6A70] hover:text-[#D6E5E3] transition-colors">24H</button>
+                <button id="tf-7d" onclick="changeTimeframe(7, this)" class="timeframe-btn px-2.5 py-1 rounded bg-[#1A2A30] text-[#00A6B2] font-semibold transition-colors">7D</button>
+                <button id="tf-30d" onclick="changeTimeframe(30, this)" class="timeframe-btn px-2.5 py-1 rounded text-[#4A6A70] hover:text-[#D6E5E3] transition-colors">30D</button>
+            </div>
+        </div>
+
+        <!-- 3 Metrics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Card 1: Sentiment -->
+            <div class="bg-[#111A20] border border-[#1A2A30] hover:border-[#00A6B2] p-5 rounded-lg flex flex-col justify-between transition-all duration-300 shadow-lg shadow-black/30 relative overflow-hidden group">
+                <div class="absolute top-0 left-0 w-1 h-full bg-[#00A6B2]"></div>
+                <div>
+                    <span id="card-sentiment-title" class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider block mb-1">Global Sentiment</span>
+                    <h3 id="metric-sentiment-val" class="text-2xl font-bold text-[#D6E5E3] font-mono tracking-tight">--</h3>
+                </div>
+                <div class="mt-4 flex items-center justify-between text-xs font-mono border-t border-[#1A2A30]/50 pt-2.5">
+                    <span class="text-[#00E676]" id="metric-bullish">Bullish: --</span>
+                    <span class="text-[#FF5252]" id="metric-bearish">Bearish: --</span>
+                </div>
+            </div>
+            
+            <!-- Card 2: Top Mover -->
+            <div class="bg-[#111A20] border border-[#1A2A30] hover:border-[#00A6B2] p-5 rounded-lg flex flex-col justify-between transition-all duration-300 shadow-lg shadow-black/30 relative overflow-hidden group">
+                <div class="absolute top-0 left-0 w-1 h-full bg-[#FFD740]"></div>
+                <div class="w-full">
+                    <span id="card-mover-title" class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider block mb-1">Top Mover Asset</span>
+                    <h3 id="metric-top-mover-name" class="text-base font-bold text-[#D6E5E3] truncate">--</h3>
+                    <p id="metric-top-mover-ticker" class="text-[10px] font-mono text-[#4A6A70] mt-0.5">--</p>
+                </div>
+                <div class="mt-4 flex items-center justify-between text-xs font-mono border-t border-[#1A2A30]/50 pt-2.5">
+                    <span class="text-[#00A6B2]" id="metric-top-mover-sentiment">Sent: --</span>
+                    <span class="text-[#00E676]" id="metric-top-mover-change">Change: --</span>
+                </div>
+            </div>
+
+            <!-- Card 3: Articles Count -->
+            <div class="bg-[#111A20] border border-[#1A2A30] hover:border-[#00A6B2] p-5 rounded-lg flex flex-col justify-between transition-all duration-300 shadow-lg shadow-black/30 relative overflow-hidden group">
+                <div class="absolute top-0 left-0 w-1 h-full bg-[#00E5F2]"></div>
+                <div>
+                    <span id="card-volume-title" class="text-xs font-mono text-[#4A6A70] uppercase tracking-wider block mb-1">Analyzed Volume</span>
+                    <h3 id="metric-volume-val" class="text-2xl font-bold text-[#D6E5E3] font-mono tracking-tight">--</h3>
+                </div>
+                <div class="mt-4 text-xs font-mono text-[#4A6A70] border-t border-[#1A2A30]/50 pt-2.5 flex justify-between items-center">
+                    <span id="card-volume-status">Active Stream</span>
+                    <span class="flex h-2 w-2 relative">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00E5F2] opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-[#00E5F2]"></span>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Geopolitical Map Card -->
+        <div class="bg-[#111A20] border border-[#1A2A30] p-6 rounded-lg shadow-lg shadow-black/50 flex flex-col h-[520px]">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                <div>
+                    <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Geopolitical Sentiment Grid</h2>
+                    <p class="text-xs text-[#4A6A70] font-mono mt-0.5">Click region to filter cards. Click country within region to filter further.</p>
+                </div>
+                <div class="flex items-center gap-4 text-[10px] font-mono">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded bg-[#FF5252]/80 border border-[#FF5252]"></span>
+                        <span class="text-[#4A6A70]">Bearish (-1.0)</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded bg-[#1e2d35] border border-[#2A4A50]"></span>
+                        <span class="text-[#4A6A70]">Neutral</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded bg-[#00E676]/80 border border-[#00E676]"></span>
+                        <span class="text-[#4A6A70]">Bullish (+1.0)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="chartdiv" class="w-full flex-grow bg-[#090F13] rounded border border-[#142228] relative overflow-hidden">
+                <!-- Loader overlay inside map -->
+                <div id="map-loader" class="absolute inset-0 bg-[#0A161C]/80 z-10 flex flex-col items-center justify-center gap-3 transition-opacity duration-300">
+                    <div class="w-8 h-8 rounded-full border-2 border-t-[#00A6B2] border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+                    <span class="text-[10px] font-mono text-[#4A6A70] tracking-wider uppercase">Loading Geodata...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right 1/3: Dynamic Side Panel -->
+    <div class="w-full lg:w-1/3 flex flex-col gap-6">
+        <div id="side-panel-content" class="bg-[#111A20] border border-[#1A2A30] p-6 rounded-lg shadow-lg shadow-black/50 flex flex-col min-h-[500px]">
+            <!-- Loader inside side panel -->
+            <div id="side-panel-loader" class="flex-grow flex flex-col items-center justify-center gap-3 py-10">
+                <div class="w-8 h-8 rounded-full border-2 border-t-[#00A6B2] border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+                <span class="text-[10px] font-mono text-[#4A6A70] tracking-wider uppercase">Loading side panel...</span>
+            </div>
+            <div id="side-panel-dynamic-body" class="hidden flex flex-col gap-6">
+                <!-- Dynamically populated states will go here -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // State management
+    let currentDays = 7;
+    let regionSentimentData = {};
+    let countrySentimentData = {};
+    let am5Root = null;
+    let polygonSeries = null;
+    let regionPolygons = {}; // regionCode -> array of MapPolygons
+
+    // Click filter states
+    let activeRegion = null;
+    let activeCountry = null;
+    let activeCountryName = null;
+    const topMoverInfoCache = {};
+
+    // Country code to database region code mapping
+    const COUNTRY_TO_REGION = {
+        // NA (North America)
+        "US": "NA", "CA": "NA", "MX": "NA", "GL": "NA",
+        
+        // EU (Europe)
+        "GB": "EU", "DE": "EU", "FR": "EU", "IT": "EU", "ES": "EU", "CH": "EU", 
+        "NL": "EU", "BE": "EU", "AT": "EU", "DK": "EU", "FI": "EU", "GR": "EU", 
+        "IE": "EU", "NO": "EU", "PT": "EU", "SE": "EU", "PL": "EU", "UA": "EU", 
+        "RO": "EU", "HU": "EU", "CZ": "EU", "SK": "EU", "BG": "EU", "HR": "EU",
+        "EE": "EU", "LV": "EU", "LT": "EU", "SI": "EU", "IS": "EU", "LU": "EU",
+
+        // APAC (Asia-Pacific excluding ASEAN)
+        "JP": "APAC", "CN": "APAC", "KR": "APAC", "IN": "APAC", "AU": "APAC", 
+        "NZ": "APAC", "TW": "APAC", "PK": "APAC", "BD": "APAC", "LK": "APAC", 
+        "NP": "APAC", "MN": "APAC", "KP": "APAC", "AF": "APAC",
+
+        // ASEAN (Southeast Asia)
+        "SG": "ASEAN", "TH": "ASEAN", "MY": "ASEAN", "ID": "ASEAN", "PH": "ASEAN", 
+        "VN": "ASEAN", "MM": "ASEAN", "KH": "ASEAN", "LA": "ASEAN", "BN": "ASEAN", 
+        "TL": "ASEAN",
+
+        // LATAM (Latin America)
+        "BR": "LATAM", "AR": "LATAM", "CL": "LATAM", "CO": "LATAM", "PE": "LATAM", 
+        "VE": "LATAM", "EC": "LATAM", "BO": "LATAM", "PY": "LATAM", "UY": "LATAM", 
+        "GT": "LATAM", "HN": "LATAM", "SV": "LATAM", "NI": "LATAM", "CR": "LATAM", 
+        "PA": "LATAM", "CU": "LATAM", "DO": "LATAM", "PR": "LATAM", "JM": "LATAM",
+
+        // MENA (Middle East & North Africa)
+        "SA": "MENA", "AE": "MENA", "IL": "MENA", "TR": "MENA", "IR": "MENA", 
+        "IQ": "MENA", "JO": "MENA", "LB": "MENA", "SY": "MENA", "YE": "MENA", 
+        "OM": "MENA", "QA": "MENA", "KW": "MENA", "BH": "MENA", "EG": "MENA",
+        "LY": "MENA", "TN": "MENA", "DZ": "MENA", "MA": "MENA", "SD": "MENA",
+
+        // AFRICA (Sub-Saharan Africa)
+        "ZA": "AFRICA", "KE": "AFRICA", "NG": "AFRICA", "GH": "AFRICA", "TZ": "AFRICA", 
+        "UG": "AFRICA", "ET": "AFRICA", "AO": "AFRICA", "MZ": "AFRICA", "CI": "AFRICA",
+        "CM": "AFRICA", "SN": "AFRICA", "ZW": "AFRICA", "ZM": "AFRICA", "CD": "AFRICA", 
+        "CG": "AFRICA", "GA": "AFRICA", "NE": "AFRICA", "TD": "AFRICA", "ML": "AFRICA", 
+        "MR": "AFRICA", "MG": "AFRICA", "NA": "AFRICA", "BW": "AFRICA", "SZ": "AFRICA", 
+        "LS": "AFRICA"
+    };
+
+    // Calculate sentiment color code
+    function getSentimentColor(sentiment) {
+        // Range: -1.0 (bearish red) to 0.0 (neutral slate) to +1.0 (bullish green)
+        const neutralColor = { r: 30, g: 45, b: 53 };    // #1e2d35
+        const positiveColor = { r: 0, g: 230, b: 118 };   // #00E676
+        const negativeColor = { r: 255, g: 82, b: 82 };   // #FF5252
+        
+        let targetColor;
+        let ratio = Math.abs(sentiment);
+        if (ratio > 1) ratio = 1;
+        
+        if (sentiment > 0) {
+            targetColor = positiveColor;
+        } else if (sentiment < 0) {
+            targetColor = negativeColor;
+        } else {
+            return am5.color(0x1e2d35);
+        }
+        
+        const r = Math.round(neutralColor.r + (targetColor.r - neutralColor.r) * ratio);
+        const g = Math.round(neutralColor.g + (targetColor.g - neutralColor.g) * ratio);
+        const b = Math.round(neutralColor.b + (targetColor.b - neutralColor.b) * ratio);
+        
+        return am5.color((r << 16) + (g << 8) + b);
+    }
+
+    // Initialize Map
+    function initMap() {
+        // Create root element
+        am5Root = am5.Root.new("chartdiv");
+
+        // Set themes
+        am5Root.setThemes([
+            am5themes_Animated.new(am5Root)
+        ]);
+
+        // Create the map chart
+        const chart = am5Root.container.children.push(am5map.MapChart.new(am5Root, {
+            panX: "rotateX",
+            panY: "translateY",
+            projection: am5map.geoEqualEarth(),
+            paddingBottom: 15,
+            paddingTop: 15,
+            paddingLeft: 15,
+            paddingRight: 15
+        }));
+
+        // Create main polygon series for countries
+        polygonSeries = chart.series.push(am5map.MapPolygonSeries.new(am5Root, {
+            geoJSON: am5geodata_worldLow,
+            exclude: ["AQ"] // exclude Antarctica
+        }));
+
+        // Configure default template settings
+        polygonSeries.mapPolygons.template.setAll({
+            fill: am5.color(0x1e2d35),
+            fillOpacity: 0.8,
+            stroke: am5.color(0x090f13),
+            strokeWidth: 0.5,
+            interactive: true
+        });
+
+        // Set hover state
+        polygonSeries.mapPolygons.template.states.create("hover", {
+            fillOpacity: 1.0,
+            stroke: am5.color(0x00a6b2),
+            strokeWidth: 1.2
+        });
+
+        // Configure Tooltips
+        const tooltip = am5.Tooltip.new(am5Root, {
+            getFillFromSprite: false,
+            labelText: "[bold]{name}[/]"
+        });
+
+        tooltip.get("background").setAll({
+            fill: am5.color(0x0d161a),
+            fillOpacity: 0.95,
+            stroke: am5.color(0x1a2a30),
+            strokeWidth: 1
+        });
+
+        polygonSeries.mapPolygons.template.set("tooltip", tooltip);
+
+        // Bind Tooltip Label Adapter to customize text per region/country
+        polygonSeries.mapPolygons.template.adapters.add("tooltipText", function(text, target) {
+            const countryId = target.dataItem.dataContext.id;
+            const region = COUNTRY_TO_REGION[countryId];
+            
+            if (activeRegion && region === activeRegion) {
+                // If a region is active, show country-specific sentiment for countries in that region
+                const cData = countrySentimentData[countryId];
+                if (cData && cData.article_count > 0) {
+                    const sentiment = cData.avg_sentiment;
+                    let sentimentStr = sentiment.toFixed(2);
+                    let directionText = "Neutral";
+                    let directionColor = "ffd740"; // Yellow
+                    
+                    if (sentiment > 0.05) {
+                        sentimentStr = "+" + sentimentStr;
+                        directionText = "Bullish";
+                        directionColor = "00e676"; // Green
+                    } else if (sentiment < -0.05) {
+                        directionText = "Bearish";
+                        directionColor = "ff5252"; // Red
+                    }
+
+                    return `[bold text-[#D6E5E3] font-mono]Country: ${target.dataItem.dataContext.name} (${countryId})[/]\n` +
+                           `[font-mono text-[#8a9e9b]]Avg Sentiment:[/] [bold text-[#${directionColor}] font-mono]${sentimentStr} (${directionText})[/]\n` +
+                           `[font-mono text-[#8a9e9b]]Articles:[/] [bold text-[#D6E5E3] font-mono]${cData.article_count}[/]`;
+                }
+                return `[bold text-[#D6E5E3] font-mono]Country: ${target.dataItem.dataContext.name} (${countryId})[/]\n[font-mono text-[#4A6A70]]No active country sentiment data[/]`;
+            }
+            
+            if (region) {
+                const data = regionSentimentData[region];
+                if (data && data.article_count > 0) {
+                    const sentiment = data.avg_sentiment;
+                    let sentimentStr = sentiment.toFixed(2);
+                    let directionText = "Neutral";
+                    let directionColor = "ffd740"; // Yellow
+                    
+                    if (sentiment > 0.05) {
+                        sentimentStr = "+" + sentimentStr;
+                        directionText = "Bullish";
+                        directionColor = "00e676"; // Green
+                    } else if (sentiment < -0.05) {
+                        directionText = "Bearish";
+                        directionColor = "ff5252"; // Red
+                    }
+
+                    return `[bold text-[#D6E5E3] font-mono]Region: ${region}[/]\n` +
+                           `[font-mono text-[#8a9e9b]]Avg Sentiment:[/] [bold text-[#${directionColor}] font-mono]${sentimentStr} (${directionText})[/]\n` +
+                           `[font-mono text-[#8a9e9b]]Articles:[/] [bold text-[#D6E5E3] font-mono]${data.article_count}[/]\n` +
+                           `[#00e676 font-mono]Bullish: ${data.bullish_count}[/] / [#ff5252 font-mono]Bearish: ${data.bearish_count}[/]`;
+                }
+                return `[bold text-[#D6E5E3] font-mono]Region: ${region}[/]\n[font-mono text-[#4A6A70]]No active sentiment data[/]`;
+            }
+            return `[bold text-[#D6E5E3] font-mono]${target.dataItem.dataContext.name}[/]\n[font-mono text-[#4A6A70]]Geopolitical region unmapped[/]`;
+        });
+
+        // Group polygons by region on validation
+        polygonSeries.events.on("datavalidated", function() {
+            regionPolygons = {};
+            polygonSeries.mapPolygons.each(function(polygon) {
+                const countryId = polygon.dataItem.dataContext.id;
+                const region = COUNTRY_TO_REGION[countryId];
+                if (region) {
+                    if (!regionPolygons[region]) {
+                        regionPolygons[region] = [];
+                    }
+                    regionPolygons[region].push(polygon);
+                }
+            });
+
+            // Trigger colors update
+            updateMapColors();
+            // Hide Loader
+            const loader = document.getElementById("map-loader");
+            if (loader) loader.classList.add("opacity-0", "pointer-events-none");
+        });
+
+        // Setup region-wide hover highlights
+        polygonSeries.mapPolygons.template.events.on("pointerover", function(ev) {
+            const countryId = ev.target.dataItem.dataContext.id;
+            const region = COUNTRY_TO_REGION[countryId];
+            if (region && regionPolygons[region] && !activeCountry) {
+                regionPolygons[region].forEach(function(rPolygon) {
+                    rPolygon.states.applyAnimate("hover");
+                });
+            }
+        });
+
+        polygonSeries.mapPolygons.template.events.on("pointerout", function(ev) {
+            const countryId = ev.target.dataItem.dataContext.id;
+            const region = COUNTRY_TO_REGION[countryId];
+            if (region && regionPolygons[region] && !activeCountry) {
+                regionPolygons[region].forEach(function(rPolygon) {
+                    rPolygon.states.applyAnimate("default");
+                });
+            }
+        });
+
+        // Handle clicks on map polygons
+        polygonSeries.mapPolygons.template.events.on("click", function(ev) {
+            const countryId = ev.target.dataItem.dataContext.id;
+            const region = COUNTRY_TO_REGION[countryId];
+            const countryName = ev.target.dataItem.dataContext.name;
+            
+            handleMapClick(countryId, region, countryName);
+        });
+    }
+
+    // Apply color gradients to the map based on loaded data
+    function updateMapColors() {
+        if (!polygonSeries) return;
+
+        polygonSeries.mapPolygons.each(function(polygon) {
+            const countryId = polygon.dataItem.dataContext.id;
+            const region = COUNTRY_TO_REGION[countryId];
+            
+            if (activeRegion) {
+                // Region is selected: redistribute sentiment per country within that region
+                if (region === activeRegion) {
+                    const countryData = countrySentimentData[countryId];
+                    if (countryData && countryData.article_count > 0) {
+                        polygon.set("fill", getSentimentColor(countryData.avg_sentiment));
+                    } else {
+                        // No sentiment for this country inside the active region -> no color
+                        polygon.set("fill", am5.color(0x1a252c));
+                    }
+                } else {
+                    // Countries outside selected region -> no color / default gray
+                    polygon.set("fill", am5.color(0x1a252c));
+                }
+            } else {
+                // Global view: paint all regions with their overall regional sentiment
+                if (region && regionSentimentData[region]) {
+                    const sentiment = regionSentimentData[region].avg_sentiment;
+                    polygon.set("fill", getSentimentColor(sentiment));
+                } else {
+                    polygon.set("fill", am5.color(0x1a252c));
+                }
+            }
+        });
+
+        // Apply visual highlights based on current selection filter state
+        updateMapHighlight();
+    }
+
+    // Apply visual highlights (selected vs dimmed) based on current filter states
+    function updateMapHighlight() {
+        if (!polygonSeries) return;
+
+        polygonSeries.mapPolygons.each(function(polygon) {
+            const countryId = polygon.dataItem.dataContext.id;
+            const region = COUNTRY_TO_REGION[countryId];
+            
+            let opacity = 0.8;
+            let strokeColor = am5.color(0x090f13);
+            let strokeWidth = 0.5;
+
+            if (activeCountry) {
+                // Country selected: highlight that specific country
+                if (countryId === activeCountry) {
+                    opacity = 1.0;
+                    strokeColor = am5.color(0xffd740); // Gold border
+                    strokeWidth = 1.5;
+                } else {
+                    opacity = 0.15; // Dim all others
+                }
+            } else if (activeRegion) {
+                // Region selected: highlight the entire region
+                if (region === activeRegion) {
+                    opacity = 1.0;
+                    strokeColor = am5.color(0x00a6b2); // Cyan border
+                    strokeWidth = 1.0;
+                } else {
+                    opacity = 0.15; // Dim other regions
+                }
+            } else {
+                // No filters: standard view
+                opacity = 0.8;
+                strokeColor = am5.color(0x090f13);
+                strokeWidth = 0.5;
+            }
+
+            polygon.set("fillOpacity", opacity);
+            polygon.set("stroke", strokeColor);
+            polygon.set("strokeWidth", strokeWidth);
+        });
+    }
+
+    // Handle map clicks
+    function handleMapClick(countryId, region, countryName) {
+        // If clicked on an already selected country, clear country filter (back to region)
+        if (activeCountry === countryId) {
+            setFilters(activeRegion, null, null);
+        }
+        // If clicked on a country in a region that is not active yet, set region filter
+        else if (activeRegion !== region) {
+            setFilters(region, null, null);
+        }
+        // If clicked on a country inside the active region, set country filter
+        else {
+            setFilters(region, countryId, countryName);
+        }
+    }
+
+    // Update state and load metrics
+    async function setFilters(region, countryId, countryName) {
+        activeRegion = region;
+        activeCountry = countryId;
+        activeCountryName = countryName;
+
+        // Update badge
+        updateFilterBadge();
+
+        // Update colors and visual map highlights
+        updateMapColors();
+
+        // Load metrics for filters
+        await loadSummaryMetrics(currentDays, activeRegion, activeCountry);
+        
+        // Update side panel contents
+        await updateSidePanel();
+    }
+
+    // Dynamic Side Panel update based on active filters
+    async function updateSidePanel() {
+        const loader = document.getElementById("side-panel-loader");
+        const body = document.getElementById("side-panel-dynamic-body");
+        
+        if (loader) loader.classList.remove("hidden");
+        if (body) body.classList.add("hidden");
+
+        try {
+            if (activeCountry) {
+                // 1. Fetch country detail data
+                const detailsRes = await fetch(`/api/v1/countries/${activeCountry}/details?days=${currentDays}`);
+                if (!detailsRes.ok) throw new Error("Failed to fetch country details");
+                const details = await detailsRes.json();
+
+                // 2. Fetch recent country articles
+                const articlesRes = await fetch(`/api/v1/articles?country=${activeCountry}&days=${currentDays}&sort=impact&limit=3`);
+                if (!articlesRes.ok) throw new Error("Failed to fetch country articles");
+                const articlesData = await articlesRes.json();
+                const articles = articlesData.articles || [];
+
+                // Render Country Detail Panel
+                const ecoScore = details.economy_sentiment.avg_sentiment;
+                const ecoColor = ecoScore > 0.05 ? 'text-[#00E676]' : (ecoScore < -0.05 ? 'text-[#FF5252]' : 'text-[#FFD740]');
+                const ecoDirection = ecoScore > 0.05 ? 'Bullish' : (ecoScore < -0.05 ? 'Bearish' : 'Neutral');
+                const ecoScoreStr = ecoScore > 0 ? '+' + ecoScore.toFixed(2) : ecoScore.toFixed(2);
+
+                const cb = details.central_bank;
+                let cbStanceClass = 'text-[#FFD740] bg-[#FFD740]/10 border-[#FFD740]/30';
+                if (cb.stance === 'hawkish') {
+                    cbStanceClass = 'text-[#FF5252] bg-[#FF5252]/10 border-[#FF5252]/30';
+                } else if (cb.stance === 'dovish') {
+                    cbStanceClass = 'text-[#00E676] bg-[#00E676]/10 border-[#00E676]/30';
+                }
+
+                const by = details.bond_yield;
+                const yieldValStr = by.yield !== null ? `${by.yield.toFixed(2)}%` : '--';
+                const yieldChangeClass = (by.change_percent || 0) >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+                const yieldChangeStr = by.change_percent !== null ? ((by.change_percent || 0) >= 0 ? `+${by.change_percent.toFixed(2)}%` : `${by.change_percent.toFixed(2)}%`) : '--';
+
+                let html = `
+                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-4">
+                    <div>
+                        <h3 class="font-bold text-[#D6E5E3] font-['JetBrains_Mono'] tracking-tight text-sm uppercase">
+                            ${activeCountryName || activeCountry}
+                        </h3>
+                        <span class="text-[10px] text-[#4A6A70] font-mono">Macroeconomic Sentiment & Indicators</span>
+                    </div>
+                    <button onclick="clearFilter()" class="text-xs font-mono text-[#00A6B2] hover:text-[#00E5F2] focus:outline-none flex items-center gap-1 bg-[#16242C] px-2 py-1 rounded border border-[#2A4A50]">
+                        ✕ Clear
+                    </button>
+                </div>
+                
+                <!-- Macro Stats -->
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col justify-between">
+                        <span class="text-[9px] font-mono text-[#4A6A70] uppercase">Economic Sentiment</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-base font-bold font-mono ${ecoColor}">${ecoScoreStr}</span>
+                            <span class="text-[10px] font-semibold font-mono ${ecoColor}">${ecoDirection}</span>
+                        </div>
+                        <span class="text-[9px] font-mono text-[#2A4A50] mt-1">Based on ${details.economy_sentiment.count} articles</span>
+                    </div>
+
+                    <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col justify-between">
+                        <span class="text-[9px] font-mono text-[#4A6A70] uppercase">10Y Bond Yield</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-base font-bold font-mono text-[#D6E5E3]">${yieldValStr}</span>
+                            <span class="text-[10px] font-mono ${yieldChangeClass}">${yieldChangeStr}</span>
+                        </div>
+                        <span class="text-[9px] font-mono text-[#2A4A50] mt-1">Ticker: ${by.ticker || '--'}</span>
+                    </div>
+                </div>
+
+                <!-- Central Bank Widget -->
+                <div class="bg-[#0B1317] border border-[#1A2A30] p-4 rounded-lg flex flex-col gap-2 mb-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Central Bank: ${cb.name}</span>
+                        <span class="px-2 py-0.5 border rounded text-[10px] font-bold uppercase tracking-wider ${cbStanceClass}">${cb.stance}</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] font-mono mt-1 text-[#8a9e9b]">
+                        <span>Hawkish signals: <span class="text-[#FF5252] font-bold">${cb.hawkish_count}</span></span>
+                        <span>Dovish signals: <span class="text-[#00E676] font-bold">${cb.dovish_count}</span></span>
+                    </div>
+                </div>
+
+                <!-- Equity Sectors Table -->
+                <div class="mb-4">
+                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Equity Sectors</h4>
+                    <div class="bg-[#0B1317] border border-[#1A2A30] rounded-lg overflow-hidden">
+                        <table class="w-full text-left border-collapse text-xs font-mono">
+                            <thead>
+                                <tr class="border-b border-[#1A2A30] bg-[#111A20] text-[#4A6A70] text-[9px] uppercase">
+                                    <th class="p-2.5 pl-3">Sector</th>
+                                    <th class="p-2.5 text-right">Price</th>
+                                    <th class="p-2.5 text-right">24H %</th>
+                                    <th class="p-2.5 text-right pr-3">Sent</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+                            
+                            details.sectors.forEach(sec => {
+                                const priceStr = sec.price !== null ? `$${sec.price.toFixed(2)}` : '--';
+                                const changeStr = sec.change_percent !== null ? sec.change_percent.toFixed(2) + '%' : '--';
+                                const changeClass = sec.change_percent >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+                                const arrow = sec.change_percent >= 0 ? '↗' : '↘';
+                                const changeBadge = sec.change_percent !== null ? `<span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-${sec.change_percent >= 0 ? '[#00E676]' : '[#FF5252]'}/10 ${changeClass}">${arrow} ${changeStr}</span>` : '--';
+                                
+                                const sentScore = sec.sentiment_score;
+                                const sentColor = sentScore > 0.05 ? 'text-[#00E676]' : (sentScore < -0.05 ? 'text-[#FF5252]' : 'text-[#FFD740]');
+                                const sentStr = sentScore > 0 ? '+' + sentScore.toFixed(2) : (sentScore < 0 ? sentScore.toFixed(2) : '0.00');
+                                
+                                html += `
+                                <tr class="border-b border-[#1A2A30]/50 hover:bg-[#16242C]/20 transition-colors">
+                                    <td class="p-2.5 pl-3 font-sans text-[#D6E5E3] font-medium text-[11px]">${sec.sector}</td>
+                                    <td class="p-2.5 text-right font-mono text-[#D6E5E3]">${priceStr}</td>
+                                    <td class="p-2.5 text-right font-mono">${changeBadge}</td>
+                                    <td class="p-2.5 text-right font-mono ${sentColor} pr-3">${sentStr}</td>
+                                </tr>`;
+                            });
+                            
+                            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Country Top Stories -->
+                <div>
+                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Country Intel Stream</h4>
+                    <div class="flex flex-col gap-3">`;
+                        
+                    if (articles.length === 0) {
+                        html += `<div class="text-center py-5 font-mono text-xs text-[#4A6A70] border border-dashed border-[#1A2A30] rounded-lg">No recent country stories.</div>`;
+                    } else {
+                        articles.forEach(art => {
+                            const score = art.sentiment_score !== null ? parseFloat(art.sentiment_score) : 0.0;
+                            const colorClass = score > 0.05 ? 'text-[#00E676] bg-[#00E676]/5' : (score < -0.05 ? 'text-[#FF5252] bg-[#FF5252]/5' : 'text-[#FFD740] bg-[#FFD740]/5');
+                            const scoreStr = score > 0 ? '+' + score.toFixed(2) : score.toFixed(2);
+                            
+                            html += `
+                            <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col gap-1.5 hover:border-[#00A6B2]/30 transition-all">
+                                <div class="flex items-center justify-between text-[9px] font-mono">
+                                    <span class="text-[#4A6A70]">${art.source_name || 'MIMIR Intel'}</span>
+                                    <span class="px-1.5 py-0.2 border border-[#1A2A30] rounded-full font-bold ${colorClass}">${scoreStr}</span>
+                                </div>
+                                <a href="${art.link || '#'}" target="_blank" class="text-[11px] font-medium text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-tight line-clamp-2">${art.title}</a>
+                            </div>`;
+                        });
+                    }
+                    
+                    html += `
+                    </div>
+                </div>`;
+
+                body.innerHTML = html;
+
+            } else {
+                // Global or Region Stories list
+                let url = `/api/v1/articles?days=${currentDays}&sort=impact&limit=10`;
+                if (activeRegion) {
+                    url += `&region=${activeRegion}`;
+                }
+                const articlesRes = await fetch(url);
+                if (!articlesRes.ok) throw new Error("Failed to fetch articles");
+                const data = await articlesRes.json();
+                const articles = data.articles || [];
+
+                let html = `
+                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-4">
+                    <h3 class="font-bold text-[#D6E5E3] font-['JetBrains_Mono'] tracking-tight text-sm uppercase">
+                        ${activeRegion ? `Stories — ${activeRegion}` : 'Top Stories — Global'}
+                    </h3>
+                </div>
+                <div class="flex flex-col gap-4 max-h-[700px] overflow-y-auto pr-1">`;
+                
+                if (articles.length === 0) {
+                    html += `<div class="text-center py-10 font-mono text-xs text-[#4A6A70]">No recent high-impact stories found.</div>`;
+                } else {
+                    articles.forEach(art => {
+                        const score = art.sentiment_score !== null ? parseFloat(art.sentiment_score) : 0.0;
+                        const colorClass = score > 0.05 ? 'text-[#00E676] bg-[#00E676]/5 border-[#00E676]/20' : (score < -0.05 ? 'text-[#FF5252] bg-[#FF5252]/5 border-[#FF5252]/20' : 'text-[#FFD740] bg-[#FFD740]/5 border-[#FFD740]/20');
+                        const label = score > 0.05 ? 'Bullish' : (score < -0.05 ? 'Bearish' : 'Neutral');
+                        const scoreStr = score > 0 ? '+' + score.toFixed(2) : score.toFixed(2);
+                        
+                        html += `
+                        <div class="bg-[#0B1317] border border-[#1A2A30] hover:border-[#00A6B2]/50 p-4 rounded-lg flex flex-col gap-2 transition-all group duration-200">
+                            <div class="flex items-center justify-between text-[10px] font-mono">
+                                <span class="text-[#4A6A70]">${art.source_name || 'MIMIR Intel'}</span>
+                                <span class="px-2 py-0.5 border rounded-full font-bold ${colorClass}">${scoreStr} ${label}</span>
+                            </div>
+                            <a href="${art.link || '#'}" target="_blank" class="text-xs font-semibold text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-snug line-clamp-2">${art.title}</a>
+                            <p class="text-[11px] text-[#4A6A70] leading-relaxed line-clamp-3">${art.summary || ''}</p>
+                        </div>`;
+                    });
+                }
+                html += `</div>`;
+                body.innerHTML = html;
+            }
+        } catch (err) {
+            console.error("Error loading side panel:", err);
+            body.innerHTML = `<div class="text-center py-10 font-mono text-xs text-[#FF5252]">Error loading intelligence stream: ${err.message}</div>`;
+        } finally {
+            if (loader) loader.classList.add("hidden");
+            if (body) body.classList.remove("hidden");
+        }
+    }
+
+    // Clear filters completely
+    function clearFilter() {
+        setFilters(null, null, null);
+    }
+
+    // Update filter badge element UI
+    function updateFilterBadge() {
+        const badge = document.getElementById("active-filter-badge");
+        const text = document.getElementById("active-filter-text");
+
+        if (activeCountry) {
+            text.textContent = `Country: ${activeCountryName || activeCountry}`;
+            badge.classList.remove("hidden");
+        } else if (activeRegion) {
+            text.textContent = `Region: ${activeRegion}`;
+            badge.classList.remove("hidden");
+        } else {
+            text.textContent = `Global`;
+            badge.classList.add("hidden");
+        }
+
+        // Update card header labels
+        const sentTitle = document.getElementById("card-sentiment-title");
+        const moverTitle = document.getElementById("card-mover-title");
+        const volTitle = document.getElementById("card-volume-title");
+        const volStatus = document.getElementById("card-volume-status");
+
+        const labelPrefix = activeCountry ? (activeCountryName || activeCountry) : (activeRegion ? `${activeRegion} Region` : "Global");
+
+        sentTitle.textContent = `${labelPrefix} Sentiment`;
+        moverTitle.textContent = `${labelPrefix} Top Mover`;
+        volTitle.textContent = `${labelPrefix} Volume`;
+        volStatus.textContent = activeCountry ? "Country Stream" : (activeRegion ? "Regional Stream" : "Active Stream");
+    }
+
+    // Fetch metric cards data
+    async function loadSummaryMetrics(days, region = null, country = null) {
+        try {
+            let url = `/api/v1/summary?days=${days}`;
+            if (region) url += `&region=${region}`;
+            if (country) url += `&country=${country}`;
+
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("Failed to fetch summary metrics");
+            const data = await res.json();
+            
+            // 1. Overall Sentiment Card
+            const sentimentVal = document.getElementById("metric-sentiment-val");
+            const sentimentScore = parseFloat(data.avg_sentiment || 0);
+            let scoreStr = sentimentScore.toFixed(2);
+            if (sentimentScore > 0) scoreStr = "+" + scoreStr;
+            
+            sentimentVal.textContent = data.total_articles > 0 ? scoreStr : "0.00";
+            sentimentVal.className = "text-2xl font-bold font-mono tracking-tight " + 
+                (data.total_articles > 0 ? (sentimentScore > 0.05 ? "text-[#00E676]" : (sentimentScore < -0.05 ? "text-[#FF5252]" : "text-[#FFD740]")) : "text-[#4A6A70]");
+            
+            document.getElementById("metric-bullish").textContent = `Bullish: ${data.bullish_count || 0}`;
+            document.getElementById("metric-bearish").textContent = `Bearish: ${data.bearish_count || 0}`;
+            
+            // 2. Top Mover Card
+            const moverName = document.getElementById("metric-top-mover-name");
+            const moverTicker = document.getElementById("metric-top-mover-ticker");
+            const moverSentiment = document.getElementById("metric-top-mover-sentiment");
+            const moverChange = document.getElementById("metric-top-mover-change");
+            
+            if (data.top_mover_ticker || data.top_mover_name) {
+                const ticker = data.top_mover_ticker ? data.top_mover_ticker.toUpperCase() : "";
+                moverName.textContent = ticker || data.top_mover_name;
+                moverTicker.textContent = data.top_mover_name || ticker || "--";
+                
+                if (ticker) {
+                    if (topMoverInfoCache[ticker]) {
+                        moverTicker.textContent = topMoverInfoCache[ticker].long_name || data.top_mover_name || ticker;
+                    } else {
+                        fetch(`/api/v1/prices/logos?tickers=${ticker}`)
+                            .then(r => r.ok ? r.json() : null)
+                            .then(logoData => {
+                                if (logoData && logoData.tickers && logoData.tickers[ticker]) {
+                                    const entry = logoData.tickers[ticker];
+                                    topMoverInfoCache[ticker] = entry;
+                                    if (data.top_mover_ticker === ticker) {
+                                        moverTicker.textContent = entry.long_name || data.top_mover_name || ticker;
+                                    }
+                                }
+                            })
+                            .catch(err => console.error("Error fetching ticker info for top mover:", err));
+                    }
+                }
+                
+                const moverScore = parseFloat(data.top_mover_sentiment || 0);
+                let moverScoreStr = moverScore.toFixed(2);
+                if (moverScore > 0) moverScoreStr = "+" + moverScoreStr;
+                moverSentiment.textContent = `Sent: ${moverScoreStr}`;
+                moverSentiment.className = (moverScore > 0.05 ? "text-[#00E676]" : (moverScore < -0.05 ? "text-[#FF5252]" : "text-[#FFD740]"));
+                
+                const moverChangeVal = parseFloat(data.top_mover_sentiment_change || 0);
+                let moverChangeStr = moverChangeVal.toFixed(1) + "%";
+                if (moverChangeVal > 0) moverChangeStr = "+" + moverChangeStr;
+                moverChange.textContent = `Shift: ${moverChangeStr}`;
+                moverChange.className = (moverChangeVal >= 0 ? "text-[#00E676]" : "text-[#FF5252]");
+            } else {
+                moverName.textContent = "No Mover Detected";
+                moverTicker.textContent = "Awaiting market drift";
+                moverSentiment.textContent = "Sent: --";
+                moverSentiment.className = "text-[#4A6A70]";
+                moverChange.textContent = "Shift: --";
+                moverChange.className = "text-[#4A6A70]";
+            }
+            
+            // 3. Processed Volume Card
+            document.getElementById("metric-volume-val").textContent = data.total_articles || 0;
+            
+        } catch (err) {
+            console.error("Error loading summary metrics:", err);
+        }
+    }
+
+    // Fetch regional sentiment data
+    async function loadRegionalSentiment(days) {
+        try {
+            const res = await fetch(`/api/v1/regional?days=${days}`);
+            if (!res.ok) throw new Error("Failed to fetch regional sentiment");
+            const data = await res.json();
+            
+            // Map the array into an object for fast lookups
+            regionSentimentData = {};
+            if (data && data.regions) {
+                data.regions.forEach(r => {
+                    regionSentimentData[r.region] = r;
+                });
+            }
+        } catch (err) {
+            console.error("Error loading regional sentiment:", err);
+        }
+    }
+
+    // Fetch country-level sentiment data
+    async function loadCountrySentiment(days) {
+        try {
+            const res = await fetch(`/api/v1/countries?days=${days}`);
+            if (!res.ok) throw new Error("Failed to fetch country sentiment");
+            const data = await res.json();
+            
+            countrySentimentData = {};
+            if (data && data.countries) {
+                data.countries.forEach(c => {
+                    countrySentimentData[c.country] = c;
+                });
+            }
+        } catch (err) {
+            console.error("Error loading country sentiment:", err);
+        }
+    }
+
+    // Change timeframe filter
+    async function changeTimeframe(days, buttonEl) {
+        currentDays = days;
+        
+        // Show map loader
+        const loader = document.getElementById("map-loader");
+        if (loader) {
+            loader.classList.remove("opacity-0", "pointer-events-none");
+        }
+        
+        // Toggle active button style
+        document.querySelectorAll(".timeframe-btn").forEach(btn => {
+            btn.classList.remove("bg-[#1A2A30]", "text-[#00A6B2]", "font-semibold");
+            btn.classList.add("text-[#4A6A70]");
+        });
+        buttonEl.classList.add("bg-[#1A2A30]", "text-[#00A6B2]", "font-semibold");
+        buttonEl.classList.remove("text-[#4A6A70]");
+        
+        // Reload data
+        await Promise.all([
+            loadSummaryMetrics(days, activeRegion, activeCountry),
+            loadCountrySentiment(days),
+            loadRegionalSentiment(days),
+            updateSidePanel()
+        ]);
+        
+        // Paint the map polygons
+        updateMapColors();
+        
+        // Hide map loader
+        if (loader) {
+            loader.classList.add("opacity-0", "pointer-events-none");
+        }
+    }
+
+    // Initialize page
+    window.addEventListener("DOMContentLoaded", () => {
+        // Init amCharts map
+        initMap();
+        
+        // Initial load
+        (async () => {
+            await Promise.all([
+                loadSummaryMetrics(currentDays, activeRegion, activeCountry),
+                loadCountrySentiment(currentDays),
+                loadRegionalSentiment(currentDays),
+                updateSidePanel()
+            ]);
+            updateMapColors();
+        })();
+    });
+</script>
+{% endblock %}

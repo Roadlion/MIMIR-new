@@ -36,30 +36,46 @@ COUNTRY_TO_CODE = {
 
 # Region mapping
 COUNTRY_TO_REGION = {
-    "US": "NA",
-    "CA": "NA",
-    "MX": "NA",
-    "GB": "EU",
-    "DE": "EU",
-    "FR": "EU",
-    "IT": "EU",
-    "ES": "EU",
-    "CH": "EU",
-    "JP": "APAC",
-    "CN": "APAC",
-    "KR": "APAC",
-    "IN": "APAC",
-    "SG": "ASEAN",
-    "TH": "ASEAN",
-    "MY": "ASEAN",
-    "ID": "ASEAN",
-    "PH": "ASEAN",
-    "VN": "ASEAN",
-    "AU": "APAC",
-    "NZ": "APAC",
-    "BR": "LATAM",
-    "AR": "LATAM",
-    "ZA": "AFRICA",
+    # NA (North America)
+    "US": "NA", "CA": "NA", "MX": "NA", "GL": "NA",
+    
+    # EU (Europe)
+    "GB": "EU", "DE": "EU", "FR": "EU", "IT": "EU", "ES": "EU", "CH": "EU", 
+    "NL": "EU", "BE": "EU", "AT": "EU", "DK": "EU", "FI": "EU", "GR": "EU", 
+    "IE": "EU", "NO": "EU", "PT": "EU", "SE": "EU", "PL": "EU", "UA": "EU", 
+    "RO": "EU", "HU": "EU", "CZ": "EU", "SK": "EU", "BG": "EU", "HR": "EU",
+    "EE": "EU", "LV": "EU", "LT": "EU", "SI": "EU", "IS": "EU", "LU": "EU",
+    "EU": "EU",
+
+    # APAC (Asia-Pacific excluding ASEAN)
+    "JP": "APAC", "CN": "APAC", "KR": "APAC", "IN": "APAC", "AU": "APAC", 
+    "NZ": "APAC", "TW": "APAC", "PK": "APAC", "BD": "APAC", "LK": "APAC", 
+    "NP": "APAC", "MN": "APAC", "KP": "APAC", "AF": "APAC", "HK": "APAC",
+
+    # ASEAN (Southeast Asia)
+    "SG": "ASEAN", "TH": "ASEAN", "MY": "ASEAN", "ID": "ASEAN", "PH": "ASEAN", 
+    "VN": "ASEAN", "MM": "ASEAN", "KH": "ASEAN", "LA": "ASEAN", "BN": "ASEAN", 
+    "TL": "ASEAN",
+
+    # LATAM (Latin America)
+    "BR": "LATAM", "AR": "LATAM", "CL": "LATAM", "CO": "LATAM", "PE": "LATAM", 
+    "VE": "LATAM", "EC": "LATAM", "BO": "LATAM", "PY": "LATAM", "UY": "LATAM", 
+    "GT": "LATAM", "HN": "LATAM", "SV": "LATAM", "NI": "LATAM", "CR": "LATAM", 
+    "PA": "LATAM", "CU": "LATAM", "DO": "LATAM", "PR": "LATAM", "JM": "LATAM",
+
+    # MENA (Middle East & North Africa)
+    "SA": "MENA", "AE": "MENA", "IL": "MENA", "TR": "MENA", "IR": "MENA", 
+    "IQ": "MENA", "JO": "MENA", "LB": "MENA", "SY": "MENA", "YE": "MENA", 
+    "OM": "MENA", "QA": "MENA", "KW": "MENA", "BH": "MENA", "EG": "MENA",
+    "LY": "MENA", "TN": "MENA", "DZ": "MENA", "MA": "MENA", "SD": "MENA",
+
+    # AFRICA (Sub-Saharan Africa)
+    "ZA": "AFRICA", "KE": "AFRICA", "NG": "AFRICA", "GH": "AFRICA", "TZ": "AFRICA", 
+    "UG": "AFRICA", "ET": "AFRICA", "AO": "AFRICA", "MZ": "AFRICA", "CI": "AFRICA",
+    "CM": "AFRICA", "SN": "AFRICA", "ZW": "AFRICA", "ZM": "AFRICA", "CD": "AFRICA", 
+    "CG": "AFRICA", "GA": "AFRICA", "NE": "AFRICA", "TD": "AFRICA", "ML": "AFRICA", 
+    "MR": "AFRICA", "MG": "AFRICA", "NA": "AFRICA", "BW": "AFRICA", "SZ": "AFRICA", 
+    "LS": "AFRICA"
 }
 
 # Asset to ticker mapping

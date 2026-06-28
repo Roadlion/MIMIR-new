@@ -2,12 +2,576 @@
 
 {% block title %}MIMIR — Articles{% endblock %}
 
+{% block head_extra %}
+<style>
+    .badge-bullish {
+        background-color: rgba(0, 230, 118, 0.04);
+        color: #00E676;
+        border-color: rgba(0, 230, 118, 0.2);
+    }
+    .badge-bullish:hover {
+        background-color: rgba(0, 230, 118, 0.08);
+        border-color: #00E676;
+        box-shadow: 0 0 8px rgba(0, 230, 118, 0.15);
+    }
+    .badge-bearish {
+        background-color: rgba(255, 82, 82, 0.04);
+        color: #FF5252;
+        border-color: rgba(255, 82, 82, 0.2);
+    }
+    .badge-bearish:hover {
+        background-color: rgba(255, 82, 82, 0.08);
+        border-color: #FF5252;
+        box-shadow: 0 0 8px rgba(255, 82, 82, 0.15);
+    }
+    .badge-neutral {
+        background-color: rgba(255, 215, 64, 0.04);
+        color: #FFD740;
+        border-color: rgba(255, 215, 64, 0.2);
+    }
+    .badge-neutral:hover {
+        background-color: rgba(255, 215, 64, 0.08);
+        border-color: #FFD740;
+        box-shadow: 0 0 8px rgba(255, 215, 64, 0.15);
+    }
+    .article-card {
+        background: #0B1317;
+        border: 1px solid #1A2A30;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .article-card:hover {
+        transform: translateY(-2.5px);
+        border-color: #00A6B2;
+        box-shadow: 0 6px 20px rgba(0, 166, 178, 0.12);
+    }
+    .skeleton-box {
+        background: linear-gradient(90deg, #0B1317 25%, #16242C 50%, #0B1317 75%);
+        background-size: 200% 100%;
+        animation: loading-shimmer 1.5s infinite linear;
+    }
+    @keyframes loading-shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="space-y-6">
-    <div class="bg-[#111820] border border-[#1A2A30] p-6 rounded-lg">
-        <h1 class="text-3xl font-bold text-[#00A6B2]">📰 Articles</h1>
-        <p class="text-[#4A6A70] mt-2">Article list and research feed coming soon.</p>
-        <p class="text-sm text-[#D6E5E3] mt-4">Customize this feed by editing <code class="bg-[#0A0E12] px-2 py-1 rounded text-xs text-[#00A6B2]">frontend/templates/articles.html</code>.</p>
+<div class="max-w-7xl mx-auto space-y-6">
+    <!-- Header Section -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']">📰 Intelligence Feed</h1>
+            <p class="text-sm text-[#4A6A70] mt-1">Explore parsed macroeconomic intelligence, raw articles, and model-derived sentiment impacts.</p>
+        </div>
+    </div>
+
+    <!-- Filters and Toolbar -->
+    <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <!-- Search Title/Summary -->
+            <div class="relative flex flex-col gap-1.5 col-span-1 lg:col-span-2">
+                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Search Keywords</label>
+                <div class="relative">
+                    <input type="text" id="filterSearch" placeholder="Search by title or summary..." class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <button id="clearSearchBtn" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4A6A70] hover:text-[#D6E5E3] font-bold text-sm">×</button>
+                </div>
+            </div>
+
+            <!-- News Source Dropdown -->
+            <div class="flex flex-col gap-1.5">
+                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">News Source</label>
+                <select id="filterSource" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <option value="">All Sources</option>
+                </select>
+            </div>
+
+            <!-- Asset Impacted Dropdown -->
+            <div class="flex flex-col gap-1.5">
+                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Impacted Asset</label>
+                <select id="filterAsset" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <option value="">All Assets</option>
+                </select>
+            </div>
+
+            <!-- Sentiment Dropdown -->
+            <div class="flex flex-col gap-1.5">
+                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Sentiment Direction</label>
+                <select id="filterSentiment" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <option value="">All Sentiments</option>
+                    <option value="bullish">Bullish (Positive)</option>
+                    <option value="neutral">Neutral</option>
+                    <option value="bearish">Bearish (Negative)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="flex items-center justify-between border-t border-[#142228] pt-3 text-xs font-mono">
+            <div id="resultsCount" class="text-[#4A6A70]">
+                Scanning intelligence archives...
+            </div>
+            <button id="resetFiltersBtn" class="px-3 py-1 bg-[#16242C] text-[#D6E5E3] border border-[#2A4A50] hover:border-[#00A6B2] hover:text-[#00A6B2] rounded transition-all">
+                Reset Filters
+            </button>
+        </div>
+    </div>
+
+    <!-- Article Cards Grid -->
+    <div id="articlesGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Initial Loading Skeletons -->
+        {% for i in range(6) %}
+        <div class="article-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem]">
+            <div class="space-y-3">
+                <div class="flex justify-between items-center">
+                    <div class="w-24 h-4 skeleton-box rounded"></div>
+                    <div class="w-16 h-4 skeleton-box rounded"></div>
+                </div>
+                <div class="w-full h-12 skeleton-box rounded"></div>
+                <div class="w-full h-16 skeleton-box rounded"></div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <div class="w-16 h-6 skeleton-box rounded-full"></div>
+                <div class="w-16 h-6 skeleton-box rounded-full"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Empty State Placeholder (hidden by default) -->
+    <div id="emptyState" class="hidden py-20 text-center bg-[#070D10] border border-dashed border-[#1A2A30] rounded-lg">
+        <span class="text-4xl">🔍</span>
+        <h3 class="text-lg font-bold text-[#D6E5E3] mt-4 font-mono">No Matching Intel Found</h3>
+        <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">Try refining your search text or filters. We couldn't find any articles matching this query.</p>
+        <button onclick="resetAllFilters()" class="mt-6 px-4 py-2 bg-[#00A6B2] text-black font-semibold rounded hover:bg-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">
+            Clear Filters
+        </button>
+    </div>
+
+    <!-- Pagination -->
+    <div id="paginationPanel" class="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg text-xs font-mono">
+        <div id="paginationDetails" class="text-[#4A6A70]">
+            Showing 0–0 of 0 articles
+        </div>
+        <div class="flex items-center gap-1.5" id="paginationControls">
+            <!-- Paginated buttons will render here -->
+        </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // State Manager
+    const state = {
+        page: 1,
+        limit: 12,
+        search: '',
+        source: '',
+        asset: '',
+        sentiment: '',
+        total: 0,
+        pages: 1
+    };
+
+    // Load state from URL parameters on initialization
+    function loadStateFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        state.page = parseInt(params.get('page')) || 1;
+        state.search = params.get('search') || '';
+        state.source = params.get('source') || '';
+        state.asset = params.get('asset') || '';
+        state.sentiment = params.get('sentiment') || '';
+        
+        // Sync to DOM inputs
+        document.getElementById('filterSearch').value = state.search;
+        document.getElementById('filterSource').value = state.source;
+        document.getElementById('filterAsset').value = state.asset;
+        document.getElementById('filterSentiment').value = state.sentiment;
+        
+        toggleClearSearchButton();
+    }
+
+    // Save state to URL parameters
+    function saveStateToUrl() {
+        const params = new URLSearchParams();
+        if (state.page > 1) params.set('page', state.page);
+        if (state.search) params.set('search', state.search);
+        if (state.source) params.set('source', state.source);
+        if (state.asset) params.set('asset', state.asset);
+        if (state.sentiment) params.set('sentiment', state.sentiment);
+        
+        const path = params.toString() ? `${window.location.pathname}?${params.toString()}` : window.location.pathname;
+        window.history.pushState(state, '', path);
+    }
+
+    // Toggle clear search button visibility
+    function toggleClearSearchButton() {
+        const clearBtn = document.getElementById('clearSearchBtn');
+        if (state.search) {
+            clearBtn.classList.remove('hidden');
+        } else {
+            clearBtn.classList.add('hidden');
+        }
+    }
+
+    // Load filter options
+    async function loadFilterDropdowns() {
+        try {
+            // 1. Fetch sources
+            const sourcesRes = await fetch('/api/v1/articles/sources');
+            if (sourcesRes.ok) {
+                const sources = await sourcesRes.json();
+                const sourceSelect = document.getElementById('filterSource');
+                sources.forEach(src => {
+                    const opt = document.createElement('option');
+                    opt.value = src;
+                    opt.textContent = src;
+                    if (src === state.source) opt.selected = true;
+                    sourceSelect.appendChild(opt);
+                });
+            }
+
+            // 2. Fetch assets from taxonomy
+            const assetsRes = await fetch('/api/v1/taxonomy/assets');
+            if (assetsRes.ok) {
+                const data = await assetsRes.json();
+                const assetSelect = document.getElementById('filterAsset');
+                (data.assets || []).forEach(ast => {
+                    const opt = document.createElement('option');
+                    opt.value = ast.asset_name;
+                    opt.textContent = ast.ticker ? `${ast.asset_name} (${ast.ticker})` : ast.asset_name;
+                    if (ast.asset_name === state.asset) opt.selected = true;
+                    assetSelect.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            console.error("Error loading dropdown filter assets/sources:", e);
+        }
+    }
+
+    // Fetch and render articles
+    async function fetchArticles() {
+        showLoadingState();
+        saveStateToUrl();
+        
+        try {
+            const queryParams = new URLSearchParams({
+                page: state.page,
+                limit: state.limit
+            });
+            if (state.search) queryParams.set('search', state.search);
+            if (state.source) queryParams.set('source', state.source);
+            if (state.asset) queryParams.set('asset', state.asset);
+            if (state.sentiment) queryParams.set('sentiment', state.sentiment);
+            
+            const res = await fetch(`/api/v1/articles?${queryParams.toString()}`);
+            if (!res.ok) throw new Error('API request failed');
+            
+            const data = await res.json();
+            
+            state.total = data.total;
+            state.pages = data.pages;
+            
+            renderArticlesGrid(data.articles);
+            renderPagination();
+        } catch (e) {
+            console.error('Error fetching articles:', e);
+            renderErrorState();
+        }
+    }
+
+    // Render cards
+    function renderArticlesGrid(articles) {
+        const grid = document.getElementById('articlesGrid');
+        const emptyState = document.getElementById('emptyState');
+        const resultsCount = document.getElementById('resultsCount');
+        
+        grid.innerHTML = '';
+        
+        if (!articles || articles.length === 0) {
+            grid.classList.add('hidden');
+            emptyState.classList.remove('hidden');
+            resultsCount.textContent = 'Found 0 matching articles';
+            return;
+        }
+        
+        grid.classList.remove('hidden');
+        emptyState.classList.add('hidden');
+        resultsCount.textContent = `Found ${state.total.toLocaleString()} matching article${state.total !== 1 ? 's' : ''}`;
+        
+        articles.forEach(art => {
+            const card = document.createElement('div');
+            card.className = 'article-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem] border border-[#1A2A30]';
+            
+            // Format publish date
+            const dateStr = art.published_ts 
+                ? new Date(art.published_ts).toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                  })
+                : 'Unknown Date';
+                
+            // News source label
+            const sourceText = art.source_name ? art.source_name : 'unknown source';
+            
+            // Aggregated impacts
+            let impactsHtml = '';
+            if (art.impacts && art.impacts.length > 0) {
+                impactsHtml = art.impacts.map(imp => {
+                    let badgeClass = 'badge-neutral';
+                    let arrowSymbol = '•';
+                    let valColor = 'text-[#FFD740]';
+                    let plusSign = '';
+                    
+                    if (imp.direction === 'bullish' || imp.sentiment_score > 0.05) {
+                        badgeClass = 'badge-bullish';
+                        arrowSymbol = '▲';
+                        valColor = 'text-[#00E676]';
+                        plusSign = '+';
+                    } else if (imp.direction === 'bearish' || imp.sentiment_score < -0.05) {
+                        badgeClass = 'badge-bearish';
+                        arrowSymbol = '▼';
+                        valColor = 'text-[#FF5252]';
+                    }
+                    
+                    const scoreFormatted = imp.sentiment_score !== null 
+                        ? `${plusSign}${Number(imp.sentiment_score).toFixed(2)}` 
+                        : '';
+                    const tickerLabel = imp.ticker ? ` (${imp.ticker})` : '';
+                    
+                    return `
+                        <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono ${badgeClass} mr-1 mb-1" title="${imp.asset_name}">
+                            <span>${arrowSymbol} ${imp.asset_name}${tickerLabel}</span>
+                            ${scoreFormatted ? `<span class="${valColor} font-bold ml-1">${scoreFormatted}</span>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                impactsHtml = `<span class="text-[11px] text-[#4A6A70] font-mono italic">No mapped impact indicators</span>`;
+            }
+            
+            // Summary truncate (falls back to reasoning if empty)
+            let summaryText = art.summary ? art.summary.trim() : '';
+            if (!summaryText && art.impacts && art.impacts.length > 0) {
+                const impactWithReasoning = art.impacts.find(imp => imp.reasoning);
+                if (impactWithReasoning && impactWithReasoning.reasoning) {
+                    summaryText = impactWithReasoning.reasoning;
+                }
+            }
+            if (!summaryText) {
+                summaryText = 'No article content summary available.';
+            }
+            const summaryTruncated = summaryText.length > 130 
+                ? summaryText.substring(0, 130) + '...' 
+                : summaryText;
+                
+            card.innerHTML = `
+                <div class="space-y-3.5 min-w-0">
+                    <div class="flex justify-between items-center text-[11px] font-mono text-[#4A6A70]">
+                        <span class="bg-[#101A20] text-[#00A6B2] px-2 py-0.5 border border-[#1A2A30] rounded uppercase tracking-wider font-semibold">${sourceText}</span>
+                        <span>⏱️ ${dateStr}</span>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-[#D6E5E3] font-['Inter'] leading-snug line-clamp-2 hover:text-[#00A6B2] transition-colors cursor-pointer" title="${art.title}" onclick="window.open('${art.link}', '_blank')">
+                            ${art.title}
+                        </h3>
+                    </div>
+                    <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3">
+                        ${summaryTruncated}
+                    </p>
+                </div>
+                <div class="mt-4 pt-3 border-t border-[#142228]/50 flex flex-col gap-2">
+                    <div class="flex flex-wrap items-center">
+                        ${impactsHtml}
+                    </div>
+                    <div class="flex justify-end mt-1">
+                        <a href="${art.link}" target="_blank" class="flex items-center gap-1 text-[11px] font-mono text-[#00A6B2] hover:text-[#00E5F2] hover:underline bg-[#0C171D] border border-[#2A4A50]/40 hover:border-[#00A6B2]/80 px-2 py-1 rounded transition-all">
+                            Read Original ↗
+                        </a>
+                    </div>
+                </div>
+            `;
+            
+            grid.appendChild(card);
+        });
+    }
+
+    // Render pagination controls
+    function renderPagination() {
+        const container = document.getElementById('paginationControls');
+        const details = document.getElementById('paginationDetails');
+        
+        container.innerHTML = '';
+        
+        if (state.total === 0) {
+            details.textContent = 'Showing 0–0 of 0 articles';
+            return;
+        }
+        
+        const startIdx = (state.page - 1) * state.limit + 1;
+        const endIdx = Math.min(state.page * state.limit, state.total);
+        details.textContent = `Showing ${startIdx.toLocaleString()}–${endIdx.toLocaleString()} of ${state.total.toLocaleString()} article${state.total !== 1 ? 's' : ''}`;
+        
+        if (state.pages <= 1) return;
+        
+        // 1. Prev Button
+        const prevBtn = document.createElement('button');
+        prevBtn.className = `px-2.5 py-1.5 rounded border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00A6B2] transition-all ${state.page === 1 ? 'opacity-30 cursor-not-allowed pointer-events-none' : ''}`;
+        prevBtn.textContent = '← Prev';
+        prevBtn.addEventListener('click', () => changePage(state.page - 1));
+        container.appendChild(prevBtn);
+        
+        // 2. Page number chips
+        const delta = 1;
+        for (let i = 1; i <= state.pages; i++) {
+            if (i === 1 || i === state.pages || (i >= state.page - delta && i <= state.page + delta)) {
+                const btn = document.createElement('button');
+                btn.className = `px-2.5 py-1.5 rounded border transition-all ${i === state.page ? 'bg-[#00A6B2]/10 border-[#00A6B2] text-[#00A6B2] font-bold' : 'border-[#1A2A30] hover:border-[#2A4A50]'}`;
+                btn.textContent = i;
+                btn.addEventListener('click', () => changePage(i));
+                container.appendChild(btn);
+            } else if (i === 2 || i === state.pages - 1) {
+                const dots = document.createElement('span');
+                dots.className = 'px-1.5 text-[#4A6A70] select-none';
+                dots.textContent = '...';
+                container.appendChild(dots);
+            }
+        }
+        
+        // 3. Next Button
+        const nextBtn = document.createElement('button');
+        nextBtn.className = `px-2.5 py-1.5 rounded border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00A6B2] transition-all ${state.page === state.pages ? 'opacity-30 cursor-not-allowed pointer-events-none' : ''}`;
+        nextBtn.textContent = 'Next →';
+        nextBtn.addEventListener('click', () => changePage(state.page + 1));
+        container.appendChild(nextBtn);
+    }
+
+    // Change current page
+    function changePage(newPage) {
+        if (newPage < 1 || newPage > state.pages) return;
+        state.page = newPage;
+        fetchArticles();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // Show skeletons
+    function showLoadingState() {
+        const grid = document.getElementById('articlesGrid');
+        const emptyState = document.getElementById('emptyState');
+        grid.classList.remove('hidden');
+        emptyState.classList.add('hidden');
+        
+        grid.innerHTML = Array(state.limit).fill(0).map(() => `
+            <div class="article-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem] border border-[#1A2A30]">
+                <div class="space-y-3.5">
+                    <div class="flex justify-between items-center">
+                        <div class="w-20 h-4 skeleton-box rounded"></div>
+                        <div class="w-24 h-4 skeleton-box rounded"></div>
+                    </div>
+                    <div class="w-full h-8 skeleton-box rounded"></div>
+                    <div class="w-full h-16 skeleton-box rounded"></div>
+                </div>
+                <div class="mt-4 pt-3 border-t border-[#142228]/50 flex gap-2">
+                    <div class="w-16 h-6 skeleton-box rounded"></div>
+                    <div class="w-16 h-6 skeleton-box rounded"></div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // Render loading error state
+    function renderErrorState() {
+        const grid = document.getElementById('articlesGrid');
+        const emptyState = document.getElementById('emptyState');
+        const resultsCount = document.getElementById('resultsCount');
+        
+        grid.innerHTML = '';
+        grid.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        resultsCount.textContent = 'Pipeline feed connection interrupted';
+        
+        emptyState.innerHTML = `
+            <span class="text-4xl">⚠️</span>
+            <h3 class="text-lg font-bold text-red-500 mt-4 font-mono">Archive Fetch Failure</h3>
+            <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">MIMIR backend server could not fulfill the database query. Make sure uvicorn and postgres services are active.</p>
+            <button onclick="fetchArticles()" class="mt-6 px-4 py-2 bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/30 font-semibold rounded hover:border-[#00E5F2] hover:text-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">
+                Retry Query
+            </button>
+        `;
+    }
+
+    // Reset all filters in UI
+    function resetAllFilters() {
+        state.search = '';
+        state.source = '';
+        state.asset = '';
+        state.sentiment = '';
+        state.page = 1;
+        
+        document.getElementById('filterSearch').value = '';
+        document.getElementById('filterSource').value = '';
+        document.getElementById('filterAsset').value = '';
+        document.getElementById('filterSentiment').value = '';
+        
+        toggleClearSearchButton();
+        fetchArticles();
+    }
+
+    // Set up inputs listeners with debouncing
+    let searchDebounceTimer;
+    document.getElementById('filterSearch').addEventListener('input', (e) => {
+        state.search = e.target.value.trim();
+        toggleClearSearchButton();
+        
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            state.page = 1;
+            fetchArticles();
+        }, 300);
+    });
+
+    document.getElementById('clearSearchBtn').addEventListener('click', () => {
+        document.getElementById('filterSearch').value = '';
+        state.search = '';
+        toggleClearSearchButton();
+        state.page = 1;
+        fetchArticles();
+    });
+
+    document.getElementById('filterSource').addEventListener('change', (e) => {
+        state.source = e.target.value;
+        state.page = 1;
+        fetchArticles();
+    });
+
+    document.getElementById('filterAsset').addEventListener('change', (e) => {
+        state.asset = e.target.value;
+        state.page = 1;
+        fetchArticles();
+    });
+
+    document.getElementById('filterSentiment').addEventListener('change', (e) => {
+        state.sentiment = e.target.value;
+        state.page = 1;
+        fetchArticles();
+    });
+
+    document.getElementById('resetFiltersBtn').addEventListener('click', resetAllFilters);
+
+    // Initial sequence
+    window.addEventListener('DOMContentLoaded', async () => {
+        loadStateFromUrl();
+        await loadFilterDropdowns();
+        fetchArticles();
+    });
+
+    // Handle browser back/forward buttons
+    window.addEventListener('popstate', () => {
+        loadStateFromUrl();
+        fetchArticles();
+    });
+</script>
 {% endblock %}

@@ -110,7 +110,48 @@ FINANCIAL_RSS_FEEDS = [
     "http://feeds.bbci.co.uk/news/world/rss.xml", # BBC World News (Geopolitical conflicts)
     "https://newsfeed.ap.org/rss/v2/featured", # AP Top News
     "https://feeds.a.dj.com/rss/RSSWorldNews.xml", # WSJ World News
-    "https://www.aljazeera.com/xml/rss/all.xml" # Al Jazeera (Geopolitical events)
+    "https://www.aljazeera.com/xml/rss/all.xml", # Al Jazeera (Geopolitical events)
+
+    # --- Added Feeds ---
+    "https://cdn.businesskorea.co.kr/rss/gns_allArticle.xml",
+    "https://www.interad.com/en/insights/feed",
+    "https://bcck.or.kr/bcck/feed/?ckattempt=1",
+    "https://www.scmp.com/rss/91/feed",
+    "https://www.scmp.com/rss/10/feed",
+    "https://www.scmp.com/rss/96/feed",
+    "https://www.scmp.com/rss/7/feed",
+    "https://www.scmp.com/rss/12/feed",
+    "https://www.scmp.com/rss/318421/feed",
+    "https://www.scmp.com/rss/318200/feed",
+    "https://www.scmp.com/rss/36/feed",
+    "https://www.scmp.com/rss/320663/feed",
+    "https://www.scmp.com/rss/318218/feed",
+    "https://www.scmp.com/rss/318219/feed",
+    "https://www.scmp.com/rss/318220/feed",
+    "https://www.scmp.com/rss/318222/feed",
+    "https://www.scmp.com/rss/318223/feed",
+    "https://www.scmp.com/rss/323047/feed",
+    "https://www.scmp.com/rss/323048/feed",
+
+    # --- Geographically Diverse Global Business Feeds ---
+    "https://en.mercopress.com/rss/economy",
+    "https://www.latinfinance.com/rss",
+    "https://latamlist.com/feed/",
+    "https://www.financeasia.com/rss/latest",
+    "https://vneconomy.vn/tai-chinh.rss",
+    "https://www.stuff.co.nz/business/feed",
+    "https://www.macaubusiness.com/feed/",
+    "https://seenews.com/news/feed",
+    "https://eng.lsm.lv/rss/?lang=en&catid=21659",
+    "https://www.nasdaqomxnordic.com/rss/nordicnews",
+    "https://www.eu-startups.com/feed/",
+    "https://mid-east.info/feed/",
+    "https://www.arabianbusiness.com/industries/technology/feed",
+    "https://www.howwemadeitinafrica.com/feed",
+    "https://www.africanews.com/feed/category/business/rss",
+    "https://allafrica.com/tools/headlines/rdf/business/headlines.rdf",
+    "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/",
+    "https://www.newyorkfed.org/xml/rss/research/index.xml"
 ]
 
 

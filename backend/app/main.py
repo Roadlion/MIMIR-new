@@ -16,6 +16,11 @@ app = FastAPI(
     description="Market Intelligence & Macroeconomic Indicator Reactor"
 )
 
+@app.on_event("startup")
+async def startup_event():
+    from .pipeline.background_worker import start_background_worker
+    start_background_worker()
+
 # --- API Routes ---
 app.include_router(articles.router, prefix="/api/v1", tags=["articles"])
 app.include_router(sentiment.router, prefix="/api/v1", tags=["sentiment"])
@@ -42,6 +47,10 @@ async def index(request: Request):
 async def articles_page(request: Request):
     return templates.TemplateResponse(request, "articles.html")
 
+@app.get("/asset/{ticker}", response_class=HTMLResponse)
+async def finance_page(request: Request, ticker: str):
+    return templates.TemplateResponse(request, "finance.html", {"ticker": ticker.upper()})
+
 @app.get("/watchlist", response_class=HTMLResponse)
 async def watchlist_page(request: Request):
     return templates.TemplateResponse(request, "watchlist.html")
@@ -53,6 +62,10 @@ async def taxonomy_page(request: Request):
 @app.get("/guerilla", response_class=HTMLResponse)
 async def guerilla_page(request: Request):
     return templates.TemplateResponse(request, "guerilla.html")
+
+@app.get("/map", response_class=HTMLResponse)
+async def map_page(request: Request):
+    return templates.TemplateResponse(request, "map.html")
 
 @app.get("/health")
 async def health():

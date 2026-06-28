@@ -893,12 +893,43 @@ a:hover {
 .heatmap-tooltip-change.down { color: #FF5252; }
 .heatmap-tooltip-change.flat { color: #FFD740; }
 
+.heatmap-tooltip-sentiment-row {
+    display: flex;
+    justify-content: flex-start;
+    gap: 24px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #1A2A30;
+}
+
+.heatmap-tooltip-sentiment-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.heatmap-tooltip-sentiment-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #D6E5E3;
+}
+
+.heatmap-tooltip-sentiment-change {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+.heatmap-tooltip-sentiment-change.up { color: #00E676; }
+.heatmap-tooltip-sentiment-change.down { color: #FF5252; }
+.heatmap-tooltip-sentiment-change.flat { color: #FFD740; }
+
 .heatmap-tooltip-sub {
     display: flex;
     justify-content: space-between;
     margin-top: 8px;
     padding-top: 8px;
-    border-top: 1px solid #1A2A30;
+    border-top: 1px dashed #1A2A30;
     gap: 12px;
 }
 
@@ -926,5 +957,99 @@ a:hover {
     font-size: 0.55rem;
     color: #4A6A70;
     letter-spacing: 0.04em;
+}
+
+/* Modal Styling */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(5, 10, 12, 0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-overlay.hidden {
+    display: none !important;
+}
+.modal-content {
+    background: #091013;
+    border: 1px solid #1A2A30;
+    border-radius: 6px;
+    width: 90%;
+    max-width: 420px;
+    padding: 20px;
+    box-shadow: 0 0 24px rgba(0, 166, 178, 0.15);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    animation: modalSlideIn 0.25s ease-out;
+}
+@keyframes modalSlideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(26, 42, 48, 0.3);
+    padding-bottom: 10px;
+    margin-bottom: 4px;
+}
+.modal-close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    line-height: 1;
+    font-weight: 300;
+}
+.modal-input {
+    background: #0c1417;
+    border: 1px solid #1A2A30;
+    color: #D6E5E3;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+.modal-input:focus {
+    outline: none;
+    border-color: #00A6B2;
+    box-shadow: 0 0 6px rgba(0, 166, 178, 0.2);
+}
+.modal-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.modal-btn.cancel-btn {
+    background: transparent;
+    border: 1px solid #1A2A30;
+    color: #8A9E9B;
+}
+.modal-btn.cancel-btn:hover {
+    background: #1A2A30;
+    color: #D6E5E3;
+}
+.modal-btn.submit-btn {
+    background: #00A6B2;
+    border: 1px solid #00A6B2;
+    color: #091013;
+}
+.modal-btn.submit-btn:hover {
+    background: #00c5d3;
+    border-color: #00c5d3;
+    box-shadow: 0 0 8px rgba(0, 166, 178, 0.3);
 }
 

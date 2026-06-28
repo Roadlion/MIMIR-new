@@ -24,6 +24,38 @@ class DeepSeekSentiment:
         self._canonical_name = {
             name.lower(): name for name in ASSET_TO_TICKER.keys()
         }
+        # Build ticker-to-sector map from HEATMAP_INDICES constituents
+        self._ticker_to_sector = {}
+        try:
+            from ..routers.prices import HEATMAP_INDICES
+            gics_to_canonical = {
+                "technology": "TECHNOLOGY",
+                "comm. services": "COMMUNICATION_SERVICES",
+                "communication services": "COMMUNICATION_SERVICES",
+                "consumer cycl.": "CONSUMER_CYCLICAL",
+                "consumer cyclical": "CONSUMER_CYCLICAL",
+                "financials": "FINANCIAL_SERVICES",
+                "financial services": "FINANCIAL_SERVICES",
+                "healthcare": "HEALTHCARE",
+                "consumer def.": "CONSUMER_DEFENSIVE",
+                "consumer defensive": "CONSUMER_DEFENSIVE",
+                "energy": "ENERGY",
+                "industrials": "INDUSTRIALS",
+                "materials": "BASIC_MATERIALS",
+                "basic materials": "BASIC_MATERIALS",
+                "real estate": "REAL_ESTATE",
+                "utilities": "UTILITIES"
+            }
+            for idx_info in HEATMAP_INDICES.values():
+                for c in idx_info.get("constituents", []):
+                    t = c.get("ticker")
+                    s = c.get("sector")
+                    if t and s:
+                        canon = gics_to_canonical.get(s.lower())
+                        if canon:
+                            self._ticker_to_sector[t.lower().strip()] = canon
+        except Exception as ex:
+            logger.warning(f"Failed to build ticker-to-sector map: {ex}")
 
     def _normalize_asset_name(self, name: str) -> str:
         """Return canonical asset name if known, else the original."""
@@ -42,6 +74,12 @@ class DeepSeekSentiment:
         ticker, found = resolve_ticker(canonical)
         asset["ticker"] = ticker if found else None
 
+        # For equities, map sector from HEATMAP_INDICES constituents if available
+        if asset.get("asset_category") == "EQUITY" and asset.get("ticker"):
+            ticker_lower = asset["ticker"].lower().strip()
+            if ticker_lower in self._ticker_to_sector:
+                asset["sub_category"] = self._ticker_to_sector[ticker_lower]
+
         # For commodities, ensure country/region are null (already handled in validation)
         return asset
 
@@ -59,7 +97,15 @@ class DeepSeekSentiment:
             logger.debug("Returning cached result for article")
             return self._cache[key]
 
-        prompt = self._build_asset_prompt(title, summary)
+        # Check relevance filter first to avoid unnecessary LLM calls
+        if not self.is_financial_or_macro(title, summary):
+            logger.info(f"Filtering irrelevant/non-financial article: {title[:60]}...")
+            empty_result = {"overall_sentiment": 0.0, "assets": []}
+            self._cache[key] = empty_result
+            return empty_result
+
+        system_prompt = self._get_system_prompt()
+        user_prompt = self._build_user_prompt(title, summary)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -69,9 +115,9 @@ class DeepSeekSentiment:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are MIMIR, a financial sentiment analysis AI. Output valid JSON only, exactly as specified."
+                    "content": system_prompt
                 },
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.1,
             "response_format": {"type": "json_object"}
@@ -86,7 +132,8 @@ class DeepSeekSentiment:
                     f"{self.base_url}/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=60
+                    timeout=60,
+                    verify=False
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -166,15 +213,11 @@ class DeepSeekSentiment:
     # ============================================================
     # PROMPT – Tuned for precision, reduced over-tagging
     # ============================================================
-    def _build_asset_prompt(self, title: str, summary: str) -> str:
-        return f"""
-Analyze the following financial news headline and summary.
-
-HEADLINE: {title}
-SUMMARY: {summary}
+    def _get_system_prompt(self) -> str:
+        return """You are MIMIR, a financial sentiment analysis AI. Output valid JSON only, exactly as specified.
 
 **YOUR TASK:**
-Identify the 3 to 5 most significant financial assets affected by this news – both directly mentioned and strongly implied. Do NOT tag more than 5 assets. Prioritise assets with clear, direct connections.
+Identify the 3 to 5 most significant financial assets affected by the provided news – both directly mentioned and strongly implied. Do NOT tag more than 5 assets. Prioritise assets with clear, direct connections.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 **CRITICAL RULES TO AVOID OVER-TAGGING:**
@@ -186,6 +229,7 @@ Identify the 3 to 5 most significant financial assets affected by this news – 
 6. Sector tags (e.g., "US Tech", "US Energy") should use asset_category = 'SECTOR', not 'EQUITY'.
 7. Use EXACT asset names from the list below. Do NOT include extra text like tickers or parentheticals (e.g., output "Micron" not "Micron Technology (MU)").
 8. Confidence scores must reflect the STRENGTH of the connection – not the overall confidence in the article. Lower confidence for indirect or speculative connections.
+9. For ALL EQUITY category assets (publicly traded stocks in any country, e.g., Nvidia, Alibaba, Toyota, Samsung, Reliance, CPALL), you MUST set asset_category = 'EQUITY' and set sub_category to exactly one of the 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE. No other sub-categories are allowed for stocks.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **IMPLIED ASSET RULES (use sparingly, only when very clear):**
@@ -236,15 +280,20 @@ Identify the 3 to 5 most significant financial assets affected by this news – 
 
 **ASSET CATEGORIES:** COMMODITY, CURRENCY, EQUITY, BOND, INDEX, ECONOMY, POLICY, RISK, SECTOR
 
-**SUB-CATEGORIES:** ENERGY, PRECIOUS_METALS, BASE_METALS, AGRICULTURE, TECHNOLOGY, FINANCIALS, HEALTHCARE, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, INDUSTRIALS, MATERIALS, REAL_ESTATE, UTILITIES, COMMUNICATION, INFLATION, EMPLOYMENT, GDP, PMI, CENTRAL_BANK, GOVERNMENT, CORPORATE
+**SUB-CATEGORIES BY CATEGORY:**
+- For COMMODITY: ENERGY, PRECIOUS_METALS, BASE_METALS, AGRICULTURE
+- For EQUITY (ALL Countries): TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE (Equities/stocks must ONLY use one of these GICS sectors as their sub_category. Do NOT use FINANCIALS, MATERIALS, COMMUNICATION, CONSUMER_DISCRETIONARY, or CORPORATE).
+- For ECONOMY: INFLATION, EMPLOYMENT, GDP, PMI
+- For POLICY: CENTRAL_BANK, GOVERNMENT
+- For all others: null
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **OUTPUT FORMAT (JSON ONLY):**
-{{
+{
   "overall_sentiment": 0.0,
   "assets": [
-    {{
+    {
       "asset_name": "US Dollar",
       "asset_category": "CURRENCY",
       "sub_category": null,
@@ -256,12 +305,119 @@ Identify the 3 to 5 most significant financial assets affected by this news – 
       "magnitude": "HIGH",
       "reasoning": "Hawkish Fed rate hike signals strengthen USD.",
       "policy_signal": "hawkish"
-    }}
+    }
   ]
-}}
+}
 
-JSON only. No markdown. No extra text.
-"""
+JSON only. No markdown. No extra text."""
+
+    def _build_user_prompt(self, title: str, summary: str) -> str:
+        return f"""Analyze the following financial news headline and summary:
+
+HEADLINE: {title}
+SUMMARY: {summary}"""
+
+    def _normalize_text(self, text: str) -> str:
+        text = text.lower()
+        # Normalize common false positive triggers
+        text = text.replace("gold medal", "sports_medal")
+        text = text.replace("silver medal", "sports_medal")
+        text = text.replace("fed up", "annoyed")
+        text = text.replace("james bond", "movie_character")
+        text = text.replace("bond with", "connect with")
+        text = text.replace("family bond", "relationship")
+        return text
+
+    def is_financial_or_macro(self, title: str, summary: str) -> bool:
+        """
+        Determine if the news article is relevant to financial markets, 
+        corporate events, or macroeconomic trends.
+        """
+        title = title or ""
+        summary = summary or ""
+        text = self._normalize_text(f"{title} {summary}")
+        
+        # 1. Broad Positive Keywords (Financial, Corporate, Macro, Commodity, FX, Policy)
+        positive_keywords = {
+            # Corporate / Business
+            "ipo", "earnings", "revenue", "profit", "dividend", "shares", "stock", "equity", "equities", 
+            "nasdaq", "s&p", "nikkei", "set index", "dow jones", "djia", "nifty", "ftse", "dax", "hang seng",
+            "valuation", "shareholder", "bankruptcy", "insolvent", "layoffs", "merger", "acquisition", 
+            "buyback", "delisting", "securities", "cfo", "ceo", "c-suite", "restructuring", "venture capital",
+            "startup", "fintech", "ticker", "treasury shares", "insider trading", "sec filing", "10-k", "10-q",
+            
+            # Macroeconomics & Finance
+            "inflation", "deflation", "stagflation", "gdp", "cpi", "pmi", "interest rate", "rate hike", 
+            "rate cut", "monetary policy", "fiscal policy", "central bank", "federal reserve", "fed", "fomc", 
+            "ecb", "pboc", "boj", "boe", "unemployment", "jobless", "nonfarm payrolls", "recession", 
+            "economic growth", "yield curve", "treasury bond", "sovereign debt", "deficit", "bailout", 
+            "stimulus", "quantitative easing", "liquidity", "monetary tightening", "rate hikes", "rate cuts",
+            "economic", "economy", "economies", "economics",
+            
+            # Currencies & FX
+            "forex", "fx market", "exchange rate", "currency market", "currencies", "usd", "eur", "jpy", 
+            "gbp", "cny", "thb", "dollar index", "dxy", "greenback", "yen", "euro", "sterling", "baht", "yuan",
+            
+            # Commodities & Energy
+            "crude oil", "brent", "wti", "natural gas", "gasoline", "petroleum", "diesel", "refinery",
+            "commodity", "commodities", "opec", "gold", "silver", "platinum", "copper", "lithium", "cobalt",
+            "wheat", "corn", "soybeans", "grain", "agriculture", "livestock", "shipping rates", "baltic dry",
+            "cargo", "freight", "supply chain", "logistics", "semiconductor", "microchip", "chipmaker",
+            
+            # Policy, Geopolitics & Regulation
+            "sanctions", "embargo", "trade war", "tariffs", "tariff", "subsidies", "subsidy", "antitrust", 
+            "regulatory approval", "fcc", "ftc", "sec", "tax cut", "tax rate", "taxes", "infrastructure spending",
+            "stimulus package", "economic policy", "nationalization", "privatization", "budget deficit"
+        }
+        
+        # 2. Strict Negative Keywords (Sports, Entertainment, Lifestyle, local trivial news)
+        # Note: We only filter out if a negative keyword is found AND no positive keyword is matched.
+        negative_keywords = {
+            # Sports
+            "football", "soccer", "basketball", "baseball", "cricket", "tennis", "olympics", "tournament", 
+            "championship", "match result", "scoreline", "goals", "points table", "atp tour", "wta tour", "nfl", "nba",
+            
+            # Pop Culture / Entertainment / Celebrity
+            "celebrity", "gossip", "hollywood", "k-pop", "album release", "song release", "music video", 
+            "movie trailer", "red carpet", "oscars", "grammys", "fashion week", "dating rumors", "relationship status",
+            "horoscope", "astrology", "recipe", "gardening", "pet care", "dog food", "cat care"
+        }
+        
+        # 3. Quick Regex checks for Stock Tickers and Cash Tags
+        # E.g. $AAPL, $BTC, (NASDAQ:AAPL), (AAPL)
+        ticker_patterns = [
+            r'\$[a-zA-Z]{1,5}\b',                          # Cash tags like $AAPL, $BTC
+            r'\([a-zA-Z0-9\.\s]+:[a-zA-Z0-9\.]+\)',        # Ex: (NASDAQ:AAPL) or (SET:CPALL)
+            r'\([a-zA-Z]{2,5}\)'                           # Ex: (AAPL) or (TSLA)
+        ]
+        
+        # Compile positive keywords for exact word boundary matches
+        pos_regex = r'\b(?:' + '|'.join(map(re.escape, sorted(positive_keywords, key=len, reverse=True))) + r')\b'
+        has_positive = bool(re.search(pos_regex, text))
+        
+        # Check ticker patterns
+        has_ticker = False
+        if not has_positive:
+            for pattern in ticker_patterns:
+                if re.search(pattern, f"{title} {summary}"):
+                    has_ticker = True
+                    break
+        
+        # Check negative keywords with word boundaries
+        neg_regex = r'\b(?:' + '|'.join(map(re.escape, sorted(negative_keywords, key=len, reverse=True))) + r')\b'
+        has_negative = bool(re.search(neg_regex, text))
+        
+        # Decision Logic:
+        # Keep if it has positive keywords OR contains a stock ticker pattern
+        if has_positive or has_ticker:
+            return True
+            
+        # Filter out if it has negative keywords (and no positive/ticker)
+        if has_negative:
+            return False
+            
+        # If it doesn't match either, default to False to filter out local noise/general trivia
+        return False
 
     # ============================================================
     # JSON PARSING (robust against markdown)
@@ -381,6 +537,29 @@ JSON only. No markdown. No extra text.
                 # Enforce sector tags: if asset name contains 'Sector' or matches known sector patterns, set category to SECTOR
                 if any(s in asset_name for s in ["US Tech", "US Energy", "US Financials", "US Healthcare", "US Real Estate", "US Consumer Discretionary", "US Consumer Staples", "US Industrials", "US Utilities", "US Communication"]):
                     asset["asset_category"] = "SECTOR"
+
+                # Normalize and validate EQUITY sub-categories to the 11 allowed sectors
+                if asset.get("asset_category") == "EQUITY":
+                    subcat = asset.get("sub_category")
+                    if subcat:
+                        subcat_upper = subcat.strip().upper()
+                        # Direct map GICS sectors to standard uppercase
+                        EQUITY_SECTOR_MAP = {
+                            "TECHNOLOGY": "TECHNOLOGY", "TECH": "TECHNOLOGY", "SOFTWARE": "TECHNOLOGY", "SEMICONDUCTORS": "TECHNOLOGY", "HARDWARE": "TECHNOLOGY",
+                            "ENERGY": "ENERGY", "OIL": "ENERGY", "GAS": "ENERGY",
+                            "CONSUMER_CYCLICAL": "CONSUMER_CYCLICAL", "CONSUMER CYCLICAL": "CONSUMER_CYCLICAL", "CONSUMER_DISCRETIONARY": "CONSUMER_CYCLICAL", "CONSUMER DISCRETIONARY": "CONSUMER_CYCLICAL", "CYCLICAL": "CONSUMER_CYCLICAL", "DISCRETIONARY": "CONSUMER_CYCLICAL",
+                            "CONSUMER_DEFENSIVE": "CONSUMER_DEFENSIVE", "CONSUMER DEFENSIVE": "CONSUMER_DEFENSIVE", "CONSUMER_STAPLES": "CONSUMER_DEFENSIVE", "CONSUMER STAPLES": "CONSUMER_DEFENSIVE", "STAPLES": "CONSUMER_DEFENSIVE", "DEFENSIVE": "CONSUMER_DEFENSIVE",
+                            "COMMUNICATION_SERVICES": "COMMUNICATION_SERVICES", "COMMUNICATION SERVICES": "COMMUNICATION_SERVICES", "COMMUNICATION": "COMMUNICATION_SERVICES", "COMMUNICATIONS": "COMMUNICATION_SERVICES", "TELECOM": "COMMUNICATION_SERVICES", "TELECOMMUNICATIONS": "COMMUNICATION_SERVICES", "MEDIA": "COMMUNICATION_SERVICES", "ENTERTAINMENT": "COMMUNICATION_SERVICES", "SOCIAL_MEDIA": "COMMUNICATION_SERVICES",
+                            "INDUSTRIALS": "INDUSTRIALS", "INDUSTRIAL": "INDUSTRIALS", "AEROSPACE": "INDUSTRIALS", "DEFENSE": "INDUSTRIALS", "TRANSPORTATION": "INDUSTRIALS", "AIRLINE": "INDUSTRIALS", "AIRLINES": "INDUSTRIALS", "AIRPORTS": "INDUSTRIALS", "LOGISTICS": "INDUSTRIALS",
+                            "FINANCIAL_SERVICES": "FINANCIAL_SERVICES", "FINANCIAL SERVICES": "FINANCIAL_SERVICES", "FINANCIALS": "FINANCIAL_SERVICES", "FINANCIAL": "FINANCIAL_SERVICES", "BANK": "FINANCIAL_SERVICES", "BANKING": "FINANCIAL_SERVICES", "INSURANCE": "FINANCIAL_SERVICES", "INVESTMENTS": "FINANCIAL_SERVICES",
+                            "UTILITIES": "UTILITIES", "UTILITY": "UTILITIES", "POWER": "UTILITIES", "ELECTRICITY": "UTILITIES", "WATER": "UTILITIES",
+                            "BASIC_MATERIALS": "BASIC_MATERIALS", "BASIC MATERIALS": "BASIC_MATERIALS", "MATERIALS": "BASIC_MATERIALS", "MINING": "BASIC_MATERIALS", "STEEL": "BASIC_MATERIALS", "CHEMICALS": "BASIC_MATERIALS", "PRECIOUS_METALS": "BASIC_MATERIALS", "BASE_METALS": "BASIC_MATERIALS",
+                            "REAL_ESTATE": "REAL_ESTATE", "REAL ESTATE": "REAL_ESTATE", "REIT": "REAL_ESTATE",
+                            "HEALTHCARE": "HEALTHCARE", "HEALTH_CARE": "HEALTHCARE", "PHARMA": "HEALTHCARE", "PHARMACEUTICALS": "HEALTHCARE", "BIOTECH": "HEALTHCARE", "BIOTECHNOLOGY": "HEALTHCARE", "MEDTECH": "HEALTHCARE", "MEDICAL": "HEALTHCARE"
+                        }
+                        asset["sub_category"] = EQUITY_SECTOR_MAP.get(subcat_upper, "TECHNOLOGY")
+                    else:
+                        asset["sub_category"] = "TECHNOLOGY"
 
                 # ENRICH with ticker and normalized name
                 asset = self._enrich_asset(asset)

@@ -1,6 +1,7 @@
 # backend/app/routers/sentiment.py
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
+from pydantic import BaseModel
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -12,13 +13,30 @@ settings = get_settings()
 
 
 @router.get("/summary")
-async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
-    """Get overall sentiment summary for the last N days."""
+async def get_sentiment_summary(
+    days: int = Query(1, ge=1, le=30),
+    region: Optional[str] = Query(None),
+    country: Optional[str] = Query(None)
+):
+    """Get overall sentiment summary for the last N days, optionally filtered by region or country."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
-    # Get summary stats
-    cur.execute(f"""
+    # 1. Main summary stats query
+    where_clauses = ["a.published_ts > NOW() - INTERVAL '%s days'"]
+    params = [days]
+    
+    if country:
+        where_clauses.append("si.country = %s")
+        params.append(country)
+    elif region:
+        where_clauses.append("si.region = %s")
+        params.append(region)
+        
+    where_str = " AND ".join(where_clauses)
+    join_type = "JOIN" if (region or country) else "LEFT JOIN"
+    
+    query1 = f"""
         SELECT 
             COUNT(DISTINCT a.id) AS total_articles,
             AVG(si.sentiment_score) AS avg_sentiment,
@@ -26,14 +44,25 @@ async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
             COUNT(si.article_id) FILTER (WHERE si.direction = 'bearish') AS bearish_count,
             COUNT(si.article_id) FILTER (WHERE si.direction = 'neutral') AS neutral_count
         FROM {settings.mimir_schema}.mimir_raw_articles a
-        LEFT JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
-        WHERE a.published_ts > NOW() - INTERVAL '%s days'
-    """, (days,))
+        {join_type} {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+        WHERE {where_str}
+    """
     
+    cur.execute(query1, tuple(params))
     result = cur.fetchone()
     
-    # Get top mover (asset with positive sentiment change and positive price change)
-    cur.execute(f"""
+    # 2. Top mover query
+    filter_clause = ""
+    mover_params = [days, days, days]
+    
+    if country:
+        filter_clause = "AND si.country = %s"
+        mover_params = [days, country, days, days, country]
+    elif region:
+        filter_clause = "AND si.region = %s"
+        mover_params = [days, region, days, days, region]
+        
+    query2 = f"""
         WITH ticker_prices AS (
             SELECT DISTINCT ON (ticker)
                 ticker,
@@ -70,6 +99,7 @@ async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
             FROM {settings.mimir_schema}.mimir_raw_articles a
             JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
             WHERE a.published_ts > NOW() - INTERVAL '%s days'
+              {filter_clause}
             GROUP BY si.asset_name, si.ticker
         ),
         sentiment_prev AS (
@@ -80,6 +110,7 @@ async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
             JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
             WHERE a.published_ts > NOW() - INTERVAL '%s days' * 2
               AND a.published_ts <= NOW() - INTERVAL '%s days'
+              {filter_clause}
             GROUP BY si.asset_name
         )
         SELECT 
@@ -97,29 +128,21 @@ async def get_sentiment_summary(days: int = Query(1, ge=1, le=30)):
         LEFT JOIN sentiment_prev sp ON s24.asset_name = sp.asset_name
         LEFT JOIN price_changes pc ON s24.ticker = pc.ticker
         WHERE s24.article_count >= 1
-          AND (
-              -- positive sentiment change
-              (
-                  CASE 
-                      WHEN sp.prev_sentiment IS NULL THEN s24.current_sentiment * 100
-                      WHEN abs(sp.prev_sentiment) > 0.0001 THEN ((s24.current_sentiment - sp.prev_sentiment) / abs(sp.prev_sentiment)) * 100
-                      ELSE (s24.current_sentiment - sp.prev_sentiment) * 100
-                  END
-              ) > 0
-          )
-          AND pc.price_change_percent > 0
-        ORDER BY ABS(s24.current_sentiment) DESC, s24.article_count DESC
+          AND s24.ticker IS NOT NULL
+          AND pc.price_change_percent IS NOT NULL
+        ORDER BY s24.article_count DESC, ABS(COALESCE(pc.price_change_percent, 0.0)) DESC
         LIMIT 1
-    """, (days, days, days))
+    """
     
+    cur.execute(query2, tuple(mover_params))
     top_mover = cur.fetchone()
     
     top_mover_sentiment_change = 0.0
     if top_mover:
-        print(f"[SUMMARY] Top Mover Found: {top_mover.get('asset_name')} | Ticker: {top_mover.get('ticker')} | Avg Sentiment: {top_mover.get('avg_sentiment')} | Price Change: {top_mover.get('price_change_percent')}%")
+        print(f"[SUMMARY] Top Mover Found ({'region='+region if region else ('country='+country if country else 'global')}): {top_mover.get('asset_name')} | Ticker: {top_mover.get('ticker')} | Avg Sentiment: {top_mover.get('avg_sentiment')} | Price Change: {top_mover.get('price_change_percent')}%")
         top_mover_sentiment_change = float(top_mover.get("sentiment_change_percent") or 0.0)
     else:
-        print("[SUMMARY] No Top Mover Found matching criteria.")
+        print(f"[SUMMARY] No Top Mover Found for {'region='+region if region else ('country='+country if country else 'global')}")
         
     cur.close()
     conn.close()
@@ -323,6 +346,48 @@ async def get_ticker_sentiments(tickers: Optional[str] = Query(None)):
             for r in results
         ]
     }
+
+
+@router.get("/regional")
+async def get_regional_sentiment(days: int = Query(7, ge=1, le=90)):
+    """Get average sentiment score and count for each region."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    cur.execute(f"""
+        SELECT 
+            si.region,
+            AVG(si.sentiment_score) AS avg_sentiment,
+            COUNT(DISTINCT si.article_id) AS article_count,
+            COUNT(si.article_id) FILTER (WHERE si.direction = 'bullish') AS bullish_count,
+            COUNT(si.article_id) FILTER (WHERE si.direction = 'bearish') AS bearish_count,
+            COUNT(si.article_id) FILTER (WHERE si.direction = 'neutral') AS neutral_count
+        FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+        JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+        WHERE si.region IS NOT NULL AND si.region != '' AND si.region != 'GLOBAL'
+          AND a.published_ts > NOW() - INTERVAL '%s days'
+        GROUP BY si.region
+    """, (days,))
+    
+    results = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    return {
+        "regions": [
+            {
+                "region": r.get("region"),
+                "avg_sentiment": float(r.get("avg_sentiment", 0)) if r.get("avg_sentiment") is not None else 0.0,
+                "article_count": r.get("article_count", 0),
+                "bullish_count": r.get("bullish_count", 0),
+                "bearish_count": r.get("bearish_count", 0),
+                "neutral_count": r.get("neutral_count", 0)
+            }
+            for r in results
+        ]
+    }
+
+
 
 
 def clean_domain(source: str) -> str:
@@ -768,6 +833,569 @@ Ensure the output is valid JSON, containing only the JSON structure.
     finally:
         cur.close()
         conn.close()
+
+
+class EventCreate(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    event_time: str
+    category: Optional[str] = "OTHER"
+    importance: Optional[str] = "MEDIUM"
+
+
+@router.post("/upcoming-events")
+async def create_upcoming_event(event: EventCreate):
+    """Manually insert a new calendar event."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        # Check for duplicates on the same day (case-insensitive title and date comparison)
+        cur.execute(f"""
+            SELECT id FROM {settings.mimir_schema}.mimir_upcoming_events
+            WHERE LOWER(TRIM(event_title)) = LOWER(TRIM(%s))
+              AND event_time::date = %s::date
+        """, (event.title, event.event_time))
+        
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="An event with this title already exists on this day.")
+            
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_upcoming_events 
+            (event_title, event_description, event_time, event_category, importance)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            event.title,
+            event.description,
+            event.event_time,
+            event.category,
+            event.importance
+        ))
+        conn.commit()
+        
+        # Return all events
+        cur.execute(f"""
+            SELECT id, event_title, event_description, event_time, event_category, importance, source_article_id
+            FROM {settings.mimir_schema}.mimir_upcoming_events
+            ORDER BY event_time ASC
+        """)
+        results = cur.fetchall()
+        events = []
+        for r in results:
+            events.append({
+                "id": r["id"],
+                "title": r["event_title"],
+                "description": r["event_description"],
+                "event_time": r["event_time"].isoformat(),
+                "category": r["event_category"],
+                "importance": r["importance"],
+                "source_article_id": r["source_article_id"]
+            })
+        return {"status": "success", "events": events}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.delete("/upcoming-events/{event_id}")
+async def delete_upcoming_event(event_id: int):
+    """Delete a calendar event by ID."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        # Check if it exists
+        cur.execute(f"SELECT id FROM {settings.mimir_schema}.mimir_upcoming_events WHERE id = %s", (event_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Event not found.")
+            
+        cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_upcoming_events WHERE id = %s", (event_id,))
+        conn.commit()
+        
+        # Return all events
+        cur.execute(f"""
+            SELECT id, event_title, event_description, event_time, event_category, importance, source_article_id
+            FROM {settings.mimir_schema}.mimir_upcoming_events
+            ORDER BY event_time ASC
+        """)
+        results = cur.fetchall()
+        events = []
+        for r in results:
+            events.append({
+                "id": r["id"],
+                "title": r["event_title"],
+                "description": r["event_description"],
+                "event_time": r["event_time"].isoformat(),
+                "category": r["event_category"],
+                "importance": r["importance"],
+                "source_article_id": r["source_article_id"]
+            })
+        return {"status": "success", "events": events}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/countries")
+async def get_countries_sentiment(
+    days: int = Query(7, ge=1, le=90),
+    region: Optional[str] = Query(None)
+):
+    """Get average sentiment score for each country, optionally filtered by region."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        where_clauses = ["si.country IS NOT NULL", "si.country != ''", "a.published_ts > NOW() - INTERVAL '%s days'"]
+        params = [days]
+        if region:
+            where_clauses.append("si.region = %s")
+            params.append(region)
+            
+        where_str = " AND ".join(where_clauses)
+        
+        cur.execute(f"""
+            SELECT 
+                si.country,
+                AVG(si.sentiment_score) AS avg_sentiment,
+                COUNT(DISTINCT si.article_id) AS article_count
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            WHERE {where_str}
+            GROUP BY si.country
+        """, tuple(params))
+        
+        results = cur.fetchall()
+        return {
+            "countries": [
+                {
+                    "country": r["country"].upper(),
+                    "avg_sentiment": float(r["avg_sentiment"]) if r["avg_sentiment"] is not None else 0.0,
+                    "article_count": r["article_count"]
+                }
+                for r in results
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+COUNTRY_CB_MAP = {
+    "US": "Federal Reserve",
+    "EU": "ECB", "DE": "ECB", "FR": "ECB", "IT": "ECB", "ES": "ECB",
+    "JP": "BOJ",
+    "CN": "PBOC",
+    "GB": "BOE"
+}
+
+COUNTRY_BOND_MAP = {
+    "US": "^TNX",
+    "GB": "BG07.L",
+    "JP": "JP10YT=RR",
+    "DE": "DE10YT=RR",
+    "FR": "FR10YT=RR",
+    "IT": "IT10YT=RR",
+    "ES": "ES10YT=RR",
+    "IN": "IN10YT=RR",
+    "CN": "CN10YT=RR",
+    "KR": "KR10YT=RR",
+    "TH": "TH10YT=RR",
+    "AU": "AU10YT=RR",
+    "CA": "CA10YT=RR",
+    "BR": "BR10YT=RR"
+}
+
+SECTOR_TICKERS = {
+    "Technology": "XLK",
+    "Energy": "XLE",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Communication Services": "XLC",
+    "Industrials": "XLI",
+    "Financial Services": "XLF",
+    "Utilities": "XLU",
+    "Basic Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Healthcare": "XLV"
+}
+
+COUNTRY_SECTOR_TICKERS = {
+    "US": {
+        "Technology": "XLK",
+        "Energy": "XLE",
+        "Consumer Cyclical": "XLY",
+        "Consumer Defensive": "XLP",
+        "Communication Services": "XLC",
+        "Industrials": "XLI",
+        "Financial Services": "XLF",
+        "Utilities": "XLU",
+        "Basic Materials": "XLB",
+        "Real Estate": "XLRE",
+        "Healthcare": "XLV"
+    },
+    "JP": {
+        "Technology": "1618.T",
+        "Energy": "1619.T",
+        "Consumer Cyclical": "1622.T",
+        "Consumer Defensive": "1625.T",
+        "Communication Services": "1626.T",
+        "Industrials": "1620.T",
+        "Financial Services": "1615.T",
+        "Utilities": "1627.T",
+        "Basic Materials": "1617.T",
+        "Real Estate": "1628.T",
+        "Healthcare": "1621.T"
+    },
+    "EU": {
+        "Technology": "EXV3.DE",
+        "Energy": "EXV1.DE",
+        "Consumer Cyclical": "EXV10.DE",
+        "Consumer Defensive": "EXV7.DE",
+        "Communication Services": "EXV12.DE",
+        "Industrials": "EXV2.DE",
+        "Financial Services": "EXV5.DE",
+        "Utilities": "EXV9.DE",
+        "Basic Materials": "EXV6.DE",
+        "Real Estate": "EXV11.DE",
+        "Healthcare": "EXV4.DE"
+    },
+    "DE": "EU", "FR": "EU", "IT": "EU", "ES": "EU",
+    "GB": {
+        "Technology": "IUIT.L",
+        "Energy": "IOGP.L",
+        "Consumer Cyclical": "EXV10.DE",
+        "Consumer Defensive": "EXV7.DE",
+        "Communication Services": "EXV12.DE",
+        "Industrials": "EXV2.DE",
+        "Financial Services": "EXV5.DE",
+        "Utilities": "EXV9.DE",
+        "Basic Materials": "EXV6.DE",
+        "Real Estate": "EXV11.DE",
+        "Healthcare": "EXV4.DE"
+    },
+    "CN": {
+        "Technology": "3033.HK",
+        "Energy": "3027.HK",
+        "Consumer Cyclical": "CHIQ",
+        "Consumer Defensive": "CHIS",
+        "Communication Services": "KWEB",
+        "Industrials": "3005.HK",
+        "Financial Services": "CHIX",
+        "Utilities": "3049.HK",
+        "Basic Materials": "CHIM",
+        "Real Estate": "3101.HK",
+        "Healthcare": "KURE"
+    },
+    "KR": {
+        "Technology": "102110.KS",
+        "Energy": "117460.KS",
+        "Consumer Cyclical": "091170.KS",
+        "Consumer Defensive": "211900.KS",
+        "Communication Services": "266370.KS",
+        "Industrials": "117600.KS",
+        "Financial Services": "091180.KS",
+        "Utilities": "091160.KS",
+        "Basic Materials": "117460.KS",
+        "Real Estate": "091170.KS",
+        "Healthcare": "091190.KS"
+    },
+    "IN": {
+        "Technology": "NETFIT.NS",
+        "Energy": "SETFNIFENG.NS",
+        "Consumer Cyclical": "NETFAUTO.NS",
+        "Consumer Defensive": "NETFFMCG.NS",
+        "Communication Services": "NETFIT.NS",
+        "Industrials": "SETFNIFIND.NS",
+        "Financial Services": "SETFNIFBK.NS",
+        "Utilities": "NETFUTI.NS",
+        "Basic Materials": "NETFMAT.NS",
+        "Real Estate": "NETFMAT.NS",
+        "Healthcare": "NETFPHARM.NS"
+    },
+    "TH": {
+        "Technology": "ICT.BK",
+        "Energy": "ENERG.BK",
+        "Consumer Cyclical": "COMM.BK",
+        "Consumer Defensive": "FOOD.BK",
+        "Communication Services": "ICT.BK",
+        "Industrials": "CONMAT.BK",
+        "Financial Services": "BANK.BK",
+        "Utilities": "ENERG.BK",
+        "Basic Materials": "PETRO.BK",
+        "Real Estate": "PROP.BK",
+        "Healthcare": "HELTH.BK"
+    }
+}
+
+SECTOR_NORM_MAP = {
+    "TECHNOLOGY": "Technology",
+    "ENERGY": "Energy",
+    "CONSUMER_CYCLICAL": "Consumer Cyclical",
+    "CONSUMER_DEFENSIVE": "Consumer Defensive",
+    "COMMUNICATION_SERVICES": "Communication Services",
+    "INDUSTRIALS": "Industrials",
+    "FINANCIAL_SERVICES": "Financial Services",
+    "UTILITIES": "Utilities",
+    "BASIC_MATERIALS": "Basic Materials",
+    "REAL_ESTATE": "Real Estate",
+    "HEALTHCARE": "Healthcare"
+}
+
+def normalize_sector_name(name: str) -> Optional[str]:
+    if not name:
+        return None
+    name_upper = name.upper()
+    if "TECH" in name_upper: return "Technology"
+    if "ENERGY" in name_upper: return "Energy"
+    if "CYCLICAL" in name_upper or "DISCRETIONARY" in name_upper: return "Consumer Cyclical"
+    if "DEFENSIVE" in name_upper or "STAPLES" in name_upper: return "Consumer Defensive"
+    if "COMMUNICATION" in name_upper: return "Communication Services"
+    if "INDUSTRIAL" in name_upper: return "Industrials"
+    if "FINANCIAL" in name_upper: return "Financial Services"
+    if "UTILITIES" in name_upper: return "Utilities"
+    if "MATERIAL" in name_upper or "BASIC" in name_upper: return "Basic Materials"
+    if "REAL ESTATE" in name_upper: return "Real Estate"
+    if "HEALTHCARE" in name_upper: return "Healthcare"
+    return None
+
+COUNTRY_INDEX_MAP = {
+    "US": "SPY",
+    "JP": "^N225",
+    "CN": "000300.SS",
+    "KR": "^KS11",
+    "TH": "^SET50.BK",
+    "GB": "^FTSE",
+    "DE": "^GDAXI",
+    "FR": "^FCHI",
+    "IT": "FTSEMIB.MI",
+    "ES": "^IBEX",
+    "EU": "^STOXX50E",
+    "IN": "^NSEI",
+    "CA": "^GSPTSE",
+    "AU": "^AXJO",
+    "BR": "^BVSP"
+}
+
+def get_region_for_country(country_code: str) -> Optional[str]:
+    country_to_region = {
+        "US": "NA", "CA": "NA", "MX": "NA", "GL": "NA",
+        "GB": "EU", "DE": "EU", "FR": "EU", "IT": "EU", "ES": "EU", "CH": "EU",
+        "NL": "EU", "BE": "EU", "AT": "EU", "DK": "EU", "FI": "EU", "SE": "EU",
+        "JP": "APAC", "CN": "APAC", "KR": "APAC", "IN": "APAC", "AU": "APAC", "NZ": "APAC",
+        "SG": "ASEAN", "TH": "ASEAN", "MY": "ASEAN", "ID": "ASEAN", "PH": "ASEAN", "VN": "ASEAN",
+        "BR": "LATAM", "AR": "LATAM", "CL": "LATAM", "CO": "LATAM",
+        "SA": "MENA", "IL": "MENA", "TR": "MENA", "AE": "MENA",
+        "ZA": "AFRICA", "KE": "AFRICA", "NG": "AFRICA"
+    }
+    return country_to_region.get(country_code)
+
+@router.get("/countries/{country}/details")
+async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
+    """
+    Get detailed macroeconomic, central bank, bond yields, and sector performance data for a country.
+    """
+    country_code = country.upper()
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Economic Sentiment
+        cur.execute(f"""
+            SELECT AVG(si.sentiment_score) as avg_sentiment, COUNT(DISTINCT si.article_id) as count
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            WHERE si.country = %s AND si.asset_category = 'ECONOMY'
+              AND a.published_ts > NOW() - INTERVAL '%s days'
+        """, (country_code, days))
+        eco_res = cur.fetchone()
+        economy_sentiment = {
+            "avg_sentiment": float(eco_res["avg_sentiment"]) if eco_res and eco_res["avg_sentiment"] is not None else 0.0,
+            "count": eco_res["count"] if eco_res else 0
+        }
+        
+        # 2. Central Bank Stance
+        cb_name = COUNTRY_CB_MAP.get(country_code)
+        cb_sentiment = 0.0
+        cb_count = 0
+        hawkish_count = 0
+        dovish_count = 0
+        
+        cb_where = "si.country = %s"
+        cb_params = [country_code, days]
+        if cb_name:
+            cb_where = "(si.country = %s OR si.asset_name = %s)"
+            cb_params = [country_code, cb_name, days]
+            
+        cur.execute(f"""
+            SELECT 
+                AVG(si.sentiment_score) as avg_sentiment,
+                COUNT(*) as count,
+                SUM(CASE WHEN si.policy_signal = 'hawkish' THEN 1 ELSE 0 END) as hawkish_count,
+                SUM(CASE WHEN si.policy_signal = 'dovish' THEN 1 ELSE 0 END) as dovish_count
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            WHERE {cb_where} AND si.asset_category = 'POLICY' AND si.asset_sub_category = 'CENTRAL_BANK'
+              AND a.published_ts > NOW() - INTERVAL '%s days'
+        """, tuple(cb_params))
+        cb_res = cur.fetchone()
+        
+        if cb_res and cb_res["count"] > 0:
+            cb_sentiment = float(cb_res["avg_sentiment"]) if cb_res["avg_sentiment"] is not None else 0.0
+            cb_count = cb_res["count"]
+            hawkish_count = int(cb_res["hawkish_count"]) if cb_res["hawkish_count"] is not None else 0
+            dovish_count = int(cb_res["dovish_count"]) if cb_res["dovish_count"] is not None else 0
+            
+        # Determine stance label
+        stance = "neutral"
+        if hawkish_count > dovish_count:
+            stance = "hawkish"
+        elif dovish_count > hawkish_count:
+            stance = "dovish"
+            
+        central_bank = {
+            "name": cb_name or f"{country_code} Central Bank",
+            "avg_sentiment": cb_sentiment,
+            "count": cb_count,
+            "hawkish_count": hawkish_count,
+            "dovish_count": dovish_count,
+            "stance": stance
+        }
+
+        # 3. Bond Yield (Fetch latest from ohlcv, fallback to yfinance if stale)
+        bond_ticker = COUNTRY_BOND_MAP.get(country_code)
+        bond_data = {"ticker": bond_ticker, "yield": None, "change_percent": None}
+        if bond_ticker:
+            from .prices import get_ticker_changes
+            try:
+                # Call pricing router logic
+                price_changes_res = await get_ticker_changes(tickers=bond_ticker)
+                if price_changes_res and "tickers" in price_changes_res and price_changes_res["tickers"]:
+                    bond_data["yield"] = price_changes_res["tickers"][0]["current_price"]
+                    bond_data["change_percent"] = price_changes_res["tickers"][0]["change_percent"]
+            except Exception as e:
+                print(f"Error fetching bond yield: {e}")
+
+        # 4. Equity Sectors
+        # A. Query sentiment scores at three levels: Country, Region, and Global
+        region_code = get_region_for_country(country_code)
+        
+        # Helper to retrieve sector sentiments for a given query and key
+        async def fetch_sector_sentiments(filter_col: Optional[str], filter_val: Optional[str]):
+            where_clause = ""
+            params = [days]
+            if filter_col:
+                where_clause = f"si.{filter_col} = %s AND"
+                params = [filter_val, days]
+                
+            cur.execute(f"""
+                SELECT 
+                    si.asset_name,
+                    si.asset_category,
+                    si.asset_sub_category,
+                    AVG(si.sentiment_score) as avg_sentiment
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+                WHERE {where_clause} (
+                    si.asset_category = 'SECTOR' OR 
+                    (si.asset_category = 'EQUITY' AND si.asset_sub_category IS NOT NULL)
+                )
+                  AND a.published_ts > NOW() - INTERVAL '%s days'
+                GROUP BY si.asset_name, si.asset_category, si.asset_sub_category
+            """, tuple(params))
+            rows = cur.fetchall()
+            
+            s_map = {}
+            for r in rows:
+                norm_name = None
+                if r["asset_category"] == "EQUITY" and r["asset_sub_category"]:
+                    norm_name = SECTOR_NORM_MAP.get(r["asset_sub_category"].strip().upper())
+                else:
+                    norm_name = normalize_sector_name(r["asset_name"])
+                    
+                if norm_name:
+                    if norm_name not in s_map:
+                        s_map[norm_name] = []
+                    s_map[norm_name].append(float(r["avg_sentiment"]))
+                    
+            return {k: sum(v)/len(v) for k, v in s_map.items()}
+
+        country_sent_map = await fetch_sector_sentiments("country", country_code)
+        region_sent_map = await fetch_sector_sentiments("region", region_code) if region_code else {}
+        global_sent_map = await fetch_sector_sentiments(None, None)
+
+        # B. Fetch country-specific sector prices from COUNTRY_SECTOR_TICKERS map
+        target_map = COUNTRY_SECTOR_TICKERS.get(country_code, COUNTRY_SECTOR_TICKERS["US"])
+        if isinstance(target_map, str):
+            target_map = COUNTRY_SECTOR_TICKERS[target_map]
+            
+        sector_list = list(SECTOR_TICKERS.keys())
+        target_tickers = [target_map.get(name, SECTOR_TICKERS[name]) for name in sector_list]
+        us_tickers = list(SECTOR_TICKERS.values())
+        all_query_tickers = list(set(target_tickers + us_tickers))
+        
+        from .prices import get_ticker_changes
+        price_changes_res = await get_ticker_changes(tickers=",".join(all_query_tickers))
+        tickers_list = price_changes_res.get("tickers", []) if price_changes_res else []
+        price_changes_map = {item["ticker"]: item for item in tickers_list}
+        
+        sectors = []
+        for name in sector_list:
+            ticker = target_map.get(name, SECTOR_TICKERS[name])
+            p_data = price_changes_map.get(ticker, {})
+            
+            price = p_data.get("current_price")
+            change_percent = p_data.get("change_percent")
+            
+            # fallback to US if empty
+            if price is None or change_percent is None:
+                us_ticker = SECTOR_TICKERS[name]
+                us_data = price_changes_map.get(us_ticker, {})
+                price = us_data.get("current_price")
+                change_percent = us_data.get("change_percent")
+                ticker = us_ticker
+                
+            # 2) Country/Region/Global Sentiment Fallbacks
+            avg_sent = 0.0
+            if name in country_sent_map:
+                avg_sent = country_sent_map[name]
+            elif name in region_sent_map:
+                avg_sent = region_sent_map[name] * 0.9
+            elif name in global_sent_map:
+                avg_sent = global_sent_map[name] * 0.8
+                
+            sectors.append({
+                "sector": name,
+                "ticker": ticker,
+                "price": round(price, 2) if price is not None else None,
+                "change_percent": round(change_percent, 2) if change_percent is not None else None,
+                "sentiment_score": round(avg_sent, 2)
+            })
+
+        return {
+            "country": country_code,
+            "economy_sentiment": economy_sentiment,
+            "central_bank": central_bank,
+            "bond_yield": bond_data,
+            "sectors": sectors
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error in country details: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
 
 
 

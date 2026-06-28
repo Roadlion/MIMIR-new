@@ -3,9 +3,18 @@ from fastapi import APIRouter, Query, HTTPException
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import yfinance as yf
+from yfinance import cache as yf_cache
 import pandas as pd
+
+# Disable yfinance sqlite disk cookie cache to avoid persistent 401 crumb errors
+try:
+    yf_cache.get_cookie_cache().dummy = True
+    print("[YFINANCE] cookie disk cache disabled (dummy=True)")
+except Exception as e:
+    print(f"[YFINANCE] failed to disable cookie cache: {e}")
 import psycopg2
 import time
+from concurrent.futures import ThreadPoolExecutor
 from curl_cffi.requests import Session
 from psycopg2.extras import execute_values, RealDictCursor
 from ..database import get_db_connection_dict, get_db_connection
@@ -20,12 +29,17 @@ DEFAULT_TICKERS = [
     "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "BNB-USD", "ADA-USD"
 ]
 
-def fetch_and_cache_ticker(ticker_symbol: str, conn):
+def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
     """
     Fetches 7 days of hourly price history (OHLCV) for the ticker using yfinance
     and inserts/caches it into the SQL database.
     """
+    ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
     print(f"[YFINANCE] Starting fetch for {ticker_symbol}...")
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
     try:
         session = Session(impersonate="chrome")
         session.verify = False
@@ -37,8 +51,8 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn):
         ticker = yf.Ticker(ticker_symbol, session=session)
         # Fetch 7d hourly data
         df = ticker.history(period="7d", interval="1h")
-        # Pause to avoid rate limits
-        time.sleep(1.5)
+        # Pause briefly to avoid hammering
+        time.sleep(0.5)
         
         if df.empty:
             print(f"[YFINANCE] Received empty DataFrame for {ticker_symbol}")
@@ -80,6 +94,21 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn):
     except Exception as e:
         print(f"[YFINANCE] Error fetching/caching {ticker_symbol}: {e}")
         return False
+    finally:
+        if close_conn and conn:
+            conn.close()
+
+def fetch_and_cache_tickers_concurrently(tickers: List[str]):
+    """
+    Fetches and caches prices for multiple tickers concurrently using a thread pool.
+    Each thread uses its own database connection.
+    """
+    if not tickers:
+        return
+    print(f"[YFINANCE] Concurrently fetching {len(tickers)} tickers...")
+    max_workers = min(len(tickers), 5)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor.map(lambda t: fetch_and_cache_ticker(t, None), tickers)
 
 def get_ticker_price_data(ticker_symbol: str, conn):
     """
@@ -101,7 +130,7 @@ def get_ticker_price_data(ticker_symbol: str, conn):
         is_stale = True
     else:
         now_ts = datetime.now(timezone.utc)
-        if now_ts - last_scraped > timedelta(hours=1):
+        if now_ts - last_scraped > timedelta(minutes=2):
             is_stale = True
             
     if is_stale:
@@ -177,50 +206,159 @@ async def get_ticker_changes(tickers: Optional[str] = Query(None)):
     """
     Get current price and 24h change percentage for specified tickers.
     If no tickers are provided, returns default list.
+    Uses bulk queries to prevent database roundtrip overhead and keeps logs clean.
     """
     ticker_list = DEFAULT_TICKERS
     if tickers:
         ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
         
-    conn = get_db_connection()
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    # 1. Bulk check when tickers were last scraped
+    cur.execute(f"""
+        SELECT ticker, MAX(scraped_at) as last_scraped 
+        FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
+        WHERE ticker = ANY(%s)
+        GROUP BY ticker
+    """, (ticker_list,))
+    rows = cur.fetchall()
+    last_scraped_map = {r["ticker"]: r["last_scraped"] for r in rows}
+    
+    # Identify which tickers are missing or stale (>2m)
+    now_ts = datetime.now(timezone.utc)
+    stale_tickers = []
+    for ticker in ticker_list:
+        last_scraped = last_scraped_map.get(ticker)
+        if not last_scraped or (now_ts - last_scraped > timedelta(minutes=2)):
+            stale_tickers.append(ticker)
+            
+    # Fetch from yfinance concurrently only for stale tickers
+    if stale_tickers:
+        print(f"[DATABASE] Cache miss/stale for tickers: {stale_tickers}. Fetching from yfinance concurrently...")
+        fetch_and_cache_tickers_concurrently(stale_tickers)
+        
+    # 2. Bulk fetch latest price and close price nearest to 24h ago
+
+    cur.execute(f"""
+        WITH latest_prices AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                close AS latest_price,
+                timestamp AS latest_ts
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker = ANY(%s)
+            ORDER BY ticker, timestamp DESC
+        ),
+        prev_prices AS (
+            SELECT DISTINCT ON (l.ticker)
+                l.ticker,
+                h.close AS prev_price
+            FROM latest_prices l
+            JOIN {settings.mimir_schema}.mimir_hourly_ohlcv h ON l.ticker = h.ticker
+            WHERE h.timestamp <= l.latest_ts - INTERVAL '24 hours'
+            ORDER BY l.ticker, h.timestamp DESC
+        )
+        SELECT 
+            l.ticker,
+            l.latest_price,
+            COALESCE(p.prev_price, (
+                SELECT close FROM {settings.mimir_schema}.mimir_hourly_ohlcv h2 
+                WHERE h2.ticker = l.ticker 
+                ORDER BY timestamp ASC LIMIT 1
+            )) as prev_price
+        FROM latest_prices l
+        LEFT JOIN prev_prices p ON l.ticker = p.ticker
+    """, (ticker_list,))
+    
+    price_rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    # Map rows to the expected API schema preserving requested ticker list order
+    price_map = {r["ticker"]: r for r in price_rows}
     results = []
     for ticker in ticker_list:
-        data = get_ticker_price_data(ticker, conn)
-        if data:
-            results.append(data)
+        r = price_map.get(ticker)
+        if r:
+            latest_price = float(r["latest_price"])
+            prev_price = float(r["prev_price"]) if r["prev_price"] is not None else latest_price
+            change_percent = 0.0
+            if prev_price > 0:
+                change_percent = ((latest_price - prev_price) / prev_price) * 100
+            results.append({
+                "ticker": ticker,
+                "current_price": latest_price,
+                "price_24h_ago": prev_price,
+                "change_percent": round(change_percent, 2)
+            })
             
-    conn.close()
     return {"tickers": results}
 
 @router.get("/prices/candles")
 async def get_candles(
     ticker: str,
-    interval: str = Query("1h", pattern="^(1h|4h|1d)$"),
+    interval: str = Query("1h", pattern="^(1m|5m|15m|30m|1h|4h|1d)$"),
     days: int = Query(7, ge=1, le=30)
 ):
     """
     Get aggregated candlestick (OHLCV) data for a given ticker and time interval.
-    Supported intervals: '1h' (hourly), '4h' (4-hourly), '1d' (daily).
+    Supported intervals: '1m', '5m', '15m', '30m', '1h', '4h', '1d'.
     """
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
+    # Decide source table based on interval
+    is_minute = interval in ["1m", "5m", "15m", "30m"]
+    table_name = "mimir_minute_ohlcv" if is_minute else "mimir_hourly_ohlcv"
+    
     # Ensure some data exists in cache for the ticker
     cur.execute(f"""
         SELECT EXISTS(
-            SELECT 1 FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
+            SELECT 1 FROM {settings.mimir_schema}.{table_name} 
             WHERE ticker = %s
         )
     """, (ticker,))
     has_data = cur.fetchone()["exists"]
     
     if not has_data:
-        fetch_and_cache_ticker(ticker, conn)
+        # If minute table is empty, we can fetch dynamic ticker or cache ticker
+        if is_minute:
+            from backend.app.pipeline.background_worker import fetch_and_cache_minute_ticker
+            fetch_and_cache_minute_ticker(ticker, conn)
+        else:
+            fetch_and_cache_ticker(ticker, conn)
         
     start_time = datetime.now(timezone.utc) - timedelta(days=days)
     
     # Select aggregation query based on requested interval
-    if interval == "1h":
+    if interval == "1m":
+        sql = f"""
+            SELECT 
+                timestamp AS time,
+                open, high, low, close, volume
+            FROM {settings.mimir_schema}.mimir_minute_ohlcv
+            WHERE ticker = %s AND timestamp >= %s
+            ORDER BY timestamp ASC
+        """
+        params = (ticker, start_time)
+    elif interval in ["5m", "15m", "30m"]:
+        minutes_group = int(interval[:-1])
+        sql = f"""
+            SELECT 
+                date_trunc('hour', timestamp) + (extract(minute from timestamp)::int / {minutes_group}) * interval '{minutes_group} minutes' AS time,
+                (array_agg(open ORDER BY timestamp ASC))[1] AS open,
+                MAX(high) AS high,
+                MIN(low) AS low,
+                (array_agg(close ORDER BY timestamp DESC))[1] AS close,
+                SUM(volume) AS volume
+            FROM {settings.mimir_schema}.mimir_minute_ohlcv
+            WHERE ticker = %s AND timestamp >= %s
+            GROUP BY 1
+            ORDER BY time ASC
+        """
+        params = (ticker, start_time)
+    elif interval == "1h":
         sql = f"""
             SELECT 
                 timestamp AS time,
@@ -741,6 +879,56 @@ async def get_heatmap(index: str = Query("sp500")):
     # Build a lookup map
     ticker_meta = {c["ticker"]: c for c in constituents}
 
+    # Fetch sentiment data for these tickers
+    sentiment_map = {}
+    try:
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        cur.execute(f"""
+            WITH current_sentiment AS (
+                SELECT
+                    si.ticker,
+                    AVG(si.sentiment_score) AS current_sentiment
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+                WHERE si.ticker = ANY(%s)
+                  AND a.published_ts > NOW() - INTERVAL '24 hours'
+                GROUP BY si.ticker
+            ),
+            prev_sentiment AS (
+                SELECT
+                    si.ticker,
+                    AVG(si.sentiment_score) AS prev_sentiment
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+                WHERE si.ticker = ANY(%s)
+                  AND a.published_ts > NOW() - INTERVAL '48 hours'
+                  AND a.published_ts <= NOW() - INTERVAL '24 hours'
+                GROUP BY si.ticker
+            )
+            SELECT
+                cs.ticker,
+                cs.current_sentiment,
+                ps.prev_sentiment,
+                CASE
+                    WHEN ps.prev_sentiment IS NULL OR ABS(ps.prev_sentiment) < 0.0001
+                        THEN (cs.current_sentiment - COALESCE(ps.prev_sentiment, 0)) * 100
+                    ELSE ((cs.current_sentiment - ps.prev_sentiment) / ABS(ps.prev_sentiment)) * 100
+                END AS sentiment_change_percent
+            FROM current_sentiment cs
+            LEFT JOIN prev_sentiment ps ON cs.ticker = ps.ticker
+        """, (tickers, tickers))
+        sentiment_rows = cur.fetchall()
+        for r in sentiment_rows:
+            sentiment_map[r["ticker"]] = {
+                "current_sentiment": float(r["current_sentiment"]) if r["current_sentiment"] is not None else None,
+                "sentiment_change_percent": float(r["sentiment_change_percent"]) if r["sentiment_change_percent"] is not None else None
+            }
+        cur.close()
+        conn.close()
+    except Exception as db_err:
+        print(f"[HEATMAP] Database sentiment fetch error: {db_err}")
+
     results = []
     try:
         # Use yfinance download for batch efficiency
@@ -794,6 +982,7 @@ async def get_heatmap(index: str = Query("sp500")):
                 # Use volume * price as a proxy for market cap weight (for treemap sizing)
                 weight = max(current_price * volume, 1) if volume > 0 else current_price
 
+                sent_info = sentiment_map.get(ticker_symbol, {"current_sentiment": None, "sentiment_change_percent": None})
                 results.append({
                     "ticker": ticker_symbol,
                     "name": meta["name"],
@@ -803,6 +992,8 @@ async def get_heatmap(index: str = Query("sp500")):
                     "change_percent": change_percent,
                     "volume": volume,
                     "weight": weight,
+                    "current_sentiment": sent_info["current_sentiment"],
+                    "sentiment_change_percent": sent_info["sentiment_change_percent"],
                 })
             except Exception as e:
                 print(f"[HEATMAP] Error processing {ticker_symbol}: {e}")
@@ -823,3 +1014,430 @@ async def get_heatmap(index: str = Query("sp500")):
         "constituents": results,
         "cached": False
     }
+
+# In-memory cache for detailed ticker info to avoid hammering yfinance
+_ticker_details_cache = {}  # {ticker_symbol: {"data": ..., "fetched_at": datetime}}
+DETAILS_CACHE_TTL_MINUTES = 10
+
+@router.get("/prices/ticker-details/{ticker}")
+async def get_ticker_details(ticker: str, nocache: bool = False):
+    ticker_symbol = ticker.strip().upper().lstrip('$')
+    now = datetime.now(timezone.utc)
+    
+    # Check cache
+    cached = _ticker_details_cache.get(ticker_symbol)
+    if cached and not nocache and (now - cached["fetched_at"]) < timedelta(minutes=DETAILS_CACHE_TTL_MINUTES):
+        cached_data = cached["data"]
+        # If cache has partial/failed details (CEO N/A or description missing), bypass to retry fetching
+        if cached_data.get("ceo") != "N/A" and cached_data.get("summary") != "Description not found.":
+            print(f"[DETAILS] Cache hit for {ticker_symbol}")
+            return cached_data
+        
+    print(f"[DETAILS] Fetching details from yfinance for {ticker_symbol}...")
+    try:
+        session = Session(impersonate="chrome", verify=False)
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        ticker_obj = yf.Ticker(ticker_symbol, session=session)
+        info = ticker_obj.info
+        if not isinstance(info, dict):
+            info = {}
+    except Exception as e:
+        print(f"[DETAILS] yfinance error for {ticker_symbol}: {e}")
+        info = {}
+
+    # Look up in HEATMAP_INDICES if sector or name is missing
+    lookup_name = None
+    lookup_sector = None
+    for idx_key, idx_val in HEATMAP_INDICES.items():
+        for const in idx_val.get("constituents", []):
+            if const["ticker"].upper() == ticker_symbol:
+                lookup_name = const["name"]
+                lookup_sector = const["sector"]
+                break
+        if lookup_name:
+            break
+
+    # Extract company info
+    long_name = info.get("longName") or info.get("shortName") or lookup_name or ticker_symbol
+    sector = info.get("sector") or lookup_sector or "N/A"
+    industry = info.get("industry") or "N/A"
+    country = info.get("country") or "N/A"
+    exchange = info.get("exchange") or "N/A"
+    summary = info.get("longBusinessSummary") or info.get("description") or "Description not found."
+    
+    officers = info.get("companyOfficers", [])
+    ceo = "N/A"
+    if officers and isinstance(officers, list):
+        for officer in officers:
+            if "chief executive officer" in officer.get("title", "").lower():
+                ceo = officer.get("name", "N/A")
+                break
+        if ceo == "N/A" and len(officers) > 0:
+            ceo = officers[0].get("name", "N/A")
+    elif info.get("ceo"):
+        ceo = info.get("ceo")
+        
+    employees = info.get("fullTimeEmployees") or "N/A"
+    
+    # Financial metrics extraction with history & database fallbacks
+    price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("regularMarketPreviousClose") or 0.0
+    prev_close = info.get("regularMarketPreviousClose") or price or 0.0
+    
+    open_val = info.get("open") or 0.0
+    high_val = info.get("dayHigh") or 0.0
+    low_val = info.get("dayLow") or 0.0
+    volume = info.get("volume") or 0
+    market_cap = info.get("marketCap") or 0
+    
+    # yfinance history fallback
+    if not price or price == 0.0:
+        try:
+            print(f"[DETAILS] Info returned empty price for {ticker_symbol}. Fetching history fallback...")
+            hist = ticker_obj.history(period="5d")
+            if not hist.empty:
+                latest_row = hist.iloc[-1]
+                price = float(latest_row["Close"])
+                open_val = float(latest_row["Open"]) if open_val == 0.0 else open_val
+                high_val = float(latest_row["High"]) if high_val == 0.0 else high_val
+                low_val = float(latest_row["Low"]) if low_val == 0.0 else low_val
+                volume = int(latest_row["Volume"]) if volume == 0 else volume
+                if len(hist) >= 2:
+                    prev_close = float(hist.iloc[-2]["Close"])
+                else:
+                    prev_close = price
+        except Exception as hist_err:
+            print(f"[DETAILS] yfinance history fallback error for {ticker_symbol}: {hist_err}")
+
+    # Database cache fallback
+    if not price or price == 0.0:
+        try:
+            print(f"[DETAILS] Falling back to database cache for {ticker_symbol}...")
+            conn = get_db_connection_dict()
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT close, open, high, low, volume 
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = %s
+                ORDER BY timestamp DESC
+                LIMIT 2
+            """, (ticker_symbol,))
+            db_rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            
+            if db_rows:
+                price = float(db_rows[0]['close'])
+                open_val = float(db_rows[0]['open']) if open_val == 0.0 else open_val
+                high_val = float(db_rows[0]['high']) if high_val == 0.0 else high_val
+                low_val = float(db_rows[0]['low']) if low_val == 0.0 else low_val
+                volume = int(db_rows[0]['volume']) if volume == 0 else volume
+                if len(db_rows) > 1:
+                    prev_close = float(db_rows[1]['close'])
+                else:
+                    prev_close = price
+        except Exception as db_fallback_err:
+            print(f"[DETAILS] Database fallback error for {ticker_symbol}: {db_fallback_err}")
+
+    # Calculate change metrics
+    if not prev_close or prev_close == 0.0:
+        prev_close = price
+    change = price - prev_close
+    change_percent = (change / prev_close * 100) if prev_close > 0 else 0.0
+    
+    if open_val == 0.0: open_val = price
+    if high_val == 0.0: high_val = price
+    if low_val == 0.0: low_val = price
+    
+    # Calculate market cap if empty and we have shares outstanding
+    if not market_cap or market_cap == 0:
+        shares = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
+        if shares and price:
+            market_cap = shares * price
+            
+    pe_ratio = info.get("trailingPE") or info.get("forwardPE")
+    div_yield = info.get("dividendYield")
+    div_yield_pct = f"{round(div_yield * 100, 2)}%" if div_yield else "N/A"
+    
+    low_52w = info.get("fiftyTwoWeekLow") or low_val
+    high_52w = info.get("fiftyTwoWeekHigh") or high_val
+    eps = info.get("trailingEps") or "N/A"
+    
+    if (not pe_ratio or pe_ratio == "N/A") and isinstance(eps, (int, float)) and eps > 0:
+        pe_ratio = round(price / eps, 2)
+    if not pe_ratio:
+        pe_ratio = "N/A"
+        
+    # Analyst metrics
+    target_low = info.get("targetLowPrice")
+    target_mean = info.get("targetMeanPrice")
+    target_high = info.get("targetHighPrice")
+    
+    try:
+        targets_dict = ticker_obj.analyst_price_targets
+        if targets_dict and isinstance(targets_dict, dict):
+            target_low = target_low or targets_dict.get("low")
+            target_mean = target_mean or targets_dict.get("mean") or targets_dict.get("median")
+            target_high = target_high or targets_dict.get("high")
+    except Exception as target_err:
+        print(f"[DETAILS] analyst_price_targets error: {target_err}")
+        
+    target_low = target_low or price
+    target_mean = target_mean or price
+    target_high = target_high or price
+    
+    rec_mean = info.get("recommendationMean")
+    
+    # Recommendations counts fallback
+    strong_buy_cnt = 0
+    buy_cnt = 0
+    hold_cnt = 0
+    sell_cnt = 0
+    
+    try:
+        recs_df = ticker_obj.recommendations
+        if recs_df is not None and not recs_df.empty:
+            latest_row = recs_df.iloc[0]
+            strong_buy_cnt = int(latest_row.get("strongBuy") or 0)
+            buy_cnt = int(latest_row.get("buy") or 0)
+            hold_cnt = int(latest_row.get("hold") or 0)
+            sell_cnt = int(latest_row.get("sell") or 0) + int(latest_row.get("strongSell") or 0)
+    except Exception as rec_err:
+        print(f"[DETAILS] recommendations fetch error: {rec_err}")
+        
+    analyst_rec = "Hold"
+    if rec_mean:
+        if rec_mean <= 1.5:
+            analyst_rec = "Strong Buy"
+        elif rec_mean <= 2.5:
+            analyst_rec = "Buy"
+        elif rec_mean <= 3.5:
+            analyst_rec = "Hold"
+        else:
+            analyst_rec = "Sell"
+    else:
+        # Determine from df
+        total_bullish = strong_buy_cnt + buy_cnt
+        if total_bullish > (hold_cnt + sell_cnt):
+            if strong_buy_cnt > buy_cnt:
+                analyst_rec = "Strong Buy"
+            else:
+                analyst_rec = "Buy"
+        elif hold_cnt > sell_cnt:
+            analyst_rec = "Hold"
+        else:
+            analyst_rec = "Sell"
+            
+    analyst_count = info.get("numberOfAnalystOpinions") or (strong_buy_cnt + buy_cnt + hold_cnt + sell_cnt) or 0
+
+    # Fetch recent news/sentiment from database
+    db_articles = []
+    bullish_view = "No consensus sentiment analysis available at the moment."
+    bearish_view = "No consensus sentiment analysis available at the moment."
+    sentiment_score = 0.0
+    
+    try:
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        
+        # Latest news for this ticker
+        cur.execute(f"""
+            SELECT DISTINCT a.title, a.link, a.published_ts, a.source_name, si.sentiment_score, a.summary
+            FROM {settings.mimir_schema}.mimir_raw_articles a
+            JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+            WHERE si.ticker = %s
+            ORDER BY a.published_ts DESC
+            LIMIT 5
+        """, (ticker_symbol,))
+        rows = cur.fetchall()
+        for r in rows:
+            db_articles.append({
+                "title": r["title"],
+                "url": r["link"],
+                "published_ts": r["published_ts"].strftime("%b %d, %Y") if r["published_ts"] else "",
+                "source": r["source_name"] or "News",
+                "sentiment": float(r["sentiment_score"]) if r["sentiment_score"] is not None else 0.0,
+                "summary": r["summary"] or ""
+            })
+            
+        # Get overall sentiment
+        cur.execute(f"""
+            SELECT AVG(sentiment_score) as avg_score 
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts 
+            WHERE ticker = %s
+        """, (ticker_symbol,))
+        avg_row = cur.fetchone()
+        if avg_row and avg_row["avg_score"] is not None:
+            sentiment_score = float(avg_row["avg_score"])
+            
+        # Select one positive article summary for Bullish view and one negative for Bearish view
+        cur.execute(f"""
+            SELECT summary FROM {settings.mimir_schema}.mimir_raw_articles a
+            JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+            WHERE si.ticker = %s AND si.sentiment_score > 0.1 AND a.summary IS NOT NULL AND a.summary != ''
+            ORDER BY si.sentiment_score DESC LIMIT 1
+        """, (ticker_symbol,))
+        b_row = cur.fetchone()
+        if b_row:
+            bullish_view = b_row["summary"]
+            
+        cur.execute(f"""
+            SELECT summary FROM {settings.mimir_schema}.mimir_raw_articles a
+            JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+            WHERE si.ticker = %s AND si.sentiment_score < -0.1 AND a.summary IS NOT NULL AND a.summary != ''
+            ORDER BY si.sentiment_score ASC LIMIT 1
+        """, (ticker_symbol,))
+        bear_row = cur.fetchone()
+        if bear_row:
+            bearish_view = bear_row["summary"]
+            
+        cur.close()
+        conn.close()
+    except Exception as db_err:
+        print(f"[DETAILS] Database fetch error for {ticker_symbol}: {db_err}")
+
+    # Fetch peers from the database
+    peers_list = []
+    try:
+        # Find default peers in the same index or sector
+        peers_candidates = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "QCOM", "INTC"]
+        if ticker_symbol in peers_candidates:
+            peers_candidates.remove(ticker_symbol)
+            
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        cur.execute(f"""
+            WITH latest_prices AS (
+                SELECT DISTINCT ON (ticker)
+                    ticker,
+                    close AS latest_price,
+                    timestamp AS latest_ts
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = ANY(%s)
+                ORDER BY ticker, timestamp DESC
+            ),
+            prev_prices AS (
+                SELECT DISTINCT ON (l.ticker)
+                    l.ticker,
+                    h.close AS prev_price
+                FROM latest_prices l
+                JOIN {settings.mimir_schema}.mimir_hourly_ohlcv h ON l.ticker = h.ticker
+                WHERE h.timestamp <= l.latest_ts - INTERVAL '24 hours'
+                ORDER BY l.ticker, h.timestamp DESC
+            )
+            SELECT 
+                l.ticker,
+                l.latest_price,
+                COALESCE(p.prev_price, l.latest_price) as prev_price
+            FROM latest_prices l
+            LEFT JOIN prev_prices p ON l.ticker = p.ticker
+        """, (peers_candidates[:4],))
+        peer_rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        for pr in peer_rows:
+            lp = float(pr["latest_price"])
+            pp = float(pr["prev_price"])
+            pch = ((lp - pp) / pp * 100) if pp > 0 else 0.0
+            peers_list.append({
+                "ticker": pr["ticker"],
+                "price": round(lp, 2),
+                "change_percent": round(pch, 2)
+            })
+    except Exception as peer_err:
+        print(f"[DETAILS] Peers fetch error: {peer_err}")
+
+    # Financial statements parsing
+    financials_data = {"years": [], "revenue": [], "gross_profit": [], "ebitda": [], "net_income": [], "eps": [], "operating_cash_flow": [], "capex": [], "free_cash_flow": []}
+    try:
+        fin = ticker_obj.income_stmt
+        cf = ticker_obj.cash_flow
+        
+        if fin is not None and not fin.empty:
+            years = [col.strftime('%Y-%m-%d') if hasattr(col, 'strftime') else str(col) for col in fin.columns]
+            financials_data["years"] = years
+            
+            def get_row(df, keys):
+                for k in keys:
+                    # Case insensitive lookup
+                    for index_val in df.index:
+                        if str(index_val).strip().lower() == k.strip().lower():
+                            return df.loc[index_val]
+                return None
+                
+            rev_row = get_row(fin, ['Total Revenue', 'Revenue'])
+            financials_data["revenue"] = [float(v) if pd.notna(v) else 0.0 for v in rev_row] if rev_row is not None else [0.0]*len(years)
+            
+            gp_row = get_row(fin, ['Gross Profit'])
+            financials_data["gross_profit"] = [float(v) if pd.notna(v) else 0.0 for v in gp_row] if gp_row is not None else [0.0]*len(years)
+            
+            ebitda_row = get_row(fin, ['EBITDA'])
+            financials_data["ebitda"] = [float(v) if pd.notna(v) else 0.0 for v in ebitda_row] if ebitda_row is not None else [0.0]*len(years)
+            
+            ni_row = get_row(fin, ['Net Income', 'Net Income Common Stockholders'])
+            financials_data["net_income"] = [float(v) if pd.notna(v) else 0.0 for v in ni_row] if ni_row is not None else [0.0]*len(years)
+            
+            eps_row = get_row(fin, ['Diluted EPS', 'Basic EPS'])
+            financials_data["eps"] = [float(v) if pd.notna(v) else 0.0 for v in eps_row] if eps_row is not None else [0.0]*len(years)
+
+        if cf is not None and not cf.empty:
+            ocf_row = get_row(cf, ['Operating Cash Flow', 'Cash Flow From Operating Activities'])
+            financials_data["operating_cash_flow"] = [float(v) if pd.notna(v) else 0.0 for v in ocf_row] if ocf_row is not None else [0.0]*len(financials_data["years"])
+            
+            capex_row = get_row(cf, ['Capital Expenditure', 'Capital Expenditures'])
+            financials_data["capex"] = [float(v) if pd.notna(v) else 0.0 for v in capex_row] if capex_row is not None else [0.0]*len(financials_data["years"])
+            
+            fcf_row = get_row(cf, ['Free Cash Flow'])
+            financials_data["free_cash_flow"] = [float(v) if pd.notna(v) else 0.0 for v in fcf_row] if fcf_row is not None else [0.0]*len(financials_data["years"])
+    except Exception as fin_err:
+        print(f"[DETAILS] Financial parsing error: {fin_err}")
+
+    # Final payload
+    details_payload = {
+        "ticker": ticker_symbol,
+        "long_name": long_name,
+        "sector": sector,
+        "industry": industry,
+        "country": country,
+        "exchange": exchange,
+        "summary": summary,
+        "ceo": ceo,
+        "employees": employees,
+        "price": round(price, 2),
+        "change": round(change, 2),
+        "change_percent": round(change_percent, 2),
+        "prev_close": round(prev_close, 2),
+        "open": round(open_val, 2),
+        "high": round(high_val, 2),
+        "low": round(low_val, 2),
+        "volume": volume,
+        "market_cap": market_cap,
+        "pe_ratio": pe_ratio,
+        "dividend_yield": div_yield_pct,
+        "fifty_two_week_low": round(low_52w, 2),
+        "fifty_two_week_high": round(high_52w, 2),
+        "eps": eps,
+        "analyst_recommendation": analyst_rec,
+        "analyst_count": analyst_count,
+        "analyst_bearish": sell_cnt,
+        "analyst_neutral": hold_cnt,
+        "analyst_bullish": strong_buy_cnt + buy_cnt,
+        "target_low": round(target_low, 2),
+        "target_mean": round(target_mean, 2),
+        "target_high": round(target_high, 2),
+        "sentiment_score": round(sentiment_score, 2),
+        "bullish_view": bullish_view,
+        "bearish_view": bearish_view,
+        "recent_articles": db_articles,
+        "peers": peers_list,
+        "financials": financials_data
+    }
+    
+    # Store in cache only if successfully fetched positive price
+    if details_payload["price"] > 0.0:
+        _ticker_details_cache[ticker_symbol] = {"data": details_payload, "fetched_at": now}
+    return details_payload
+

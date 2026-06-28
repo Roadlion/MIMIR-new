@@ -155,8 +155,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load sliding ticker data
     fetchTickerData();
-    // Refresh every 5 minutes (300000ms)
-    setInterval(fetchTickerData, 300000);
+    // Refresh every 2 minutes (120000ms)
+    setInterval(fetchTickerData, 120000);
 });
 
 async function fetchTickerData() {
@@ -179,11 +179,11 @@ async function fetchTickerData() {
                     });
                     const changeFormatted = Math.abs(item.change_percent).toFixed(2);
                     return `
-                        <div class="ticker-item">
+                        <a href="/asset/${item.ticker}" class="ticker-item hover:opacity-80 transition-opacity">
                             <span class="ticker-symbol">${item.ticker}</span>
                             <span class="ticker-price">${isCurrency ? '$' : ''}${priceFormatted}</span>
                             <span class="ticker-change ${changeClass}">${changeSign} ${changeFormatted}%</span>
-                        </div>
+                        </a>
                     `;
                 }).join('');
             };

@@ -3,9 +3,9 @@
 {% block title %}MIMIR — Dashboard{% endblock %}
 
 {% block content %}
-<div class="flex flex-col lg:flex-row gap-5">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
     <!-- Left: Dashboard Cards (2/3) -->
-    <div class="w-full lg:w-2/3">
+    <div class="w-full lg:col-span-2">
         <div class="grid grid-cols-1 md:grid-cols-4 gap-5">
             <!-- Global Sentiment Card -->
             <div class="card flex flex-col justify-between h-40">
@@ -158,7 +158,7 @@
 
                 <!-- Treemap Canvas -->
                 <div class="heatmap-treemap-wrapper">
-                    <canvas id="heatmap-canvas" height="380"></canvas>
+                    <canvas id="heatmap-canvas" height="380" style="height: 380px;"></canvas>
                 </div>
             </div>
         </div>
@@ -172,6 +172,16 @@
                 <div class="heatmap-tooltip-price-row">
                     <span id="ht-price" class="heatmap-tooltip-price">—</span>
                     <span id="ht-change" class="heatmap-tooltip-change flat">—</span>
+                </div>
+                <div class="heatmap-tooltip-sentiment-row">
+                    <div class="heatmap-tooltip-sentiment-col">
+                        <span class="heatmap-tooltip-sub-label">Sentiment</span>
+                        <span id="ht-sentiment" class="heatmap-tooltip-sentiment-val">—</span>
+                    </div>
+                    <div class="heatmap-tooltip-sentiment-col">
+                        <span class="heatmap-tooltip-sub-label">Sentiment 24h</span>
+                        <span id="ht-sentiment-change" class="heatmap-tooltip-sentiment-change flat">—</span>
+                    </div>
                 </div>
                 <div class="heatmap-tooltip-sub">
                     <div class="heatmap-tooltip-sub-item">
@@ -193,9 +203,127 @@
 
     </div>
 
-    <!-- Right: Watchlist Panel (1/3) -->
-    <div class="w-full lg:w-1/3 flex flex-col gap-5">
-        <div class="watchlist-panel">
+    <!-- Right: Sidebar Panel (1/3) -->
+    <div class="w-full lg:col-span-1 flex flex-col gap-5 h-auto lg:h-0 min-h-0 lg:min-h-full">
+        <!-- Live Market Timers Panel -->
+        <div class="watchlist-panel flex-shrink-0" style="height: auto; max-height: none; min-height: auto;">
+            <!-- Header -->
+            <div class="watchlist-header">
+                <span class="watchlist-title font-mono uppercase tracking-wider flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#00A6B2] animate-pulse"></span>
+                    Global Market Timers
+                </span>
+            </div>
+            <!-- Timers List -->
+            <div class="px-4 py-2 flex flex-col divide-y divide-[#1A2A30]/30">
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-us">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/US.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇺🇸">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">USA</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">NYSE</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-us">--:--:--</span>
+                        <span id="timer-badge-us" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-us">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-uk">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/GB.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇬🇧">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">UK</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">LSE</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-uk">--:--:--</span>
+                        <span id="timer-badge-uk" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-uk">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-eu">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/EU.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇪🇺">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">EU</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">EURONEXT</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-eu">--:--:--</span>
+                        <span id="timer-badge-eu" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-eu">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-in">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/IN.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇮🇳">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">India</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">NSE</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-in">--:--:--</span>
+                        <span id="timer-badge-in" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-in">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-th">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/TH.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇹🇭">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">Thai</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">SET</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-th">--:--:--</span>
+                        <span id="timer-badge-th" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-th">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-cn">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/CN.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇨🇳">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">China</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">SSE</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-cn">--:--:--</span>
+                        <span id="timer-badge-cn" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-cn">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-jp">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/JP.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇯🇵">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">Japan</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">TSE</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-jp">--:--:--</span>
+                        <span id="timer-badge-jp" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-jp">Connecting...</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-1.5 px-1 rounded transition-colors" id="timer-card-kr">
+                    <div class="flex items-center gap-1.5">
+                        <img src="https://purecatamphetamine.github.io/country-flag-icons/3x2/KR.svg" class="w-4 h-3 rounded-sm object-cover select-none" alt="🇰🇷">
+                        <span class="font-bold text-[#D6E5E3] text-xs font-sans tracking-wide">Korea</span>
+                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase bg-[#1A2A30]/40 px-1.5 py-0.5 rounded">KRX</span>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-xs font-bold font-mono text-[#8A9E9B]" id="timer-time-kr">--:--:--</span>
+                        <span id="timer-badge-kr" class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono bg-[#4A6A70]/10 text-[#4A6A70]">CLOSED</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]" id="timer-countdown-kr">Connecting...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Watchlist Panel -->
+        <div class="watchlist-panel flex-1" style="height: 0; min-height: 10rem; max-height: none;">
             <!-- Header -->
             <div class="watchlist-header">
                 <span class="watchlist-title">Create Watchlist</span>
@@ -235,7 +363,7 @@
         </div>
 
         <!-- Popular Cryptocurrencies Panel -->
-        <div class="watchlist-panel" style="height: auto; max-height: none;">
+        <div class="watchlist-panel flex-1" style="height: 0; min-height: 10rem; max-height: none;">
             <!-- Header -->
             <div class="watchlist-header">
                 <span class="watchlist-title">Popular Cryptocurrencies</span>
@@ -255,14 +383,19 @@
                     <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Upcoming Major Events</h2>
                     <span id="upcoming-events-syncing" class="text-xs text-[#00A6B2] font-mono hidden">Syncing...</span>
                 </div>
-                <button id="upcoming-events-sync-btn" class="upcoming-events-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer" title="Scan articles to sync upcoming events">
-                    <span id="upcoming-events-btn-text">Scan Events</span>
-                    <!-- Sync icon / loading spinner -->
-                    <svg id="upcoming-events-spinner" class="animate-spin hidden" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
-                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25" class="stroke-[#00A6B2]"></circle>
-                        <path d="M12 2a10 10 0 0 1 10 10" class="stroke-[#00A6B2]"></path>
-                    </svg>
-                </button>
+                <div class="flex items-center gap-2">
+                    <button id="add-event-btn" class="upcoming-events-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer" title="Manually Add Event">
+                        <span>Add Event</span>
+                    </button>
+                    <button id="upcoming-events-sync-btn" class="upcoming-events-btn flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer" title="Scan articles to sync upcoming events">
+                        <span id="upcoming-events-btn-text">Scan Events</span>
+                        <!-- Sync icon / loading spinner -->
+                        <svg id="upcoming-events-spinner" class="animate-spin hidden" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                            <circle cx="12" cy="12" r="10" stroke-opacity="0.25" class="stroke-[#00A6B2]"></circle>
+                            <path d="M12 2a10 10 0 0 1 10 10" class="stroke-[#00A6B2]"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
             
             <!-- Events Card -->
@@ -324,6 +457,54 @@
                 </div>
             </div>
         </div>
+
+    <!-- Add Event Modal -->
+    <div id="add-event-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title font-mono uppercase tracking-wider text-xs font-bold text-[#D6E5E3]">Add New Event</span>
+                <button id="modal-close-btn" class="modal-close-btn text-[#4A6A70] hover:text-[#FF5252] transition-colors cursor-pointer">&times;</button>
+            </div>
+            <form id="add-event-form" class="flex flex-col gap-4">
+                <div class="flex flex-col gap-1">
+                    <label for="event-title" class="text-[9px] font-mono text-[#4A6A70] uppercase">Event Title *</label>
+                    <input type="text" id="event-title" name="title" class="modal-input" required placeholder="e.g. Fed Interest Rate Decision">
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label for="event-desc" class="text-[9px] font-mono text-[#4A6A70] uppercase">Description</label>
+                    <textarea id="event-desc" name="description" class="modal-input h-16 resize-none" placeholder="Explain the event detail and impact..."></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="flex flex-col gap-1">
+                        <label for="event-category" class="text-[9px] font-mono text-[#4A6A70] uppercase">Category</label>
+                        <select id="event-category" name="category" class="modal-input">
+                            <option value="POLICY">POLICY</option>
+                            <option value="CORPORATE">CORPORATE</option>
+                            <option value="GEOPOLITICAL">GEOPOLITICAL</option>
+                            <option value="ECONOMIC">ECONOMIC</option>
+                            <option value="OTHER">OTHER</option>
+                        </select>
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label for="event-importance" class="text-[9px] font-mono text-[#4A6A70] uppercase">Importance</label>
+                        <select id="event-importance" name="importance" class="modal-input">
+                            <option value="MEDIUM">MEDIUM</option>
+                            <option value="HIGH">HIGH</option>
+                            <option value="CRITICAL">CRITICAL</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label for="event-time" class="text-[9px] font-mono text-[#4A6A70] uppercase">Date & Time *</label>
+                    <input type="datetime-local" id="event-time" name="event_time" class="modal-input" required>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-2">
+                    <button type="button" id="modal-cancel-btn" class="modal-btn cancel-btn">Cancel</button>
+                    <button type="submit" class="modal-btn submit-btn">Add Event</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
@@ -703,13 +884,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const item = document.createElement('div');
             item.className = 'watchlist-item';
             item.innerHTML = `
-                <div class="watchlist-item-left">
+                <a href="/asset/${ticker}" class="watchlist-item-left hover:opacity-80 transition-opacity">
                     <div class="watchlist-item-icon">${iconInner}</div>
                     <div class="watchlist-item-info">
                         <span class="watchlist-item-name">${displayName}</span>
                         <span class="watchlist-item-ticker">${ticker}</span>
                     </div>
-                </div>
+                </a>
                 <div class="watchlist-item-right">
                     <div class="watchlist-item-data-col">
                         <span class="watchlist-item-data-label">Price</span>
@@ -803,13 +984,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const item = document.createElement('div');
             item.className = 'watchlist-item';
             item.innerHTML = `
-                <div class="watchlist-item-left">
+                <a href="/asset/${ticker}" class="watchlist-item-left hover:opacity-80 transition-opacity">
                     <div class="watchlist-item-icon">${iconInner}</div>
                     <div class="watchlist-item-info">
                         <span class="watchlist-item-name">${displayName}</span>
                         <span class="watchlist-item-ticker">${ticker}</span>
                     </div>
-                </div>
+                </a>
                 <div class="watchlist-item-right">
                     <div class="watchlist-item-data-col">
                         <span class="watchlist-item-data-label">Price</span>
@@ -1403,14 +1584,53 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </div>
                     </div>
                     <div class="flex flex-row items-center justify-between border-t border-[#1A2A30]/20 pt-1.5 mt-0.5">
-                        <span class="text-[8px] text-[#4A6A70] font-mono uppercase tracking-wider">Countdown:</span>
-                        <span class="countdown-ticker font-mono text-[10px] font-bold text-[#00A6B2] tracking-wider whitespace-nowrap">--d : --h : --m : --s</span>
+                        <div>
+                            <span class="text-[8px] text-[#4A6A70] font-mono uppercase tracking-wider">Countdown:</span>
+                            <span class="countdown-ticker font-mono text-[10px] font-bold text-[#00A6B2] tracking-wider whitespace-nowrap">--d : --h : --m : --s</span>
+                        </div>
+                        <button class="delete-event-btn text-[9px] font-mono text-[#FF5252] hover:text-[#ff8a8a] bg-[#FF5252]/10 hover:bg-[#FF5252]/20 px-2 py-0.5 rounded transition-all cursor-pointer" data-id="${event.id}" title="Delete Event">
+                            Delete
+                        </button>
                     </div>
                 </div>
             `;
         }).join('');
         
+        // Bind delete button click event listeners
+        calendarEventsList.querySelectorAll('.delete-event-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const eventId = btn.getAttribute('data-id');
+                if (confirm('Are you sure you want to delete this event?')) {
+                    await deleteEvent(eventId);
+                }
+            });
+        });
+        
         startCountdownTimer();
+    }
+
+    async function deleteEvent(eventId) {
+        try {
+            const res = await fetch(`/api/v1/upcoming-events/${eventId}`, {
+                method: 'DELETE'
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'success' && data.events) {
+                    allEvents = data.events;
+                    handleEventsState();
+                    renderCalendar();
+                    renderEventsList();
+                }
+            } else {
+                const errorData = await res.json();
+                alert(`Failed to delete event: ${errorData.detail || res.statusText}`);
+            }
+        } catch (err) {
+            console.error('Error deleting event:', err);
+            alert('An error occurred while deleting the event.');
+        }
     }
 
     async function loadUpcomingEvents() {
@@ -1494,6 +1714,88 @@ document.addEventListener('DOMContentLoaded', async () => {
             eventsBtnText.textContent = 'Scan Events';
         }
     });
+
+    // Add manual event form modal controls
+    const addEventModal = document.getElementById('add-event-modal');
+    const addEventBtn = document.getElementById('add-event-btn');
+    const modalCloseBtn = document.getElementById('modal-close-btn');
+    const modalCancelBtn = document.getElementById('modal-cancel-btn');
+    const addEventForm = document.getElementById('add-event-form');
+
+    if (addEventBtn) {
+        addEventBtn.addEventListener('click', () => {
+            const now = new Date();
+            let defaultDateTime = '';
+            if (selectedDateStr) {
+                defaultDateTime = `${selectedDateStr}T12:00`;
+            } else {
+                const offset = now.getTimezoneOffset() * 60000;
+                const localISOTime = (new Date(now.getTime() - offset)).toISOString().slice(0, 16);
+                defaultDateTime = localISOTime;
+            }
+            addEventForm.reset();
+            document.getElementById('event-time').value = defaultDateTime;
+            addEventModal.classList.remove('hidden');
+        });
+    }
+
+    const hideModal = () => {
+        addEventModal.classList.add('hidden');
+    };
+    if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
+    if (modalCancelBtn) modalCancelBtn.addEventListener('click', hideModal);
+    if (addEventModal) {
+        addEventModal.addEventListener('click', (e) => {
+            if (e.target === addEventModal) hideModal();
+        });
+    }
+
+    if (addEventForm) {
+        addEventForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const title = document.getElementById('event-title').value.trim();
+            const description = document.getElementById('event-desc').value.trim();
+            const category = document.getElementById('event-category').value;
+            const importance = document.getElementById('event-importance').value;
+            const eventTimeLocal = document.getElementById('event-time').value;
+            
+            const eventTimeISO = new Date(eventTimeLocal).toISOString();
+            
+            try {
+                const res = await fetch('/api/v1/upcoming-events', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        title: title,
+                        description: description,
+                        event_time: eventTimeISO,
+                        category: category,
+                        importance: importance
+                    })
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'success' && data.events) {
+                        allEvents = data.events;
+                        handleEventsState();
+                        renderCalendar();
+                        renderEventsList();
+                        hideModal();
+                    }
+                } else {
+                    const errorData = await res.json();
+                    alert(`Failed to add event: ${errorData.detail || res.statusText}`);
+                }
+            } catch (err) {
+                console.error('Error adding event:', err);
+                alert('An error occurred while adding the event.');
+            }
+        });
+    }
 
     // Load events on startup
     loadUpcomingEvents();
@@ -1831,9 +2133,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             changeEl.textContent = `${sign}${pct.toFixed(2)}% at Close`;
             changeEl.className = 'heatmap-tooltip-change ' + (pct > 0.05 ? 'up' : pct < -0.05 ? 'down' : 'flat');
 
+            // Sentiment
+            const sentEl = document.getElementById('ht-sentiment');
+            const sentVal = constituent.current_sentiment;
+            if (sentVal !== undefined && sentVal !== null) {
+                sentEl.textContent = sentVal.toFixed(2);
+            } else {
+                sentEl.textContent = '—';
+            }
+
+            const sentChangeEl = document.getElementById('ht-sentiment-change');
+            const sentChangeVal = constituent.sentiment_change_percent;
+            if (sentChangeVal !== undefined && sentChangeVal !== null) {
+                const sSign = sentChangeVal >= 0 ? '+' : '';
+                sentChangeEl.textContent = `${sSign}${sentChangeVal.toFixed(1)}%`;
+                sentChangeEl.className = 'heatmap-tooltip-sentiment-change ' + (sentChangeVal >= 0.05 ? 'up' : sentChangeVal <= -0.05 ? 'down' : 'flat');
+            } else {
+                sentChangeEl.textContent = '—';
+                sentChangeEl.className = 'heatmap-tooltip-sentiment-change flat';
+            }
+
             // Position tooltip near mouse, avoid going off-screen
             const ttW = 260;
-            const ttH = 160;
+            const ttH = 210;
             let tx = mouseX + 16;
             let ty = mouseY - 20;
             if (tx + ttW > window.innerWidth) tx = mouseX - ttW - 16;
@@ -1945,6 +2267,224 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // ---- Initial load ----
         loadHeatmap(currentIndex);
+    })();
+
+    // ==================== LIVE MARKET TIMERS ====================
+    (function() {
+        const markets = [
+            {
+                id: 'us',
+                tz: 'America/New_York',
+                sessions: [{ start: '09:30', end: '16:00' }]
+            },
+            {
+                id: 'uk',
+                tz: 'Europe/London',
+                sessions: [{ start: '08:00', end: '16:30' }]
+            },
+            {
+                id: 'eu',
+                tz: 'Europe/Paris',
+                sessions: [{ start: '09:00', end: '17:30' }]
+            },
+            {
+                id: 'in',
+                tz: 'Asia/Kolkata',
+                sessions: [{ start: '09:15', end: '15:30' }]
+            },
+            {
+                id: 'th',
+                tz: 'Asia/Bangkok',
+                sessions: [
+                    { start: '10:00', end: '12:30' },
+                    { start: '14:30', end: '16:30' }
+                ]
+            },
+            {
+                id: 'cn',
+                tz: 'Asia/Shanghai',
+                sessions: [
+                    { start: '09:30', end: '11:30' },
+                    { start: '13:00', end: '15:00' }
+                ]
+            },
+            {
+                id: 'jp',
+                tz: 'Asia/Tokyo',
+                sessions: [
+                    { start: '09:00', end: '11:30' },
+                    { start: '12:30', end: '15:00' }
+                ]
+            },
+            {
+                id: 'kr',
+                tz: 'Asia/Seoul',
+                sessions: [{ start: '09:00', end: '15:30' }]
+            }
+        ];
+
+        function getTzParts(tz) {
+            try {
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: tz,
+                    hour12: false,
+                    year: 'numeric',
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    second: 'numeric',
+                    weekday: 'short'
+                });
+                const parts = formatter.formatToParts(new Date());
+                const dict = {};
+                for (const p of parts) {
+                    dict[p.type] = p.value;
+                }
+                return {
+                    year: parseInt(dict.year),
+                    month: parseInt(dict.month) - 1, // 0-indexed for Date
+                    day: parseInt(dict.day),
+                    hour: parseInt(dict.hour),
+                    minute: parseInt(dict.minute),
+                    second: parseInt(dict.second),
+                    weekday: dict.weekday
+                };
+            } catch (e) {
+                console.error('Timezone error for:', tz, e);
+                const now = new Date();
+                return {
+                    year: now.getFullYear(),
+                    month: now.getMonth(),
+                    day: now.getDate(),
+                    hour: now.getHours(),
+                    minute: now.getMinutes(),
+                    second: now.getSeconds()
+                };
+            }
+        }
+
+        function pad(num) {
+            return String(num).padStart(2, '0');
+        }
+
+        function updateTimers() {
+            markets.forEach(m => {
+                const parts = getTzParts(m.tz);
+                const localDate = new Date(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second);
+                
+                // Generate sessions for the next 7 days in this local timezone
+                const events = [];
+                for (let offset = 0; offset <= 7; offset++) {
+                    const d = new Date(localDate);
+                    d.setDate(d.getDate() + offset);
+                    
+                    const dayOfWeek = d.getDay();
+                    if (dayOfWeek === 0 || dayOfWeek === 6) {
+                        continue; // Skip weekends
+                    }
+                    
+                    m.sessions.forEach(session => {
+                        const [startH, startM] = session.start.split(':').map(Number);
+                        const [endH, endM] = session.end.split(':').map(Number);
+                        
+                        const sessionStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), startH, startM, 0);
+                        const sessionEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), endH, endM, 0);
+                        
+                        events.push({ type: 'open', time: sessionStart });
+                        events.push({ type: 'close', time: sessionEnd });
+                    });
+                }
+                
+                events.sort((a, b) => a.time - b.time);
+                
+                let isOpen = false;
+                let targetTime = null;
+                let actionLabel = '';
+                
+                // Check if currently open
+                for (let i = 0; i < events.length; i += 2) {
+                    const openEvent = events[i];
+                    const closeEvent = events[i+1];
+                    if (openEvent && closeEvent && localDate >= openEvent.time && localDate < closeEvent.time) {
+                        isOpen = true;
+                        targetTime = closeEvent.time;
+                        actionLabel = 'Closes';
+                        break;
+                    }
+                }
+                
+                // If not open, find the next open event
+                if (!isOpen) {
+                    for (const event of events) {
+                        if (event.type === 'open' && event.time > localDate) {
+                            targetTime = event.time;
+                            actionLabel = 'Opens';
+                            break;
+                        }
+                    }
+                }
+                
+                // Format countdown text
+                let countdownText = '--';
+                if (targetTime) {
+                    const diffMs = targetTime - localDate;
+                    const totalSecs = Math.floor(diffMs / 1000);
+                    const hours = Math.floor(totalSecs / 3600);
+                    const minutes = Math.floor((totalSecs % 3600) / 60);
+                    const seconds = totalSecs % 60;
+                    
+                    if (hours >= 24) {
+                        const days = Math.floor(hours / 24);
+                        const remainingHours = hours % 24;
+                        countdownText = `${actionLabel} in ${days}d ${remainingHours}h ${pad(minutes)}m`;
+                    } else {
+                        countdownText = `${actionLabel} in ${pad(hours)}h ${pad(minutes)}m ${pad(seconds)}s`;
+                    }
+                }
+
+                // Update UI elements
+                const timeEl = document.getElementById(`timer-time-${m.id}`);
+                const badgeEl = document.getElementById(`timer-badge-${m.id}`);
+                const countdownEl = document.getElementById(`timer-countdown-${m.id}`);
+                const cardEl = document.getElementById(`timer-card-${m.id}`);
+
+                if (timeEl) {
+                    timeEl.textContent = `${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}`;
+                }
+
+                if (badgeEl) {
+                    if (isOpen) {
+                        badgeEl.textContent = 'OPEN';
+                        badgeEl.className = 'px-2 py-0.5 rounded text-[9px] font-bold font-mono bg-[#00E676]/10 text-[#00E676] border border-[#00E676]/20 shadow-[0_0_8px_rgba(0,230,118,0.1)]';
+                    } else {
+                        badgeEl.textContent = 'CLOSED';
+                        badgeEl.className = 'px-2 py-0.5 rounded text-[9px] font-bold font-mono bg-[#FF5252]/10 text-[#FF5252] border border-[#FF5252]/15';
+                    }
+                }
+
+                if (countdownEl) {
+                    countdownEl.textContent = countdownText;
+                    if (isOpen) {
+                        countdownEl.className = 'text-[9px] font-mono text-[#00A6B2] text-right min-w-[75px]';
+                    } else {
+                        countdownEl.className = 'text-[9px] font-mono text-[#4A6A70] text-right min-w-[75px]';
+                    }
+                }
+
+                if (cardEl) {
+                    if (isOpen) {
+                        cardEl.style.backgroundColor = 'rgba(0, 166, 178, 0.03)';
+                    } else {
+                        cardEl.style.backgroundColor = 'transparent';
+                    }
+                }
+            });
+        }
+
+        // Run immediately and then every second
+        updateTimers();
+        setInterval(updateTimers, 1000);
     })();
 
 

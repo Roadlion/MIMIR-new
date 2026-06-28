@@ -52,9 +52,9 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 country = resolve_country_code(country) or country
             else:
                 country = resolve_country_code(asset_name)
-            region = asset.get("region")
-            if not region and country:
-                region = resolve_region(country)
+            # Enforce strict mapping of region by resolving it from the country code first
+            resolved_reg = resolve_region(country) if country else None
+            region = resolved_reg or asset.get("region")
 
             impacts.append((
                 article_id,
@@ -127,7 +127,7 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             conn.close()
 
 
-def process_unscored_articles(batch_size: int = 50, max_workers: int = 5) -> int:
+def process_unscored_articles(batch_size: int = 50, max_workers: int = 10) -> int:
     """
     Fetch a batch of unscored articles and process them in parallel using ThreadPoolExecutor.
     Returns total number of inserted asset impacts.
@@ -202,11 +202,25 @@ def process_unscored_articles(batch_size: int = 50, max_workers: int = 5) -> int
                 UPDATE yggdrasil.mimir_sentiment_impacts
                 SET asset_category = REPLACE(asset_category, 'SECTOR', 'EQUITY')
                 WHERE asset_category LIKE '%SECTOR%';
+                
+                -- Standardize equity sub_categories to 11 standard GICS sectors
+                UPDATE yggdrasil.mimir_sentiment_impacts
+                SET asset_sub_category = 
+                    CASE 
+                        WHEN asset_sub_category IN ('FINANCIALS', 'FINANCIAL') THEN 'FINANCIAL_SERVICES'
+                        WHEN asset_sub_category IN ('COMMUNICATION', 'COMMUNICATIONS', 'MEDIA') THEN 'COMMUNICATION_SERVICES'
+                        WHEN asset_sub_category IN ('MATERIALS', 'PRECIOUS_METALS', 'BASE_METALS') THEN 'BASIC_MATERIALS'
+                        WHEN asset_sub_category IN ('CONSUMER_DISCRETIONARY', 'CONSUMER DISCRETIONARY') THEN 'CONSUMER_CYCLICAL'
+                        WHEN asset_sub_category IN ('AIRLINE', 'AIRLINES', 'AIRPORTS', 'TRANSPORTATION') THEN 'INDUSTRIALS'
+                        WHEN asset_sub_category IS NULL OR asset_sub_category = 'CORPORATE' THEN 'TECHNOLOGY'
+                        ELSE UPPER(TRIM(asset_sub_category))
+                    END
+                WHERE asset_category = 'EQUITY';
             """)
             conn_cleanup.commit()
             cur_cleanup.close()
             conn_cleanup.close()
-            print("[MIMIR] Asset category replacements completed.")
+            print("[MIMIR] Asset category replacements and sector standardizations completed.")
         except Exception as e:
             print(f"[MIMIR] Error running asset category replacements: {e}")
 
