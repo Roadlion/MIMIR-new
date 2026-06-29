@@ -6,6 +6,4 @@ python-dotenv
 requests
 redis
 pandas
-transformers
-torch
 jinja2
