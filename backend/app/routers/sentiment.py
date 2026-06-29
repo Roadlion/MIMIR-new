@@ -281,10 +281,15 @@ async def get_available_assets():
 
 
 @router.get("/ticker-sentiments")
-async def get_ticker_sentiments(tickers: Optional[str] = Query(None)):
+async def get_ticker_sentiments(
+    tickers: Optional[str] = Query(None),
+    weighted: bool = Query(False),
+    hours: int = Query(24, ge=1, le=168),
+):
     """
-    Get current (last 24h) and previous (24-48h) average sentiment for each ticker,
-    along with the percentage change.
+    Get current and previous average sentiment for each ticker.
+    If weighted=true, uses confidence-weighted, time-decayed scoring
+    with spillover impacts included.
     """
     if not tickers:
         return {"tickers": []}
@@ -296,6 +301,41 @@ async def get_ticker_sentiments(tickers: Optional[str] = Query(None)):
     conn = get_db_connection_dict()
     cur = conn.cursor()
 
+    if weighted:
+        # Use the weighted sentiment function (includes spillover)
+        results = []
+        for t in ticker_list:
+            cur.execute(
+                "SELECT * FROM yggdrasil.mimir_weighted_sentiment("
+                "p_ticker := %s, p_hours_window := %s, p_half_life_hours := 12, "
+                "p_include_spillover := TRUE)"
+                "", (t, hours))
+            row = cur.fetchone()
+            if row:
+                results.append({
+                    "ticker": row.get("ticker"),
+                    "current_sentiment": float(row.get("weighted_score", 0) or 0),
+                    "raw_score": float(row.get("direct_score", 0) or 0),
+                    "article_count": row.get("article_count", 0),
+                    "spillover_count": row.get("spillover_count", 0),
+                    "avg_confidence": float(row.get("avg_confidence", 0) or 0),
+                    "effective_age_hours": float(row.get("effective_age_hours", 0) or 0),
+                })
+            else:
+                results.append({
+                    "ticker": t,
+                    "current_sentiment": 0.0,
+                    "raw_score": 0.0,
+                    "article_count": 0,
+                    "spillover_count": 0,
+                    "avg_confidence": 0.0,
+                    "effective_age_hours": 0.0,
+                })
+        cur.close()
+        conn.close()
+        return {"tickers": results, "weighted": True}
+
+    # --- Original AVG() logic (unchanged) ---
     cur.execute(f"""
         WITH current_sentiment AS (
             SELECT
@@ -1397,5 +1437,52 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
         conn.close()
 
 
+@router.get("/spillover-log/{ticker}")
+async def get_spillover_log(
+    ticker: str,
+    hours: int = Query(48, ge=1, le=168),
+):
+    """
+    Show spillover events that contributed to a ticker's sentiment.
+    Lists indirect (is_spillover=TRUE) impacts with their source articles.
+    """
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
 
+    cur.execute(f"""
+        SELECT
+            si.sentiment_score,
+            si.reasoning,
+            si.confidence,
+            si.spillover_source_asset,
+            si.created_at,
+            a.title,
+            a.published_ts
+        FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+        JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+        WHERE UPPER(si.ticker) = UPPER(%s)
+          AND si.is_spillover = TRUE
+          AND a.published_ts > NOW() - INTERVAL '%s hours'
+        ORDER BY a.published_ts DESC
+        LIMIT 50
+    """, (ticker, hours))
 
+    results = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return {
+        "ticker": ticker.upper(),
+        "spillover_events": [
+            {
+                "sentiment_score": float(r.get("sentiment_score", 0)),
+                "confidence": float(r.get("confidence", 0)) if r.get("confidence") else None,
+                "source_asset": r.get("spillover_source_asset"),
+                "reasoning": r.get("reasoning"),
+                "article_title": r.get("title"),
+                "published_ts": r.get("published_ts").isoformat() if r.get("published_ts") else None,
+            }
+            for r in results
+        ],
+        "count": len(results),
+    }

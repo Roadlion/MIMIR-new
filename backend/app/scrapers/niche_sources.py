@@ -87,7 +87,7 @@ def fetch_rss(url: str, source_type: str) -> List[Dict]:
         return items if items else MOCK_FEEDS.get(source_type, [])
     except Exception as e:
         logger.warning(f"Failed to fetch {source_type} RSS from {url}: {e}")
-        return []
+        return MOCK_FEEDS.get(source_type, [])
 
 
 def fetch_weather_api() -> List[Dict]:

@@ -86,7 +86,7 @@ class DeepSeekSentiment:
     # ============================================================
     # MAIN ENTRY: Per-asset sentiment with strict rules
     # ============================================================
-    def score_article_with_assets(self, title: str, summary: str) -> Dict:
+    def score_article_with_assets(self, title: str, summary: str, force_relevance: bool = False) -> Dict:
         """
         Send article to DeepSeek for multi-asset sentiment scoring.
         Returns a dict with 'overall_sentiment' and list of 'assets',
@@ -97,8 +97,8 @@ class DeepSeekSentiment:
             logger.debug("Returning cached result for article")
             return self._cache[key]
 
-        # Check relevance filter first to avoid unnecessary LLM calls
-        if not self.is_financial_or_macro(title, summary):
+        # Check relevance filter first (unless force_relevance is True) to avoid unnecessary LLM calls
+        if not force_relevance and not self.is_financial_or_macro(title, summary):
             logger.info(f"Filtering irrelevant/non-financial article: {title[:60]}...")
             empty_result = {"overall_sentiment": 0.0, "assets": []}
             self._cache[key] = empty_result
@@ -363,6 +363,10 @@ SUMMARY: {summary}"""
             "commodity", "commodities", "opec", "gold", "silver", "platinum", "copper", "lithium", "cobalt",
             "wheat", "corn", "soybeans", "grain", "agriculture", "livestock", "shipping rates", "baltic dry",
             "cargo", "freight", "supply chain", "logistics", "semiconductor", "microchip", "chipmaker",
+            "uranium", "nuclear", "dry bulk", "drybulk", "shipping", "vessel", "port", "cargo", "freight", "bulk carrier",
+            "panama canal", "suez canal", "transit", "crop", "crops", "yield", "yields", "wasde", "usda", "farm", "farming",
+            "grains", "harvest", "drought", "hurricane", "typhoon", "storm", "weather", "flood", "flooding", "la nina",
+            "el nino", "monsoon",
             
             # Policy, Geopolitics & Regulation
             "sanctions", "embargo", "trade war", "tariffs", "tariff", "subsidies", "subsidy", "antitrust", 

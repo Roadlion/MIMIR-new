@@ -14,6 +14,8 @@ except Exception as e:
     print(f"[YFINANCE] failed to disable cookie cache: {e}")
 import psycopg2
 import time
+import warnings
+warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 from concurrent.futures import ThreadPoolExecutor
 from curl_cffi.requests import Session
 from psycopg2.extras import execute_values, RealDictCursor
@@ -93,6 +95,70 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
         return True
     except Exception as e:
         print(f"[YFINANCE] Error fetching/caching {ticker_symbol}: {e}")
+        return False
+    finally:
+        if close_conn and conn:
+            conn.close()
+
+def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
+    """
+    Fetches 1 year of daily price history for the ticker using yfinance
+    and caches it into the hourly table (as daily rows at market-close timestamps).
+    """
+    ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
+    print(f"[YFINANCE] Starting daily fetch for {ticker_symbol} (1y)...")
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+    try:
+        session = Session(impersonate="chrome")
+        session.verify = False
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        ticker = yf.Ticker(ticker_symbol, session=session)
+        df = ticker.history(period="1y", interval="1d")
+        time.sleep(0.5)
+
+        if df.empty:
+            print(f"[YFINANCE] Empty daily DataFrame for {ticker_symbol}")
+            return False
+
+        records = []
+        for index, row in df.iterrows():
+            ts = index.to_pydatetime()
+            records.append((
+                ticker_symbol, ts,
+                float(row["Open"]), float(row["High"]),
+                float(row["Low"]), float(row["Close"]),
+                int(row["Volume"]) if "Volume" in row else 0
+            ))
+
+        if not records:
+            return False
+
+        cur = conn.cursor()
+        sql = f"""
+        INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
+        VALUES %s
+        ON CONFLICT (ticker, timestamp) DO UPDATE
+        SET open = EXCLUDED.open,
+            high = EXCLUDED.high,
+            low = EXCLUDED.low,
+            close = EXCLUDED.close,
+            volume = EXCLUDED.volume,
+            scraped_at = NOW();
+        """
+        execute_values(cur, sql, records)
+        conn.commit()
+        cur.close()
+        print(f"[YFINANCE] Cached {len(records)} daily records for {ticker_symbol}")
+        return True
+    except Exception as e:
+        print(f"[YFINANCE] Error fetching daily cache for {ticker_symbol}: {e}")
         return False
     finally:
         if close_conn and conn:
@@ -299,7 +365,7 @@ async def get_ticker_changes(tickers: Optional[str] = Query(None)):
 async def get_candles(
     ticker: str,
     interval: str = Query("1h", pattern="^(1m|5m|15m|30m|1h|4h|1d)$"),
-    days: int = Query(7, ge=1, le=30)
+    days: int = Query(7, ge=1, le=365)
 ):
     """
     Get aggregated candlestick (OHLCV) data for a given ticker and time interval.
@@ -328,7 +394,20 @@ async def get_candles(
             fetch_and_cache_minute_ticker(ticker, conn)
         else:
             fetch_and_cache_ticker(ticker, conn)
-        
+
+    # For 1d interval with >7 days, the 7d hourly cache won't cover it — fetch daily data if stale
+    if interval == "1d" and days > 7:
+        cur.execute(f"""
+            SELECT MAX(scraped_at) as last_scraped
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker = %s AND timestamp >= NOW() - INTERVAL '{days} days'
+        """, (ticker,))
+        row = cur.fetchone()
+        last_scraped = row["last_scraped"] if row else None
+        is_stale = not last_scraped or (datetime.now(timezone.utc) - last_scraped > timedelta(hours=6))
+        if is_stale:
+            fetch_and_cache_daily_ticker(ticker, conn)
+
     start_time = datetime.now(timezone.utc) - timedelta(days=days)
     
     # Select aggregation query based on requested interval
@@ -986,78 +1065,103 @@ async def get_heatmap(index: str = Query("sp500")):
     except Exception as db_err:
         print(f"[HEATMAP] Database sentiment fetch error: {db_err}")
 
+    # Fetch prices from DB first, yfinance only for stale/missing tickers
     results = []
     try:
-        # Use yfinance download for batch efficiency
-        session = Session(impersonate="chrome", verify=False)
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
 
-        # Download daily data to get today vs yesterday close
-        # yfinance 1.4.x default: multi_level_index=True, group_by='column'
-        # Result columns: (field, ticker) e.g. ('Close', 'AAPL')
-        ticker_str = " ".join(tickers)
-        is_single = len(tickers) == 1
-        df = yf.download(ticker_str, period="5d", interval="1d",
-                         auto_adjust=True, session=session, progress=False,
-                         multi_level_index=not is_single)
+        # 1. Check which tickers need a yfinance fetch
+        cur.execute(f"""
+            SELECT ticker, MAX(scraped_at) as last_scraped
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker = ANY(%s)
+            GROUP BY ticker
+        """, (tickers,))
+        rows = cur.fetchall()
+        last_scraped_map = {r["ticker"]: r["last_scraped"] for r in rows}
 
+        stale_tickers = []
+        for t in tickers:
+            ls = last_scraped_map.get(t)
+            if not ls or (now - ls > timedelta(minutes=2)):
+                stale_tickers.append(t)
+
+        if stale_tickers:
+            print(f"[HEATMAP] Fetching {len(stale_tickers)} stale tickers from yfinance...")
+            fetch_and_cache_tickers_concurrently(stale_tickers)
+
+        # 2. Bulk query DB for latest price + 24h-ago price (same pattern as ticker-changes)
+        cur.execute(f"""
+            WITH latest_prices AS (
+                SELECT DISTINCT ON (ticker)
+                    ticker,
+                    close AS latest_price,
+                    timestamp AS latest_ts,
+                    volume AS latest_volume
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = ANY(%s)
+                ORDER BY ticker, timestamp DESC
+            ),
+            prev_prices AS (
+                SELECT DISTINCT ON (l.ticker)
+                    l.ticker,
+                    h.close AS prev_price
+                FROM latest_prices l
+                JOIN {settings.mimir_schema}.mimir_hourly_ohlcv h ON l.ticker = h.ticker
+                WHERE h.timestamp <= l.latest_ts - INTERVAL '24 hours'
+                ORDER BY l.ticker, h.timestamp DESC
+            )
+            SELECT
+                l.ticker,
+                l.latest_price,
+                l.latest_volume,
+                COALESCE(p.prev_price, (
+                    SELECT close FROM {settings.mimir_schema}.mimir_hourly_ohlcv h2
+                    WHERE h2.ticker = l.ticker
+                    ORDER BY timestamp ASC LIMIT 1
+                )) as prev_price
+            FROM latest_prices l
+            LEFT JOIN prev_prices p ON l.ticker = p.ticker
+        """, (tickers,))
+        price_rows = cur.fetchall()
+        price_map = {r["ticker"]: r for r in price_rows}
+        cur.close()
+        conn.close()
+
+        # 3. Build results from DB data
         for ticker_symbol in tickers:
             meta = ticker_meta[ticker_symbol]
-            try:
-                if is_single:
-                    # Single ticker: flat columns (Close, Volume, ...)
-                    ticker_df = df.dropna(subset=["Close"]) if not df.empty else None
-                else:
-                    # Multi-ticker: columns are (field, ticker)
-                    if "Close" not in df.columns.get_level_values(0):
-                        continue
-                    close_col = df["Close"]
-                    if ticker_symbol not in close_col.columns:
-                        continue
-                    vol_col = df["Volume"] if "Volume" in df.columns.get_level_values(0) else None
-
-                    # Build per-ticker dataframe
-                    ticker_data = {"Close": close_col[ticker_symbol]}
-                    if vol_col is not None and ticker_symbol in vol_col.columns:
-                        ticker_data["Volume"] = vol_col[ticker_symbol]
-                    ticker_df = pd.DataFrame(ticker_data).dropna(subset=["Close"])
-
-                if ticker_df is None or ticker_df.empty:
-                    continue
-
-                current_price = float(ticker_df["Close"].iloc[-1])
-                prev_price = float(ticker_df["Close"].iloc[-2]) if len(ticker_df) >= 2 else current_price
-                volume = int(ticker_df["Volume"].iloc[-1]) if "Volume" in ticker_df.columns and not pd.isna(ticker_df["Volume"].iloc[-1]) else 0
-
-                change_percent = 0.0
-                if prev_price > 0:
-                    change_percent = round(((current_price - prev_price) / prev_price) * 100, 2)
-
-                # Use volume * price as a proxy for market cap weight (for treemap sizing)
-                weight = max(current_price * volume, 1) if volume > 0 else current_price
-
-                sent_info = sentiment_map.get(ticker_symbol, {"current_sentiment": None, "sentiment_change_percent": None})
-                results.append({
-                    "ticker": ticker_symbol,
-                    "name": meta["name"],
-                    "sector": meta["sector"],
-                    "current_price": round(current_price, 4),
-                    "prev_price": round(prev_price, 4),
-                    "change_percent": change_percent,
-                    "volume": volume,
-                    "weight": weight,
-                    "current_sentiment": sent_info["current_sentiment"],
-                    "sentiment_change_percent": sent_info["sentiment_change_percent"],
-                })
-            except Exception as e:
-                print(f"[HEATMAP] Error processing {ticker_symbol}: {e}")
+            pr = price_map.get(ticker_symbol)
+            if not pr:
                 continue
 
+            current_price = float(pr["latest_price"])
+            prev_price = float(pr["prev_price"]) if pr["prev_price"] is not None else current_price
+            volume = int(pr["latest_volume"]) if pr["latest_volume"] else 0
+
+            change_percent = 0.0
+            if prev_price > 0:
+                change_percent = round(((current_price - prev_price) / prev_price) * 100, 2)
+
+            weight = max(current_price * volume, 1) if volume > 0 else current_price
+
+            sent_info = sentiment_map.get(ticker_symbol, {"current_sentiment": None, "sentiment_change_percent": None})
+            results.append({
+                "ticker": ticker_symbol,
+                "name": meta["name"],
+                "sector": meta["sector"],
+                "current_price": round(current_price, 4),
+                "prev_price": round(prev_price, 4),
+                "change_percent": change_percent,
+                "volume": volume,
+                "weight": weight,
+                "current_sentiment": sent_info["current_sentiment"],
+                "sentiment_change_percent": sent_info["sentiment_change_percent"],
+            })
+
     except Exception as e:
-        print(f"[HEATMAP] Batch download error for {index_key}: {e}")
+        print(f"[HEATMAP] DB price fetch error for {index_key}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch heatmap data: {e}")
 
     if not results:
@@ -1152,7 +1256,7 @@ async def get_ticker_details(ticker: str, nocache: bool = False):
     country = info.get("country") or "N/A"
     exchange = info.get("exchange") or "N/A"
     summary = info.get("longBusinessSummary") or info.get("description") or "Description not found."
-    
+
     officers = info.get("companyOfficers", [])
     ceo = "N/A"
     if officers and isinstance(officers, list):
@@ -1164,67 +1268,74 @@ async def get_ticker_details(ticker: str, nocache: bool = False):
             ceo = officers[0].get("name", "N/A")
     elif info.get("ceo"):
         ceo = info.get("ceo")
-        
+
     employees = info.get("fullTimeEmployees") or "N/A"
-    
-    # Financial metrics extraction with history & database fallbacks
-    price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("regularMarketPreviousClose") or 0.0
-    prev_close = info.get("regularMarketPreviousClose") or price or 0.0
-    
-    open_val = info.get("open") or 0.0
-    high_val = info.get("dayHigh") or 0.0
-    low_val = info.get("dayLow") or 0.0
-    volume = info.get("volume") or 0
-    market_cap = info.get("marketCap") or 0
-    
-    # yfinance history fallback
+
+    # Price data — DB first, yfinance only as fallback
+    price = 0.0
+    prev_close = 0.0
+    open_val = 0.0
+    high_val = 0.0
+    low_val = 0.0
+    volume = 0
+    market_cap = info.get("marketCap") or 0  # yfinance metadata, no DB alternative
+
+    # 1. Try DB cache first
+    try:
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT close, open, high, low, volume
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker = %s
+            ORDER BY timestamp DESC
+            LIMIT 2
+        """, (ticker_symbol,))
+        db_rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if db_rows:
+            price = float(db_rows[0]['close'])
+            open_val = float(db_rows[0]['open'])
+            high_val = float(db_rows[0]['high'])
+            low_val = float(db_rows[0]['low'])
+            volume = int(db_rows[0]['volume'])
+            if len(db_rows) > 1:
+                prev_close = float(db_rows[1]['close'])
+            else:
+                prev_close = price
+            print(f"[DETAILS] Using DB price for {ticker_symbol}: {price}")
+    except Exception as db_err:
+        print(f"[DETAILS] DB price fetch error for {ticker_symbol}: {db_err}")
+
+    # 2. Fall back to yfinance info if DB empty
+    if not price or price == 0.0:
+        price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("regularMarketPreviousClose") or 0.0
+        prev_close = info.get("regularMarketPreviousClose") or price or 0.0
+        open_val = info.get("open") or 0.0
+        high_val = info.get("dayHigh") or 0.0
+        low_val = info.get("dayLow") or 0.0
+        volume = info.get("volume") or 0
+
+    # 3. yfinance history fallback
     if not price or price == 0.0:
         try:
             print(f"[DETAILS] Info returned empty price for {ticker_symbol}. Fetching history fallback...")
             hist = ticker_obj.history(period="5d")
             if not hist.empty:
-                latest_row = hist.iloc[-1]
-                price = float(latest_row["Close"])
-                open_val = float(latest_row["Open"]) if open_val == 0.0 else open_val
-                high_val = float(latest_row["High"]) if high_val == 0.0 else high_val
-                low_val = float(latest_row["Low"]) if low_val == 0.0 else low_val
-                volume = int(latest_row["Volume"]) if volume == 0 else volume
-                if len(hist) >= 2:
-                    prev_close = float(hist.iloc[-2]["Close"])
-                else:
-                    prev_close = price
+                    latest_row = hist.iloc[-1]
+                    price = float(latest_row["Close"])
+                    open_val = float(latest_row["Open"]) if open_val == 0.0 else open_val
+                    high_val = float(latest_row["High"]) if high_val == 0.0 else high_val
+                    low_val = float(latest_row["Low"]) if low_val == 0.0 else low_val
+                    volume = int(latest_row["Volume"]) if volume == 0 else volume
+                    if len(hist) >= 2:
+                        prev_close = float(hist.iloc[-2]["Close"])
+                    else:
+                        prev_close = price
         except Exception as hist_err:
             print(f"[DETAILS] yfinance history fallback error for {ticker_symbol}: {hist_err}")
-
-    # Database cache fallback
-    if not price or price == 0.0:
-        try:
-            print(f"[DETAILS] Falling back to database cache for {ticker_symbol}...")
-            conn = get_db_connection_dict()
-            cur = conn.cursor()
-            cur.execute(f"""
-                SELECT close, open, high, low, volume 
-                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
-                WHERE ticker = %s
-                ORDER BY timestamp DESC
-                LIMIT 2
-            """, (ticker_symbol,))
-            db_rows = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            if db_rows:
-                price = float(db_rows[0]['close'])
-                open_val = float(db_rows[0]['open']) if open_val == 0.0 else open_val
-                high_val = float(db_rows[0]['high']) if high_val == 0.0 else high_val
-                low_val = float(db_rows[0]['low']) if low_val == 0.0 else low_val
-                volume = int(db_rows[0]['volume']) if volume == 0 else volume
-                if len(db_rows) > 1:
-                    prev_close = float(db_rows[1]['close'])
-                else:
-                    prev_close = price
-        except Exception as db_fallback_err:
-            print(f"[DETAILS] Database fallback error for {ticker_symbol}: {db_fallback_err}")
 
     # Calculate change metrics
     if not prev_close or prev_close == 0.0:

@@ -7,6 +7,26 @@ from backend.app.database import get_db_connection
 from backend.app.sentiment.deepseek_client import DeepSeekSentiment
 from backend.app.sentiment.asset_mapper import resolve_ticker, resolve_country_code, resolve_region
 
+# Spillover integration (lazy init — ponytail: avoids circular import at module level)
+_spillover_engine = None
+_thematic_detector = None
+
+
+def _get_spillover_engine():
+    global _spillover_engine
+    if _spillover_engine is None:
+        from backend.app.pipeline.spillover_engine import SpilloverEngine
+        _spillover_engine = SpilloverEngine()
+    return _spillover_engine
+
+
+def _get_thematic_detector():
+    global _thematic_detector
+    if _thematic_detector is None:
+        from backend.app.sentiment.thematic_detector import ThematicDetector
+        _thematic_detector = ThematicDetector()
+    return _thematic_detector
+
 
 def process_single_article(article_id: int, title: str, summary: str) -> int:
     """
@@ -69,7 +89,10 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 asset.get("magnitude", "MEDIUM"),
                 asset.get("reasoning", ""),
                 ticker,
-                asset.get("policy_signal")
+                asset.get("policy_signal"),
+                False,  # is_spillover
+                None,   # spillover_source_article_id
+                None,   # spillover_source_asset
             ))
 
         if not impacts:
@@ -87,7 +110,8 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
         INSERT INTO yggdrasil.mimir_sentiment_impacts (
             article_id, asset_name, asset_category, asset_sub_category,
             country, region, sentiment_score, confidence, direction,
-            magnitude, reasoning, ticker, policy_signal
+            magnitude, reasoning, ticker, policy_signal,
+            is_spillover, spillover_source_article_id, spillover_source_asset
         ) VALUES %s
         ON CONFLICT (article_id, asset_name) DO NOTHING;
         """
@@ -95,16 +119,53 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
         conn.commit()
         inserted = cur.rowcount
 
+        # --- Compute spillover impacts (graph-based + thematic) ---
+        spillover_inserted = 0
+        try:
+            # Build asset dicts for spillover engine
+            asset_dicts = []
+            for imp in impacts:
+                asset_dicts.append({
+                    "asset_name": imp[1],
+                    "asset_category": imp[2],
+                    "sub_category": imp[3],
+                    "country": imp[4],
+                    "region": imp[5],
+                    "sentiment_score": imp[6],
+                    "confidence": imp[7],
+                    "ticker": imp[11],
+                })
+
+            # Graph-based spillover
+            engine = _get_spillover_engine()
+            graph_spills = engine.run(article_id, asset_dicts)
+
+            # Thematic spillover
+            detector = _get_thematic_detector()
+            thematic_spills = detector.compute_spillovers(
+                article_id, asset_dicts, title, summary or "",
+            )
+
+            # Merge and insert (dedup on article_id, asset_name handled by ON CONFLICT)
+            all_spills = graph_spills + thematic_spills
+            if all_spills:
+                execute_values(cur, sql, all_spills)
+                conn.commit()
+                spillover_inserted = cur.rowcount
+        except Exception as spill_err:
+            # Non-fatal: log and continue
+            print(f"  [Thread] ⚠ Spillover skipped for article {article_id}: {spill_err}")
+
         # --- Mark article as 'scored' ---
         cur.execute("""
-            UPDATE yggdrasil.mimir_raw_articles 
-            SET scoring_status = 'scored' 
+            UPDATE yggdrasil.mimir_raw_articles
+            SET scoring_status = 'scored'
             WHERE id = %s
         """, (article_id,))
         conn.commit()
 
-        print(f"  [Thread] Article {article_id}: Inserted {inserted} impacts → marked scored")
-        return inserted
+        print(f"  [Thread] Article {article_id}: {inserted} direct + {spillover_inserted} spillover → scored")
+        return inserted + spillover_inserted
 
     except Exception as e:
         print(f"  [Thread] ❌ Error on article {article_id}: {e}")

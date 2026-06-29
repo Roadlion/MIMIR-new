@@ -171,6 +171,15 @@ def run_news_and_sentiment_cycle():
     except Exception as e:
         print(f"[BG_WORKER] Error running niche scan: {e}")
 
+    # 4. Refresh relationship graph (for spillover engine)
+    try:
+        from backend.app.sentiment.relationship_graph import refresh_relationship_graph
+        n = refresh_relationship_graph()
+        if n > 0:
+            print(f"[BG_WORKER] Relationship graph refreshed: {n} edges")
+    except Exception as e:
+        print(f"[BG_WORKER] Relationship graph refresh skipped: {e}")
+
     print(f"[BG_WORKER] Breaking news & sentiment loop completed.")
 
 def run_niche_scan():
@@ -195,14 +204,32 @@ def run_niche_scan():
         title_hash = hashlib.md5(title.lower().encode()).hexdigest()
         source_type = art.get("source_type", "niche")
 
+        # Generate unique link and url_hash to avoid constraint violations
+        link = art.get("link") or f"niche://{source_type}/{title_hash}"
+        url_hash = hashlib.md5(link.encode()).hexdigest()
+
+        # Parse published date
+        pub_raw = art.get("published_raw", "")
+        pub_ts = None
+        if pub_raw:
+            try:
+                import dateutil.parser
+                pub_ts = dateutil.parser.parse(pub_raw)
+                if pub_ts.tzinfo is None:
+                    pub_ts = pub_ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                pub_ts = datetime.now(timezone.utc)
+        else:
+            pub_ts = datetime.now(timezone.utc)
+
         # Insert with ON CONFLICT DO NOTHING on title_hash, RETURNING id
         cur.execute(f"""
             INSERT INTO {settings.mimir_schema}.mimir_raw_articles
-                (source_name, feed_url, title, link, published_raw, summary, title_hash, scoring_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                (source_name, feed_url, title, link, published_raw, published_ts, summary, url_hash, title_hash, scoring_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
             ON CONFLICT (title_hash) DO NOTHING
             RETURNING id
-        """, (f"niche-{source_type}", "", title, "", art.get("published_raw", ""), summary, title_hash))
+        """, (f"niche-{source_type}", "", title, link, pub_raw, pub_ts, summary, url_hash, title_hash))
 
         row = cur.fetchone()
         if row:
@@ -210,7 +237,7 @@ def run_niche_scan():
 
             # Score immediately via DeepSeek
             try:
-                result = analyzer.score_article_with_assets(title, summary)
+                result = analyzer.score_article_with_assets(title, summary, force_relevance=True)
                 if "assets" in result and result["assets"]:
                     impact_rows = []
                     for asset in result["assets"]:
@@ -235,7 +262,7 @@ def run_niche_scan():
                     if impact_rows:
                         insert_sql = f"""
                             INSERT INTO {settings.mimir_schema}.mimir_sentiment_impacts
-                                (article_id, asset_name, asset_category, sub_category, country, region,
+                                (article_id, asset_name, asset_category, asset_sub_category, country, region,
                                  sentiment_score, confidence, direction, magnitude, reasoning, ticker, policy_signal)
                             VALUES %s ON CONFLICT (article_id, asset_name) DO NOTHING
                         """

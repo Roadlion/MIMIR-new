@@ -48,12 +48,31 @@ def _fetch_daily_closes(ticker, period_days=365):
         print(f"[cointegration] DB fetch failed for {ticker}: {e}")
 
     # Fallback: yfinance
+    import time
+    import random
+    time.sleep(random.uniform(1.0, 2.5))  # Prevents Yahoo Finance rate-limiting when scanning multiple pairs
     try:
         import yfinance as yf
-        data = yf.download(ticker, period=f"{period_days}d", progress=False)["Close"]
-        if isinstance(data, pd.DataFrame):
-            data = data.iloc[:, 0]
-        return data.to_frame("close")
+        import requests
+        session = requests.Session()
+        session.verify = False
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        
+        for attempt in range(3):
+            try:
+                data = yf.download(ticker, period=f"{period_days}d", progress=False, session=session)["Close"]
+                if data is not None and not data.empty:
+                    if isinstance(data, pd.DataFrame):
+                        data = data.iloc[:, 0]
+                    return data.to_frame("close")
+            except Exception as ex:
+                if attempt == 2:
+                    raise ex
+                time.sleep(2 ** (attempt + 1))
     except Exception as e:
         print(f"[cointegration] yfinance fallback failed for {ticker}: {e}")
     return None
