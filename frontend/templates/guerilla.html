@@ -2,14 +2,15 @@
 
 {% block content %}
 <div class="px-8 py-6 max-w-7xl mx-auto space-y-6">
-    
+
     <!-- Header -->
     <div class="flex items-end justify-between border-b border-[#1A2A30] pb-4 mb-6">
         <div>
             <h1 class="text-3xl font-bold font-mono tracking-tight text-[#E8F1F0]">GUERILLA QUANT</h1>
-            <p class="text-sm text-[#4A6A70] font-mono mt-1">Niche Markets • Stat-Arb • Hybrid Sentiment</p>
+            <p class="text-sm text-[#4A6A70] font-mono mt-1">Niche Markets &bull; Stat-Arb &bull; Hybrid Sentiment</p>
         </div>
-        <div class="flex gap-3">
+        <div class="flex items-center gap-4">
+            <span id="last-scan-time" class="text-xs text-[#4A6A70] font-mono"></span>
             <button id="run-scanner-btn" class="flex items-center gap-2 px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]">
                 <span>Run Master Scanner</span>
                 <svg id="scanner-spinner" class="animate-spin hidden" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
@@ -21,112 +22,307 @@
     </div>
 
     <!-- Stats Row -->
-    <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="grid grid-cols-4 gap-4 mb-6" id="stats-row">
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">Active Scanners</span>
-            <span class="text-2xl font-bold text-[#D6E5E3]">3</span>
-        </div>
-        <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">Monitored Pairs</span>
-            <span class="text-2xl font-bold text-[#00A6B2]">15</span>
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Active Pairs</span>
+            <span id="stat-pairs" class="text-2xl font-bold text-[#D6E5E3]">--</span>
         </div>
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
             <span class="text-xs font-mono text-[#4A6A70] uppercase">Data Sources</span>
-            <span class="text-2xl font-bold text-[#D6E5E3]">USDA, NOAA</span>
+            <span id="stat-sources" class="text-2xl font-bold text-[#00A6B2]">--</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Scanned Today</span>
+            <span id="stat-last-scan" class="text-lg font-bold text-[#D6E5E3]">--</span>
         </div>
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)]">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">High Conviction</span>
-            <span id="high-conviction-count" class="text-2xl font-bold text-[#ffd700]">0</span>
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">High Conviction (24h)</span>
+            <span id="stat-high-conviction" class="text-2xl font-bold text-[#ffd700]">--</span>
         </div>
     </div>
 
-    <!-- Scanner Results Table -->
+    <!-- Live Arb Opportunities -->
     <div class="card p-0 overflow-hidden">
         <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
             <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Live Arb Opportunities</h2>
-            <span class="text-xs text-[#00A6B2] font-mono">Real-time Hybrid Signal</span>
+            <span class="text-xs text-[#00A6B2] font-mono">Hybrid Signal &mdash; Math + NLP Sentiment</span>
         </div>
-        <table class="w-full text-left border-collapse">
-            <thead>
-                <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
-                    <th class="px-5 py-3">Pair (T1 / T2)</th>
-                    <th class="px-5 py-3">Math (Z-Score)</th>
-                    <th class="px-5 py-3">Spread (Mean -> Cur)</th>
-                    <th class="px-5 py-3">Base Signal</th>
-                    <th class="px-5 py-3">NLP Sentiment (T1/T2)</th>
-                    <th class="px-5 py-3">Conviction</th>
-                </tr>
-            </thead>
-            <tbody id="scanner-results" class="text-sm font-mono text-[#D6E5E3]">
-                <tr>
-                    <td colspan="6" class="px-5 py-8 text-center text-[#4A6A70]">Click 'Run Master Scanner' to analyze niche markets.</td>
-                </tr>
-            </tbody>
-        </table>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                        <th class="px-5 py-3">Pair</th>
+                        <th class="px-5 py-3">Z-Score</th>
+                        <th class="px-5 py-3">Spread</th>
+                        <th class="px-5 py-3">Signal</th>
+                        <th class="px-5 py-3">Sentiment</th>
+                        <th class="px-5 py-3">Conviction</th>
+                        <th class="px-5 py-3">Trend</th>
+                    </tr>
+                </thead>
+                <tbody id="scanner-results" class="text-sm font-mono text-[#D6E5E3]">
+                    <tr>
+                        <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">Loading scanner data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Signal History -->
+    <div class="card p-0 overflow-hidden">
+        <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+            <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Signal History (Last 20)</h2>
+            <span class="text-xs text-[#4A6A70] font-mono">From <span id="history-label">yggdrasil.mimir_pair_signals</span></span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                        <th class="px-5 py-3">Date</th>
+                        <th class="px-5 py-3">Pair</th>
+                        <th class="px-5 py-3">Z-Score</th>
+                        <th class="px-5 py-3">Signal</th>
+                        <th class="px-5 py-3">Conviction</th>
+                        <th class="px-5 py-3">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="signal-history" class="text-sm font-mono text-[#D6E5E3]">
+                    <tr>
+                        <td colspan="6" class="px-5 py-8 text-center text-[#4A6A70]">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Niche News Feed -->
+    <div class="card p-0 overflow-hidden">
+        <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+            <h2 class="text-sm font-mono text-[#4A6A70] uppercase tracking-wider">Niche News Feed</h2>
+            <span class="text-xs text-[#4A6A70] font-mono">Free RSS + Weather.gov</span>
+        </div>
+        <div id="niche-news" class="p-5 grid grid-cols-2 gap-4">
+            <div class="col-span-2 text-center text-[#4A6A70] font-mono text-sm py-8">Loading niche news...</div>
+        </div>
     </div>
 
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-    const runBtn = document.getElementById('run-scanner-btn');
-    const spinner = document.getElementById('scanner-spinner');
-    const resultsTable = document.getElementById('scanner-results');
-    const convictionCount = document.getElementById('high-conviction-count');
+const RUNNER_URL = '/api/v1/niche/opportunities';
+const STATS_URL = '/api/v1/niche/stats';
+const HISTORY_URL = '/api/v1/niche/signals?days=30&limit=20';
+const ARTICLES_URL = '/api/v1/niche/articles?days=3&limit=10';
 
-    runBtn.addEventListener('click', async () => {
-        if (runBtn.disabled) return;
-        
-        runBtn.disabled = true;
-        spinner.classList.remove('hidden');
-        resultsTable.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-[#00A6B2] animate-pulse">Running Math + NLP Hybrid Analysis...</td></tr>`;
-        
-        try {
-            const res = await fetch('/api/v1/niche/opportunities');
-            if (!res.ok) throw new Error('API Error');
-            const data = await res.json();
-            
-            resultsTable.innerHTML = '';
-            let highConvCount = 0;
+const runBtn = document.getElementById('run-scanner-btn');
+const spinner = document.getElementById('scanner-spinner');
+const resultsTable = document.getElementById('scanner-results');
+const signalHistory = document.getElementById('signal-history');
+const nicheNews = document.getElementById('niche-news');
+const lastScanTime = document.getElementById('last-scan-time');
 
-            if (data.opportunities && data.opportunities.length > 0) {
-                data.opportunities.forEach(opp => {
-                    const tr = document.createElement('tr');
-                    tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
-                    
-                    let signalColor = "#4A6A70";
-                    if (opp.signal.includes("LONG")) signalColor = "#00A6B2";
-                    if (opp.signal.includes("SHORT")) signalColor = "#ff4d4d";
-                    
-                    let convictionColor = "#D6E5E3";
-                    if (opp.conviction.includes("HIGH")) {
-                        convictionColor = "#ffd700"; // Gold
-                        highConvCount++;
-                    }
-                    if (opp.conviction.includes("WARNING")) convictionColor = "#ff4d4d"; // Red
+function fmtTime(d) {
+    const now = new Date();
+    const diff = Math.round((now - d) / 60000);
+    if (diff < 1) return 'just now';
+    if (diff < 60) return `${diff}m ago`;
+    const h = Math.floor(diff / 60);
+    return `${h}h ${diff % 60}m ago`;
+}
 
-                    tr.innerHTML = `
-                        <td class="px-5 py-4 font-bold tracking-wide">${opp.pair}</td>
-                        <td class="px-5 py-4" style="color: ${opp.z_score > 2 || opp.z_score < -2 ? '#ffd700' : '#D6E5E3'}">${opp.z_score.toFixed(2)}</td>
-                        <td class="px-5 py-4">${opp.mean_spread.toFixed(2)} &rarr; ${opp.current_spread.toFixed(2)}</td>
-                        <td class="px-5 py-4 font-bold" style="color: ${signalColor}">${opp.signal}</td>
-                        <td class="px-5 py-4 text-xs font-mono text-[#8A9E9B]">${opp.sentiment_t1.toFixed(2)} / ${opp.sentiment_t2.toFixed(2)}</td>
-                        <td class="px-5 py-4 font-bold text-xs" style="color: ${convictionColor}">${opp.conviction}</td>
-                    `;
-                    resultsTable.appendChild(tr);
-                });
-                convictionCount.textContent = highConvCount;
-            } else {
-                resultsTable.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-[#4A6A70]">No significant stat-arb opportunities found.</td></tr>`;
-            }
-        } catch (err) {
-            console.error('Niche Scan Error:', err);
-            resultsTable.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-red-500/70">Failed to load scanner results.</td></tr>`;
-        } finally {
-            runBtn.disabled = false;
-            spinner.classList.add('hidden');
+function fmtDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+}
+
+function renderSparkline(values, width=80, height=24) {
+    if (!values || values.length < 2) return `<span class="text-[#4A6A70]">--</span>`;
+    const pts = values.slice(-30);
+    const min = Math.min(...pts), max = Math.max(...pts), range = max - min || 1;
+    const stepX = width / (pts.length - 1);
+    const points = pts.map((v, i) => `${(i * stepX).toFixed(1)},${(height - ((v - min) / range) * (height - 4) - 2).toFixed(1)}`).join(' ');
+    const color = pts[pts.length-1] > 0 ? '#ffd700' : '#00A6B2';
+    return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" class="inline-block align-middle">
+        <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${points}"/>
+    </svg>`;
+}
+
+async function loadStats() {
+    try {
+        const res = await fetch(STATS_URL);
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('stat-pairs').textContent = data.active_pairs || '--';
+        document.getElementById('stat-sources').textContent = data.sources_count || '--';
+        document.getElementById('stat-high-conviction').textContent = data.high_conviction_sigs || '0';
+        const ls = document.getElementById('stat-last-scan');
+        if (data.last_scan) {
+            const d = new Date(data.last_scan);
+            ls.textContent = fmtTime(d);
+        } else {
+            ls.textContent = 'never';
         }
-    });
+    } catch (_) {}
+}
+
+async function loadResults() {
+    resultsTable.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-[#00A6B2] animate-pulse">Running Math + NLP Hybrid Analysis...</td></tr>`;
+    try {
+        const res = await fetch(RUNNER_URL);
+        if (!res.ok) throw new Error('API Error');
+        const data = await res.json();
+
+        // Load z-score history for sparklines
+        let historyMap = {};
+        try {
+            const hr = await fetch(HISTORY_URL);
+            if (hr.ok) {
+                const hd = await hr.json();
+                historyMap = (hd.signals || []).reduce((acc, s) => {
+                    const key = `${s.ticker1}/${s.ticker2}`;
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(s.z_score);
+                    return acc;
+                }, {});
+            }
+        } catch (_) {}
+
+        resultsTable.innerHTML = '';
+        let highConvCount = 0;
+
+        if (data.opportunities && data.opportunities.length > 0) {
+            data.opportunities.forEach(opp => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+                let signalColor = "#4A6A70";
+                if (opp.signal.includes("LONG")) signalColor = "#00A6B2";
+                if (opp.signal.includes("SHORT")) signalColor = "#ff4d4d";
+                let convictionColor = "#D6E5E3";
+                if (opp.conviction && opp.conviction.includes("HIGH")) {
+                    convictionColor = "#ffd700";
+                    highConvCount++;
+                }
+                if (opp.conviction && opp.conviction.includes("WARNING")) convictionColor = "#ff4d4d";
+                const zColor = opp.z_score > 2 || opp.z_score < -2 ? '#ffd700' : '#D6E5E3';
+                const spark = renderSparkline(historyMap[opp.pair] || []);
+                tr.innerHTML = `
+                    <td class="px-5 py-4 font-bold tracking-wide">${opp.pair}</td>
+                    <td class="px-5 py-4" style="color: ${zColor}">${opp.z_score.toFixed(2)}</td>
+                    <td class="px-5 py-4">${opp.mean_spread.toFixed(2)} &rarr; ${opp.current_spread.toFixed(2)}</td>
+                    <td class="px-5 py-4 font-bold" style="color: ${signalColor}">${opp.signal}</td>
+                    <td class="px-5 py-4 text-xs font-mono text-[#8A9E9B]">${opp.sentiment_t1.toFixed(2)} / ${opp.sentiment_t2.toFixed(2)}</td>
+                    <td class="px-5 py-4 font-bold text-xs" style="color: ${convictionColor}">${opp.conviction}</td>
+                    <td class="px-5 py-4">${spark}</td>
+                `;
+                resultsTable.appendChild(tr);
+            });
+            document.getElementById('stat-high-conviction').textContent = highConvCount;
+            lastScanTime.textContent = `Last scan: ${fmtTime(new Date())}`;
+        } else {
+            resultsTable.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No significant stat-arb opportunities found.</td></tr>`;
+        }
+    } catch (err) {
+        console.error('Niche Scan Error:', err);
+        resultsTable.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-red-500/70">Failed to load scanner results.</td></tr>`;
+    }
+}
+
+async function loadHistory() {
+    try {
+        const res = await fetch(HISTORY_URL);
+        if (!res.ok) throw new Error('History API Error');
+        const data = await res.json();
+        signalHistory.innerHTML = '';
+        if (!data.signals || data.signals.length === 0) {
+            signalHistory.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-[#4A6A70]">No signal history yet. Run the scanner.</td></tr>`;
+            return;
+        }
+        data.signals.forEach(s => {
+            const tr = document.createElement('tr');
+            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+            const z = s.z_score;
+            let signalText = "WAIT";
+            let signalColor = "#4A6A70";
+            if (z > 2) { signalText = `SHORT ${s.ticker1}, LONG ${s.ticker2}`; signalColor = "#ff4d4d"; }
+            else if (z < -2) { signalText = `LONG ${s.ticker1}, SHORT ${s.ticker2}`; signalColor = "#00A6B2"; }
+            let convColor = "#D6E5E3";
+            if (s.conviction && s.conviction.includes("HIGH")) convColor = "#ffd700";
+            else if (s.conviction && s.conviction.includes("WARNING")) convColor = "#ff4d4d";
+            tr.innerHTML = `
+                <td class="px-5 py-3 text-xs text-[#8A9E9B]">${fmtDate(s.signal_date)}</td>
+                <td class="px-5 py-3 font-bold">${s.ticker1} / ${s.ticker2}</td>
+                <td class="px-5 py-3" style="color: ${Math.abs(z) > 2 ? '#ffd700' : '#D6E5E3'}">${z.toFixed(2)}</td>
+                <td class="px-5 py-3 font-bold" style="color: ${signalColor}">${signalText}</td>
+                <td class="px-5 py-3 text-xs" style="color: ${convColor}">${s.conviction || 'LOW'}</td>
+                <td class="px-5 py-3"><span class="text-xs px-2 py-0.5 rounded ${s.status === 'OPEN' ? 'bg-[#00A6B2]/20 text-[#00A6B2]' : 'bg-[#4A6A70]/20 text-[#4A6A70]'}">${s.status}</span></td>
+            `;
+            signalHistory.appendChild(tr);
+        });
+    } catch (err) {
+        signalHistory.innerHTML = `<tr><td colspan="6" class="px-5 py-8 text-center text-red-500/70">Failed to load signal history.</td></tr>`;
+    }
+}
+
+async function loadNews() {
+    try {
+        const res = await fetch(ARTICLES_URL);
+        if (!res.ok) throw new Error('Articles API Error');
+        const data = await res.json();
+        nicheNews.innerHTML = '';
+        if (!data.articles || data.articles.length === 0) {
+            nicheNews.innerHTML = `<div class="col-span-2 text-center text-[#4A6A70] font-mono text-sm py-8">No niche news articles available.</div>`;
+            return;
+        }
+        data.articles.forEach(a => {
+            const dirColor = a.direction === 'bullish' ? '#00A6B2' : a.direction === 'bearish' ? '#ff4d4d' : '#4A6A70';
+            const card = document.createElement('div');
+            card.className = "bg-[#111C21] p-4 rounded border border-[#1A2A30] hover:border-[#00A6B2]/30 transition-colors";
+            card.innerHTML = `
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                        <p class="text-sm font-mono text-[#D6E5E3] truncate">${a.title}</p>
+                        ${a.summary ? `<p class="text-xs text-[#4A6A70] mt-1 font-mono line-clamp-2">${a.summary}</p>` : ''}
+                        <div class="flex items-center gap-3 mt-2 text-xs font-mono">
+                            <span class="text-[#4A6A70]">${a.source_name.replace('niche-', '')}</span>
+                            ${a.published_ts ? `<span class="text-[#4A6A70]/60">${fmtDate(a.published_ts)}</span>` : ''}
+                        </div>
+                    </div>
+                    ${a.ticker !== 'N/A' ? `<span class="shrink-0 text-xs font-bold font-mono px-2 py-1 rounded" style="background: ${dirColor}20; color: ${dirColor}">${a.ticker} ${a.direction}</span>` : ''}
+                </div>
+            `;
+            nicheNews.appendChild(card);
+        });
+    } catch (err) {
+        nicheNews.innerHTML = `<div class="col-span-2 text-center text-red-500/70 font-mono text-sm py-8">Failed to load niche news.</div>`;
+    }
+}
+
+async function runScanner() {
+    if (runBtn.disabled) return;
+    runBtn.disabled = true;
+    spinner.classList.remove('hidden');
+    await loadResults();
+    await loadStats();
+    runBtn.disabled = false;
+    spinner.classList.add('hidden');
+}
+
+// Auto-load on page visit
+document.addEventListener('DOMContentLoaded', async () => {
+    loadStats();
+    loadHistory();
+    loadNews();
+    await loadResults();
+    // Poll every 5 minutes
+    setInterval(async () => {
+        await loadResults();
+        loadStats();
+        loadHistory();
+        loadNews();
+    }, 300000);
 });
+
+runBtn.addEventListener('click', runScanner);
 </script>
 {% endblock %}

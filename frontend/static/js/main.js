@@ -1,5 +1,5 @@
 // MIMIR Frontend
-console.log('🌳 MIMIR frontend loaded. The tree watches.');
+console.log('MIMIR frontend loaded. The tree watches.');
 
 function updateClock() {
     const el = document.getElementById('clock');
@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Disable button
             refreshBtn.disabled = true;
             refreshBtn.classList.add('opacity-50', 'cursor-not-allowed');
-            refreshBtn.textContent = '⏳ Running...';
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Running...';
 
             // Show panel
             if (progressPanel) {
@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             eventSource.close();
                             refreshBtn.disabled = false;
                             refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                            refreshBtn.textContent = '↻ Refresh';
+                            refreshBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Refresh';
                             // Reload page to reflect new data
                             setTimeout(() => {
                                 window.location.reload();
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             eventSource.close();
                             refreshBtn.disabled = false;
                             refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                            refreshBtn.textContent = '↻ Refresh';
+                            refreshBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Refresh';
                             
                             if (stepName) {
                                 stepName.textContent = 'Pipeline Failure';
@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 eventSource.close();
                 refreshBtn.disabled = false;
                 refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                refreshBtn.textContent = '↻ Refresh';
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Refresh';
                 
                 if (stepName) {
                     stepName.textContent = 'Stream Connection Lost';
@@ -171,7 +171,7 @@ async function fetchTickerData() {
             const renderItems = (items) => {
                 return items.map(item => {
                     const changeClass = item.change_percent >= 0 ? 'up' : 'down';
-                    const changeSign = item.change_percent >= 0 ? '▲' : '▼';
+                    const changeSign = item.change_percent >= 0 ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>';
                     const isCurrency = !item.ticker.startsWith('^') && !item.ticker.endsWith('=X');
                     const priceFormatted = Number(item.current_price).toLocaleString('en-US', {
                         minimumFractionDigits: 2,

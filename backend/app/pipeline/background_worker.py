@@ -1,6 +1,7 @@
 # backend/app/pipeline/background_worker.py
 import os
 import sys
+import hashlib
 import time
 import asyncio
 import subprocess
@@ -21,6 +22,9 @@ from psycopg2.extras import execute_values
 from ..database import get_db_connection
 from ..config import get_settings
 from ..routers.prices import DEFAULT_TICKERS
+from ..scrapers.niche_sources import scrape_niche_articles
+from ..analytics.guerilla_hybrid import get_hybrid_signals
+from ..sentiment.deepseek_client import DeepSeekSentiment
 
 settings = get_settings()
 
@@ -48,8 +52,8 @@ def fetch_and_cache_minute_ticker(ticker_symbol: str, conn=None):
         ticker = yf.Ticker(ticker_symbol, session=session)
         df = ticker.history(period="1d", interval="1m")
         time.sleep(0.3)
-        
-        if df.empty:
+
+        if df is None or df.empty:
             return False
             
         records = []
@@ -161,7 +165,106 @@ def run_news_and_sentiment_cycle():
     except Exception as e:
         print(f"[BG_WORKER] Error running sentiment pipeline: {e}")
         
+    # 3. Run Guerilla Quant niche scan
+    try:
+        run_niche_scan()
+    except Exception as e:
+        print(f"[BG_WORKER] Error running niche scan: {e}")
+
     print(f"[BG_WORKER] Breaking news & sentiment loop completed.")
+
+def run_niche_scan():
+    """
+    Scrape niche market articles, insert into raw_articles, score via DeepSeek,
+    then compute and persist pair signals for Guerilla Quant.
+    """
+    print(f"[BG_WORKER] Starting Guerilla Quant niche scan at {datetime.now()}")
+    articles = scrape_niche_articles(sample_size=5)
+    if not articles:
+        print("[BG_WORKER] No niche articles scraped, skipping.")
+        return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    analyzer = DeepSeekSentiment()
+    inserted = 0
+
+    for art in articles:
+        title = (art.get("title") or "")[:500]
+        summary = (art.get("summary") or "")[:2000]
+        title_hash = hashlib.md5(title.lower().encode()).hexdigest()
+        source_type = art.get("source_type", "niche")
+
+        # Insert with ON CONFLICT DO NOTHING on title_hash, RETURNING id
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_raw_articles
+                (source_name, feed_url, title, link, published_raw, summary, title_hash, scoring_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+            ON CONFLICT (title_hash) DO NOTHING
+            RETURNING id
+        """, (f"niche-{source_type}", "", title, "", art.get("published_raw", ""), summary, title_hash))
+
+        row = cur.fetchone()
+        if row:
+            article_id = row[0]
+
+            # Score immediately via DeepSeek
+            try:
+                result = analyzer.score_article_with_assets(title, summary)
+                if "assets" in result and result["assets"]:
+                    impact_rows = []
+                    for asset in result["assets"]:
+                        ticker = asset.get("ticker")
+                        if not ticker:
+                            continue
+                        impact_rows.append((
+                            article_id,
+                            asset.get("asset_name", ""),
+                            asset.get("asset_category", ""),
+                            asset.get("sub_category"),
+                            asset.get("country"),
+                            asset.get("region"),
+                            asset.get("sentiment_score", 0.0),
+                            asset.get("confidence", 0.0),
+                            asset.get("direction", "neutral"),
+                            asset.get("magnitude", "MEDIUM"),
+                            asset.get("reasoning", ""),
+                            ticker,
+                            asset.get("policy_signal"),
+                        ))
+                    if impact_rows:
+                        insert_sql = f"""
+                            INSERT INTO {settings.mimir_schema}.mimir_sentiment_impacts
+                                (article_id, asset_name, asset_category, sub_category, country, region,
+                                 sentiment_score, confidence, direction, magnitude, reasoning, ticker, policy_signal)
+                            VALUES %s ON CONFLICT (article_id, asset_name) DO NOTHING
+                        """
+                        execute_values(cur, insert_sql, impact_rows)
+
+                    cur.execute(f"""
+                        UPDATE {settings.mimir_schema}.mimir_raw_articles
+                        SET scoring_status = 'scored' WHERE id = %s
+                    """, (article_id,))
+                else:
+                    cur.execute(f"""
+                        UPDATE {settings.mimir_schema}.mimir_raw_articles
+                        SET scoring_status = 'empty' WHERE id = %s
+                    """, (article_id,))
+            except Exception as e:
+                print(f"[BG_WORKER] Niche scoring error for article {article_id}: {e}")
+            inserted += 1
+
+    conn.commit()
+
+    # Compute and persist pair signals
+    try:
+        opportunities = get_hybrid_signals()
+        print(f"[BG_WORKER] Niche scan complete: {inserted} articles inserted, {len(opportunities)} pair signals generated.")
+    except Exception as e:
+        print(f"[BG_WORKER] Error computing niche pair signals: {e}")
+
+    cur.close()
+    conn.close()
 
 async def start_price_loop():
     """5-minute async loop for fetching 1-minute prices."""

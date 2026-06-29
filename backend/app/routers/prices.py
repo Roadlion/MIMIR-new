@@ -402,6 +402,23 @@ async def get_candles(
     try:
         cur.execute(sql, params)
         candles = cur.fetchall()
+        
+        # Fetch historical sentiments
+        sent_rows = []
+        try:
+            cur.execute(f"""
+                SELECT 
+                    COALESCE(a.published_ts, a.scraped_at) AS time,
+                    si.sentiment_score
+                FROM {settings.mimir_schema}.mimir_raw_articles a
+                JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+                WHERE si.ticker = %s AND COALESCE(a.published_ts, a.scraped_at) >= %s
+                ORDER BY time ASC
+            """, (ticker, start_time - timedelta(days=1)))
+            sent_rows = cur.fetchall()
+        except Exception as sent_err:
+            print(f"[CANDLES] Sentiment fetch error: {sent_err}")
+            
     except Exception as e:
         cur.close()
         conn.close()
@@ -410,20 +427,60 @@ async def get_candles(
     cur.close()
     conn.close()
     
+    # helper for tz-naive datetimes
+    def make_naive(dt):
+        if dt is None:
+            return None
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
+    # Aggregate rolling sentiment for each candle
+    candles_list = []
+    current_sentiment = 0.0
+    
+    # Convert sentiment times to naive datetimes once
+    parsed_sent = []
+    for s in sent_rows:
+        s_time = make_naive(s["time"])
+        if s_time and s["sentiment_score"] is not None:
+            parsed_sent.append({
+                "time": s_time,
+                "score": float(s["sentiment_score"])
+            })
+            
+    for c in candles:
+        c_time = make_naive(c["time"])
+        
+        # 24 hour rolling window
+        window_start = c_time - timedelta(hours=24)
+        scores_in_window = [s["score"] for s in parsed_sent if window_start <= s["time"] <= c_time]
+        
+        if scores_in_window:
+            current_sentiment = sum(scores_in_window) / len(scores_in_window)
+        else:
+            # Fallback to the latest score prior to c_time
+            prior_scores = [s["score"] for s in parsed_sent if s["time"] <= c_time]
+            if prior_scores:
+                current_sentiment = prior_scores[-1]
+            else:
+                current_sentiment = 0.0
+                
+        candles_list.append({
+            "time": c["time"],
+            "open": float(c["open"]) if c["open"] is not None else 0.0,
+            "high": float(c["high"]) if c["high"] is not None else 0.0,
+            "low": float(c["low"]) if c["low"] is not None else 0.0,
+            "close": float(c["close"]) if c["close"] is not None else 0.0,
+            "volume": int(c["volume"]) if c["volume"] else 0,
+            "sentiment": round(current_sentiment, 4)
+        })
+
     return {
         "ticker": ticker,
         "interval": interval,
-        "candles": [
-            {
-                "time": c["time"],
-                "open": float(c["open"]),
-                "high": float(c["high"]),
-                "low": float(c["low"]),
-                "close": float(c["close"]),
-                "volume": int(c["volume"]) if c["volume"] else 0
-            }
-            for c in candles
-        ]
+        "days": days,
+        "candles": candles_list
     }
 
 # In-memory cache for ticker info (logo URL + short name)
@@ -1014,6 +1071,34 @@ async def get_heatmap(index: str = Query("sp500")):
         "constituents": results,
         "cached": False
     }
+
+@router.get("/prices/search")
+async def search_tickers(q: str = Query(..., min_length=1)):
+    """
+    Search for tickers by name or symbol using yfinance.
+    Returns up to 8 matching results with ticker, logo_url, and long_name.
+    """
+    try:
+        from yfinance import Search
+        search = Search(q, max_results=8)
+        quotes = search.quotes or []
+        results = []
+        seen = set()
+        for quote in quotes:
+            ticker = quote.get('symbol', '')
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            logo_url = f"https://finance-logo.perplexity.ai/ticker/{ticker}?format=png&fallback=404&size=50&theme=dark"
+            results.append({
+                "ticker": ticker,
+                "long_name": quote.get('longname') or quote.get('shortname') or ticker,
+                "logo_url": logo_url
+            })
+        return {"results": results, "query": q}
+    except Exception as e:
+        print(f"[SEARCH] Error searching for '{q}': {e}")
+        return {"results": [], "query": q}
 
 # In-memory cache for detailed ticker info to avoid hammering yfinance
 _ticker_details_cache = {}  # {ticker_symbol: {"data": ..., "fetched_at": datetime}}

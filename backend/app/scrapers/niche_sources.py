@@ -1,50 +1,97 @@
+"""Scrape niche market news from free RSS / API sources for Guerilla Quant."""
 import requests
 import xml.etree.ElementTree as ET
 from typing import List, Dict
 import logging
 import random
-from ..sentiment.deepseek_client import DeepSeekSentiment
-import xml.etree.ElementTree as ET
-from typing import List, Dict
-import logging
-from ..sentiment.deepseek_client import DeepSeekSentiment
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Fallback/Mock data if actual RSS is unreachable during demo
 MOCK_FEEDS = {
     "usda": [
-        {"title": "USDA WASDE: Wheat Yields Drop Unexpectedly", "summary": "Severe drought in the Midwest has slashed projected wheat yields by 12% for the upcoming harvest, driving concerns of supply shortages."},
-        {"title": "Corn Stocks Remain High", "summary": "Record corn planting has resulted in oversupplied silos across the corn belt, depressing local cash prices."}
+        {"title": "USDA WASDE: Wheat Yields Drop Unexpectedly", "summary": "Severe drought in the Midwest has slashed projected wheat yields by 12%."},
+        {"title": "Corn Stocks Remain High", "summary": "Record corn planting has resulted in oversupplied silos across the corn belt."},
     ],
     "noaa": [
-        {"title": "La Nina Pattern Intensifies", "summary": "Unseasonably dry conditions are expected to persist across the American plains, threatening winter crops."},
-        {"title": "Gulf Coast Hurricane Warning", "summary": "Category 3 storm threatens to disrupt shipping lanes and offshore rigs in the Gulf of Mexico."}
+        {"title": "La Nina Pattern Intensifies", "summary": "Unseasonably dry conditions expected to persist across the American plains."},
+        {"title": "Gulf Coast Hurricane Warning", "summary": "Category 3 storm threatens to disrupt shipping lanes and offshore rigs."},
     ],
     "shipping": [
-        {"title": "Panama Canal Drought Restrictions", "summary": "Low water levels force authorities to cut daily vessel transits by 20%, spiking dry bulk freight rates."},
-        {"title": "Vessel Backlog Clears at Rotterdam", "summary": "Port operations have normalized after last week's strike, easing supply chain bottlenecks in Europe."}
-    ]
+        {"title": "Panama Canal Drought Restrictions", "summary": "Low water levels force authorities to cut daily vessel transits by 20%."},
+        {"title": "Vessel Backlog Clears at Rotterdam", "summary": "Port operations normalized after last week's strike."},
+    ],
+    "energy": [
+        {"title": "OPEC+ Extends Production Cuts", "summary": "OPEC+ agrees to extend voluntary production cuts through Q3, supporting crude prices."},
+        {"title": "Nuclear Output Rises in Asia", "summary": "New reactor approvals drive growth in nuclear energy capacity across Southeast Asia."},
+    ],
+    "metals": [
+        {"title": "Copper Supply Tightens", "summary": "Global copper inventories hit multi-year lows as demand from renewable sectors surges."},
+        {"title": "Gold Demand Surges on Rate Cut Bets", "summary": "Central bank buying and ETF inflows push gold demand to record levels."},
+    ],
 }
 
+NICHE_RSS_FEEDS = [
+    # — Agriculture / USDA —
+    {"url": "https://www.ars.usda.gov/rss/?productName=Research%20News", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Crops&x=61&y=35", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Climate+Change&x=95&y=9", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Food+Safety&x=12&y=36", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Animals&x=59&y=13", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Nutrition+and+Health&x=44&y=11", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Biofuels&x=56&y=21", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Bio+Products&x=41&y=17", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Organics&x=8&y=11", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Bees&x=51&y=15", "type": "usda"},
+    {"url": "https://www.ars.usda.gov/rss/?topic=Invasive+Species&x=62&y=17", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/newsroom", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/federal-register", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-snap", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-wic", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-fmnp", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-fdp", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-cnp", "type": "usda"},
+    {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-sfmnp", "type": "usda"},
+    # — Agriculture — additional free sources
+    {"url": "https://www.agriculture.com/rss/news", "type": "usda"},
+    {"url": "https://www.farmprogress.com/rss", "type": "usda"},
+    # — Energy —
+    {"url": "https://oilprice.com/rss/main", "type": "energy"},
+    {"url": "https://www.lngworldnews.com/feed/", "type": "energy"},
+    {"url": "https://www.world-nuclear-news.org/rss/news", "type": "energy"},
+    # — Shipping —
+    {"url": "https://www.hellenicshippingnews.com/feed/", "type": "shipping"},
+    {"url": "https://splash247.com/feed/", "type": "shipping"},
+    {"url": "https://theloadstar.com/feed/", "type": "shipping"},
+    {"url": "https://www.drybulkmagazine.com/feed/", "type": "shipping"},
+    # — Metals / Mining —
+    {"url": "https://www.miningweekly.com/page/feed", "type": "metals"},
+    {"url": "https://www.mining.com/feed/", "type": "metals"},
+    # — Weather (API, not RSS) —
+    # weather.gov handled separately via fetch_weather_api()
+]
+
+
 def fetch_rss(url: str, source_type: str) -> List[Dict]:
-    """Fetches an RSS feed and returns parsed items. Uses mock data if it fails."""
+    """Fetch an RSS feed and return parsed articles."""
     try:
         response = requests.get(url, timeout=5)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         items = []
-        for item in root.findall('.//item')[:1]:  # Just 1 item per feed to avoid LLM rate limits
-            title = item.find('title').text if item.find('title') is not None else ""
-            desc = item.find('description').text if item.find('description') is not None else ""
-            items.append({"title": title, "summary": desc})
+        for item in root.findall('.//item')[:3]:  # up to 3 per feed
+            title = item.findtext('title', default="")
+            desc = item.findtext('description', default="")
+            pub = item.findtext('pubDate', default="")
+            items.append({"title": title, "summary": desc, "published_raw": pub, "source_type": source_type})
         return items if items else MOCK_FEEDS.get(source_type, [])
     except Exception as e:
-        logger.warning(f"Failed to fetch {source_type} RSS from {url}: {e}. Using fallback data.")
+        logger.warning(f"Failed to fetch {source_type} RSS from {url}: {e}")
         return []
 
+
 def fetch_weather_api() -> List[Dict]:
-    """Fetches active weather alerts from weather.gov API."""
+    """Fetch active US weather alerts from weather.gov API."""
     try:
         headers = {"User-Agent": "MIMIR-GuerillaQuant/1.0"}
         res = requests.get("https://api.weather.gov/alerts/active?limit=3", headers=headers, timeout=5)
@@ -53,81 +100,37 @@ def fetch_weather_api() -> List[Dict]:
         items = []
         for feature in data.get("features", []):
             props = feature.get("properties", {})
-            title = props.get("headline", "Weather Alert")
-            desc = props.get("description", "")
-            items.append({"title": title, "summary": desc})
+            items.append({
+                "title": props.get("headline", "Weather Alert"),
+                "summary": props.get("description", ""),
+                "published_raw": props.get("sent", ""),
+                "source_type": "noaa",
+            })
         return items if items else MOCK_FEEDS.get("noaa", [])
     except Exception as e:
-        logger.warning(f"Failed to fetch weather.gov API: {e}. Using fallback.")
+        logger.warning(f"Failed to fetch weather.gov API: {e}")
         return MOCK_FEEDS.get("noaa", [])
 
-def scrape_niche_sentiment() -> Dict[str, float]:
+
+def scrape_niche_articles(sample_size: int = 5) -> List[Dict]:
     """
-    Scrapes niche sources (USDA, NOAA, Shipping) and scores them using DeepSeek.
-    Returns a mapping of Ticker -> Average Sentiment Score.
+    Scrape articles from niche market RSS feeds and weather API.
+    Returns a flat list of dicts each containing:
+        title, summary, published_raw, source_type, source_url
+    Does NOT call DeepSeek — the caller is responsible for sentiment scoring.
     """
-    all_sources = [
-        {"url": "https://www.ars.usda.gov/rss/?productName=Research%20News", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Crops&x=61&y=35", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Climate+Change&x=95&y=9", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Food+Safety&x=12&y=36", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Animals&x=59&y=13", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Nutrition+and+Health&x=44&y=11", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Biofuels&x=56&y=21", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Bio+Products&x=41&y=17", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Organics&x=8&y=11", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Bees&x=51&y=15", "type": "usda"},
-        {"url": "https://www.ars.usda.gov/rss/?topic=Invasive+Species&x=62&y=17", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/newsroom", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/federal-register", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-snap", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-wic", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-fmnp", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-fdp", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-cnp", "type": "usda"},
-        {"url": "https://www.fna.usda.gov/rss-feeds/policy-memo-sfmnp", "type": "usda"},
-        {"url": "https://www.hellenicshippingnews.com/feed/", "type": "shipping"}
-    ]
-    
-    # Randomly sample 3 RSS feeds to avoid rate-limiting the LLM during a synchronous scan
-    sources = random.sample(all_sources, min(3, len(all_sources)))
-    
-    analyzer = DeepSeekSentiment()
-    sentiment_map = {}
-    
-    # Process sampled RSS feeds
+    sources = random.sample(NICHE_RSS_FEEDS, min(sample_size, len(NICHE_RSS_FEEDS)))
+    articles = []
+
     for src in sources:
-        articles = fetch_rss(src["url"], src["type"])
-        for article in articles:
-            # Re-use the existing DeepSeek sentiment pipeline
-            result = analyzer.score_article_with_assets(article["title"], article["summary"])
-            
-            # Map sentiment back to tickers
-            if "assets" in result:
-                for asset in result["assets"]:
-                    ticker = asset.get("ticker")
-                    if ticker:
-                        score = asset.get("sentiment_score", 0.0)
-                        if ticker not in sentiment_map:
-                            sentiment_map[ticker] = []
-                        sentiment_map[ticker].append(score)
-                        
-    # Process Weather API
-    weather_articles = fetch_weather_api()
-    for article in weather_articles:
-        result = analyzer.score_article_with_assets(article["title"], article["summary"])
-        if "assets" in result:
-            for asset in result["assets"]:
-                ticker = asset.get("ticker")
-                if ticker:
-                    score = asset.get("sentiment_score", 0.0)
-                    if ticker not in sentiment_map:
-                        sentiment_map[ticker] = []
-                    sentiment_map[ticker].append(score)
-    
-    # Average the scores
-    avg_sentiment = {}
-    for ticker, scores in sentiment_map.items():
-        avg_sentiment[ticker] = sum(scores) / len(scores)
-        
-    return avg_sentiment
+        items = fetch_rss(src["url"], src["type"])
+        for item in items:
+            item["source_url"] = src["url"]
+            articles.append(item)
+
+    # Add weather API
+    weather_items = fetch_weather_api()
+    for item in weather_items:
+        articles.append(item)
+
+    return articles

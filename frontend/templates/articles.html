@@ -61,7 +61,7 @@
     <!-- Header Section -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-            <h1 class="text-3xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']">📰 Intelligence Feed</h1>
+            <h1 class="text-3xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']"><i class="fas fa-newspaper mr-2"></i>Intelligence Feed</h1>
             <p class="text-sm text-[#4A6A70] mt-1">Explore parsed macroeconomic intelligence, raw articles, and model-derived sentiment impacts.</p>
         </div>
     </div>
@@ -139,7 +139,7 @@
 
     <!-- Empty State Placeholder (hidden by default) -->
     <div id="emptyState" class="hidden py-20 text-center bg-[#070D10] border border-dashed border-[#1A2A30] rounded-lg">
-        <span class="text-4xl">🔍</span>
+        <span class="text-4xl text-[#4A6A70]"><i class="fas fa-search"></i></span>
         <h3 class="text-lg font-bold text-[#D6E5E3] mt-4 font-mono">No Matching Intel Found</h3>
         <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">Try refining your search text or filters. We couldn't find any articles matching this query.</p>
         <button onclick="resetAllFilters()" class="mt-6 px-4 py-2 bg-[#00A6B2] text-black font-semibold rounded hover:bg-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">
@@ -328,12 +328,12 @@
                     
                     if (imp.direction === 'bullish' || imp.sentiment_score > 0.05) {
                         badgeClass = 'badge-bullish';
-                        arrowSymbol = '▲';
+                        arrowSymbol = '<i class="fas fa-caret-up text-[#00E676]"></i>';
                         valColor = 'text-[#00E676]';
                         plusSign = '+';
                     } else if (imp.direction === 'bearish' || imp.sentiment_score < -0.05) {
                         badgeClass = 'badge-bearish';
-                        arrowSymbol = '▼';
+                        arrowSymbol = '<i class="fas fa-caret-down text-[#FF5252]"></i>';
                         valColor = 'text-[#FF5252]';
                     }
                     
@@ -372,7 +372,7 @@
                 <div class="space-y-3.5 min-w-0">
                     <div class="flex justify-between items-center text-[11px] font-mono text-[#4A6A70]">
                         <span class="bg-[#101A20] text-[#00A6B2] px-2 py-0.5 border border-[#1A2A30] rounded uppercase tracking-wider font-semibold">${sourceText}</span>
-                        <span>⏱️ ${dateStr}</span>
+                        <span><i class="far fa-clock mr-1"></i>${dateStr}</span>
                     </div>
                     <div>
                         <h3 class="text-sm font-bold text-[#D6E5E3] font-['Inter'] leading-snug line-clamp-2 hover:text-[#00A6B2] transition-colors cursor-pointer" title="${art.title}" onclick="window.open('${art.link}', '_blank')">
@@ -494,7 +494,7 @@
         resultsCount.textContent = 'Pipeline feed connection interrupted';
         
         emptyState.innerHTML = `
-            <span class="text-4xl">⚠️</span>
+            <span class="text-4xl text-[#FF5252]"><i class="fas fa-exclamation-triangle"></i></span>
             <h3 class="text-lg font-bold text-red-500 mt-4 font-mono">Archive Fetch Failure</h3>
             <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">MIMIR backend server could not fulfill the database query. Make sure uvicorn and postgres services are active.</p>
             <button onclick="fetchArticles()" class="mt-6 px-4 py-2 bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/30 font-semibold rounded hover:border-[#00E5F2] hover:text-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">

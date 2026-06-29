@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
-    <link rel="stylesheet" href="https://cloudflare.com">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     {% block head_extra %}{% endblock %}
 </head>
 <body class="font-['Inter'] antialiased min-h-screen flex flex-col">
@@ -15,7 +15,7 @@
     <div id="ticker-bar" class="w-full bg-[#060A0D] border-b border-[#1A2A30] py-1.5 overflow-hidden text-xs font-mono select-none">
         <div class="ticker-wrapper">
             <div id="ticker-track" class="ticker-track">
-                <span class="text-[#4A6A70]">🌳 Loading market data from Valhalla...</span>
+                <span class="text-[#4A6A70]"><i class="fas fa-tree mr-1"></i>Loading market data from Valhalla...</span>
             </div>
         </div>
     </div>
@@ -28,17 +28,26 @@
             </div>
             <div class="flex gap-6 text-sm">
                 <a href="/" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Dashboard</a>
+                <a href="/portfolio" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Portfolio</a>
                 <a href="/articles" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Articles</a>
                 <a href="/watchlist" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Watchlist</a>
                 <a href="/taxonomy" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Taxonomy</a>
                 <a href="/map" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Map</a>
-                <a href="/guerilla" class="text-[#ffd700] hover:text-[#00A6B2] transition-colors font-bold border border-[#ffd700]/30 px-2 rounded bg-[#ffd700]/10 ml-2">Guerilla Quant</a>
+                <a href="/guerilla" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Guerilla Quant</a>
             </div>
         </div>
         <div class="flex items-center gap-4">
-            <span class="text-xs text-[#4A6A70] font-mono">⏱️ <span id="clock">--:--:--</span></span>
+            <!-- Search -->
+            <div class="relative">
+                <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70] pointer-events-none"></i>
+                <input type="text" id="searchInput"
+                    class="w-36 lg:w-44 bg-[#0A161C] border border-[#1A2A30] rounded pl-7 pr-3 py-1 text-xs text-[#D6E5E3] font-mono placeholder-[#4A6A70] focus:border-[#00A6B2] focus:outline-none transition-colors"
+                    placeholder="Search tickers..." autocomplete="off" spellcheck="false">
+                <div id="searchDropdown" class="hidden absolute right-0 top-full mt-2 w-72 lg:w-80 bg-[#0A161C] border border-[#1A2A30] rounded-lg shadow-xl z-50 overflow-hidden"></div>
+            </div>
+            <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock">--:--:--</span></span>
             <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
-                ↻ Refresh
+                <i class="fas fa-sync-alt mr-1"></i> Refresh
             </button>
         </div>
     </nav>
@@ -76,6 +85,58 @@
     </footer>
 
     <script src="/static/js/main.js?v=1.0.2"></script>
+    <script>
+    // Ticker search with debounce
+    const searchInput = document.getElementById('searchInput');
+    const dropdown = document.getElementById('searchDropdown');
+    let searchTimer;
+
+    searchInput.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        const q = searchInput.value.trim();
+        if (q.length < 1) {
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+            return;
+        }
+        searchTimer = setTimeout(async () => {
+            dropdown.innerHTML = '<div class="p-3 text-xs text-[#4A6A70] text-center font-mono"><i class="fas fa-search mr-1"></i>Searching...</div>';
+            dropdown.classList.remove('hidden');
+            try {
+                const res = await fetch(`/api/v1/prices/search?q=${encodeURIComponent(q)}`);
+                const data = await res.json();
+                if (!data.results || data.results.length === 0) {
+                    dropdown.innerHTML = '<div class="p-3 text-xs text-[#4A6A70] text-center font-mono">No tickers found</div>';
+                    return;
+                }
+                dropdown.innerHTML = data.results.map(r => `
+                    <a href="/asset/${r.ticker}" class="flex items-center gap-3 px-4 py-2.5 hover:bg-[#111A20] transition-colors border-b border-[#1A2A30]/50 last:border-b-0">
+                        <img src="${r.logo_url}" alt="${r.ticker}" class="w-7 h-7 rounded object-contain bg-[#111A20]" onerror="this.style.display='none'">
+                        <div class="flex flex-col min-w-0">
+                            <span class="text-sm font-mono font-bold text-[#00A6B2]">${r.ticker}</span>
+                            <span class="text-xs text-[#8BA4A8] truncate">${r.long_name}</span>
+                        </div>
+                    </a>
+                `).join('');
+            } catch (e) {
+                dropdown.innerHTML = '<div class="p-3 text-xs text-[#FF5252] text-center font-mono">Search failed</div>';
+            }
+        }, 250);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#searchInput') && !e.target.closest('#searchDropdown')) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            dropdown.classList.add('hidden');
+            searchInput.blur();
+        }
+    });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

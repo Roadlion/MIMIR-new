@@ -1,0 +1,342 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR — Shadow Portfolio & AI Advisor{% endblock %}
+
+{% block content %}
+<div class="px-8 py-6 max-w-7xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="flex items-end justify-between border-b border-[#1A2A30] pb-4 mb-6">
+        <div>
+            <h1 class="text-3xl font-bold font-mono tracking-tight text-[#E8F1F0]">SHADOW PORTFOLIO</h1>
+            <p class="text-sm text-[#4A6A70] font-mono mt-1">Transaction Ledger • Live Price Tracking • AI Strategic Advice</p>
+        </div>
+        <div class="flex gap-3">
+            <button id="getAdviceBtn" class="flex items-center gap-2 px-4 py-2 bg-[#ffd700] hover:bg-[#cca300] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(255,215,0,0.2)]">
+                <span><i class="fas fa-wand-sparkles mr-1"></i>Generate AI Strategy</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Total Portfolio Value</span>
+            <span id="kpiValue" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Total Cost Basis</span>
+            <span id="kpiCost" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Total Profit / Loss</span>
+            <span id="kpiPL" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00 (0.00%)</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24 border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)]">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Active Positions</span>
+            <span id="kpiHoldings" class="text-2xl font-bold text-[#00A6B2] font-mono mt-1">0</span>
+        </div>
+    </div>
+
+    <!-- Main Content Workspace Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left: Holdings, Forms, Ledgers (2/3 columns) -->
+        <div class="lg:col-span-2 space-y-6">
+            
+            <!-- Current Positions Table -->
+            <div class="card p-0 overflow-hidden">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+                    <h2 class="text-sm font-mono text-[#E8F1F0] uppercase tracking-wider">Current Positions</h2>
+                    <span class="text-xs text-[#00A6B2] font-mono">Live Price Aggregation</span>
+                </div>
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                            <th class="px-5 py-3">Asset Ticker</th>
+                            <th class="px-5 py-3">Quantity</th>
+                            <th class="px-5 py-3">Avg Buy</th>
+                            <th class="px-5 py-3">Current Price</th>
+                            <th class="px-5 py-3">Total Cost</th>
+                            <th class="px-5 py-3">Current Value</th>
+                            <th class="px-5 py-3">P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
+                        <tr>
+                            <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Log Order / Transaction Form -->
+            <div class="card bg-[#111C21] p-6">
+                <h2 class="text-sm font-mono text-[#00A6B2] uppercase tracking-wider mb-4"><i class="fas fa-plus mr-1"></i> Log Order/Transaction</h2>
+                <form id="addTxForm" class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Ticker</label>
+                        <input type="text" id="txTicker" required placeholder="e.g. AAPL" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Buy Price ($)</label>
+                        <input type="number" step="any" id="txPrice" required placeholder="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Quantity</label>
+                        <input type="number" step="any" id="txQty" required placeholder="0" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Order Time</label>
+                        <input type="datetime-local" id="txDate" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                    <div class="sm:col-span-4 flex justify-end">
+                        <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]">
+                            Add Purchase Record
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Transaction Ledger -->
+            <div id="ledgerSection" class="hidden card p-0 overflow-hidden">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30]">
+                    <h2 class="text-sm font-mono text-[#E8F1F0] uppercase tracking-wider"><i class="fas fa-scroll mr-1"></i> Detailed Transaction Ledger</h2>
+                </div>
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                            <th class="px-5 py-3">Ticker</th>
+                            <th class="px-5 py-3">Buy Price</th>
+                            <th class="px-5 py-3">Quantity</th>
+                            <th class="px-5 py-3">Buy Date</th>
+                            <th class="px-5 py-3 text-right">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ledgerTableBody" class="text-sm font-mono text-[#D6E5E3]">
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+        <!-- Right Column: AI Sentinel Advisor Insights -->
+        <div class="space-y-6">
+            <div class="card p-0 overflow-hidden flex flex-col min-h-[500px]">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+                    <h2 class="text-sm font-mono text-[#ffd700] uppercase tracking-wider"><i class="fas fa-lightbulb mr-1"></i> AI Sentinel Insights</h2>
+                </div>
+                
+                <div class="p-5 flex-grow flex flex-col">
+                    <!-- Loading State -->
+                    <div id="aiLoading" class="hidden flex-grow flex flex-col items-center justify-center py-12 text-center">
+                        <div class="w-8 h-8 border-3 border-[#ffd700] border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <div class="text-xs font-mono text-[#ffd700] animate-pulse">MIMIR is consulting the well...</div>
+                        <div class="text-[10px] font-mono text-[#4A6A70] mt-2 max-w-[200px]">Correlating portfolio allocations with market sentiment database...</div>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div id="aiEmpty" class="flex-grow flex flex-col items-center justify-center py-12 text-center text-[#4A6A70] font-mono">
+                        <span class="text-2xl mb-2 text-[#4A6A70]"><i class="fas fa-eye"></i></span>
+                        <p class="text-xs">Trigger AI Advisor sequence via the header button.</p>
+                    </div>
+
+                    <!-- Content Render -->
+                    <div id="aiContent" class="hidden flex-grow text-[#D6E5E3] font-mono text-sm space-y-4">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        // Set default order date to now
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById("txDate").value = now.toISOString().slice(0, 16);
+        
+        loadPortfolio();
+        
+        // Form submission
+        document.getElementById("addTxForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const ticker = document.getElementById("txTicker").value.trim().toUpperCase();
+            const buy_price = parseFloat(document.getElementById("txPrice").value);
+            const quantity = parseFloat(document.getElementById("txQty").value);
+            const order_date = document.getElementById("txDate").value; // Raw string (e.g. "YYYY-MM-DDTHH:MM") without browser local tz shift
+            
+            try {
+                const res = await fetch("/api/v1/portfolio", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ticker, buy_price, quantity, order_date })
+                });
+                
+                if (!res.ok) throw new Error("Failed to add transaction");
+                
+                // Clear fields
+                document.getElementById("txTicker").value = "";
+                document.getElementById("txPrice").value = "";
+                document.getElementById("txQty").value = "";
+                
+                loadPortfolio();
+            } catch (err) {
+                alert(err.message);
+            }
+        });
+        
+        // Advice Button click
+        document.getElementById("getAdviceBtn").addEventListener("click", generateAdvice);
+    });
+
+    async function loadPortfolio() {
+        try {
+            const res = await fetch("/api/v1/portfolio");
+            if (!res.ok) throw new Error("Could not load portfolio");
+            const data = await res.json();
+            
+            updateKPIs(data);
+            renderHoldingsTable(data.holdings);
+            renderLedger(data.holdings);
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function updateKPIs(data) {
+        document.getElementById("kpiValue").innerText = formatCurrency(data.total_value);
+        document.getElementById("kpiCost").innerText = formatCurrency(data.total_cost);
+        
+        const pl = data.total_profit_loss;
+        const plPct = data.total_profit_loss_pct;
+        const plEl = document.getElementById("kpiPL");
+        
+        plEl.innerText = `${formatCurrency(pl)} (${plPct.toFixed(2)}%)`;
+        if (pl >= 0) {
+            plEl.className = "text-2xl font-bold text-[#00E676] font-mono mt-1";
+        } else {
+            plEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
+        }
+        
+        document.getElementById("kpiHoldings").innerText = Object.keys(data.holdings).length;
+    }
+
+    function renderHoldingsTable(holdings) {
+        const tbody = document.getElementById("holdingsTableBody");
+        tbody.innerHTML = "";
+        
+        const holdingsKeys = Object.keys(holdings);
+        if (holdingsKeys.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                </tr>
+            `;
+            return;
+        }
+        
+        holdingsKeys.sort().forEach(ticker => {
+            const h = holdings[ticker];
+            const plColor = h.profit_loss >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            const tr = document.createElement("tr");
+            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+            tr.innerHTML = `
+                <td class="px-5 py-3 font-bold text-[#00A6B2]">${ticker}</td>
+                <td class="px-5 py-3">${h.quantity.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 4})}</td>
+                <td class="px-5 py-3">${formatCurrency(h.avg_buy_price)}</td>
+                <td class="px-5 py-3">${formatCurrency(h.current_price)}</td>
+                <td class="px-5 py-3 text-[#4A6A70]">${formatCurrency(h.total_cost)}</td>
+                <td class="px-5 py-3">${formatCurrency(h.current_value)}</td>
+                <td class="px-5 py-3 font-bold ${plColor}">${formatCurrency(h.profit_loss)} (${h.profit_loss_pct.toFixed(2)}%)</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderLedger(holdings) {
+        const ledgerSection = document.getElementById("ledgerSection");
+        const tbody = document.getElementById("ledgerTableBody");
+        tbody.innerHTML = "";
+        
+        const allTx = [];
+        Object.keys(holdings).forEach(ticker => {
+            const h = holdings[ticker];
+            h.transactions.forEach(tx => {
+                allTx.push({
+                    ticker,
+                    ...tx
+                });
+            });
+        });
+        
+        if (allTx.length === 0) {
+            ledgerSection.classList.add("hidden");
+            return;
+        }
+        
+        ledgerSection.classList.remove("hidden");
+        
+        // Sort by order date descending
+        allTx.sort((a, b) => new Date(b.order_date) - new Date(a.order_date));
+        
+        allTx.forEach(tx => {
+            const dateStr = new Date(tx.order_date).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }) + ' (GMT+7)';
+            const tr = document.createElement("tr");
+            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+            tr.innerHTML = `
+                <td class="px-5 py-3 font-bold text-[#00A6B2]">${tx.ticker}</td>
+                <td class="px-5 py-3">${formatCurrency(tx.buy_price)}</td>
+                <td class="px-5 py-3">${tx.quantity}</td>
+                <td class="px-5 py-3 text-[#4A6A70] text-xs">${dateStr}</td>
+                <td class="px-5 py-3 text-right">
+                    <button onclick="deleteTx(${tx.id})" class="text-xs text-[#FF5252] hover:text-[#ff7575] border border-[#FF5252]/20 hover:border-[#FF5252]/60 px-2 py-0.5 rounded transition-all duration-200">
+                            <i class="fas fa-trash mr-1"></i> Delete
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function deleteTx(id) {
+        if (!confirm("Are you sure you want to delete this purchase transaction?")) return;
+        try {
+            const res = await fetch(`/api/v1/portfolio/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Failed to delete transaction");
+            loadPortfolio();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function generateAdvice() {
+        const loading = document.getElementById("aiLoading");
+        const empty = document.getElementById("aiEmpty");
+        const content = document.getElementById("aiContent");
+        
+        loading.classList.remove("hidden");
+        empty.classList.add("hidden");
+        content.classList.add("hidden");
+        
+        try {
+            const res = await fetch("/api/v1/portfolio/advice");
+            if (!res.ok) throw new Error("Advice generation failed");
+            const data = await res.json();
+            
+            content.innerHTML = data.advice;
+            loading.classList.add("hidden");
+            content.classList.remove("hidden");
+        } catch (err) {
+            content.innerHTML = `<p class="text-[#FF5252]">Error: ${err.message}</p>`;
+            loading.classList.add("hidden");
+            content.classList.remove("hidden");
+        }
+    }
+
+    function formatCurrency(val) {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+    }
+</script>
+{% endblock %}
