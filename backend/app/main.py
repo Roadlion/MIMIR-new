@@ -48,6 +48,10 @@ async def index(request: Request):
 async def articles_page(request: Request):
     return templates.TemplateResponse(request, "articles.html")
 
+@app.get("/social", response_class=HTMLResponse)
+async def social_page(request: Request):
+    return templates.TemplateResponse(request, "social.html")
+
 @app.get("/asset/{ticker}", response_class=HTMLResponse)
 async def finance_page(request: Request, ticker: str):
     return templates.TemplateResponse(request, "finance.html", {"ticker": ticker.upper()})

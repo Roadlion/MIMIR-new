@@ -1,0 +1,515 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR — Social Feed{% endblock %}
+
+{% block head_extra %}
+<style>
+    .badge-bullish {
+        background-color: rgba(0, 230, 118, 0.04);
+        color: #00E676;
+        border-color: rgba(0, 230, 118, 0.2);
+    }
+    .badge-bullish:hover {
+        background-color: rgba(0, 230, 118, 0.08);
+        border-color: #00E676;
+        box-shadow: 0 0 10px rgba(0, 230, 118, 0.2);
+    }
+    .badge-bearish {
+        background-color: rgba(255, 82, 82, 0.04);
+        color: #FF5252;
+        border-color: rgba(255, 82, 82, 0.2);
+    }
+    .badge-bearish:hover {
+        background-color: rgba(255, 82, 82, 0.08);
+        border-color: #FF5252;
+        box-shadow: 0 0 10px rgba(255, 82, 82, 0.2);
+    }
+    .badge-neutral {
+        background-color: rgba(255, 215, 64, 0.04);
+        color: #FFD740;
+        border-color: rgba(255, 215, 64, 0.2);
+    }
+    .badge-neutral:hover {
+        background-color: rgba(255, 215, 64, 0.08);
+        border-color: #FFD740;
+        box-shadow: 0 0 10px rgba(255, 215, 64, 0.2);
+    }
+    .social-card {
+        background: #0B1317;
+        border: 1px solid #1A2A30;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .social-card:hover {
+        transform: translateY(-3px);
+        border-color: #00A6B2;
+        box-shadow: 0 8px 25px rgba(0, 166, 178, 0.15);
+    }
+    .platform-reddit {
+        color: #FF4500;
+        text-shadow: 0 0 8px rgba(255, 69, 0, 0.2);
+    }
+    .platform-twitter {
+        color: #1DA1F2;
+        text-shadow: 0 0 8px rgba(29, 161, 242, 0.2);
+    }
+    .sentiment-fill-bullish {
+        background: linear-gradient(90deg, #00C853, #64DD17);
+        box-shadow: 0 0 10px rgba(100, 221, 23, 0.5);
+    }
+    .sentiment-fill-bearish {
+        background: linear-gradient(90deg, #D50000, #FF1744);
+        box-shadow: 0 0 10px rgba(255, 23, 68, 0.5);
+    }
+    .sentiment-fill-neutral {
+        background: linear-gradient(90deg, #FFAB00, #FFD600);
+        box-shadow: 0 0 10px rgba(255, 214, 0, 0.5);
+    }
+    .skeleton-bar {
+        background: linear-gradient(90deg, #0B1317 25%, #16242C 50%, #0B1317 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite linear;
+    }
+    @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <!-- Header Section -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']" id="main-heading">
+                <i class="fa-solid fa-users-viewfinder text-[#00A6B2] mr-2"></i>Social Sentiment Feed
+            </h1>
+            <p class="text-sm text-[#4A6A70] mt-1">Explore real-time retail discussions from subreddits and Twitter accounts with AI-scored asset sentiments.</p>
+        </div>
+    </header>
+
+    <!-- Stat Dashboard Panels -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4" id="stats-dashboard">
+        <!-- Most Active Ticker -->
+        <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col justify-between h-28">
+            <span class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Most Discussed Tickers</span>
+            <div id="stat-most-active" class="text-xl font-bold text-[#D6E5E3] font-['JetBrains_Mono'] mt-2 flex items-center gap-2">
+                <span class="text-[#00A6B2]">--</span>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">-- mentions</span>
+            </div>
+            <div class="text-[11px] text-[#4A6A70] font-mono mt-1">Chatter volume leader over the last 24h</div>
+        </div>
+
+        <!-- Highest Bullish Sentiment -->
+        <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col justify-between h-28">
+            <span class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Top Bullish Asset</span>
+            <div id="stat-top-bullish" class="text-xl font-bold text-[#00E676] font-['JetBrains_Mono'] mt-2 flex items-center gap-2">
+                <span>--</span>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: --</span>
+            </div>
+            <div class="text-[11px] text-[#4A6A70] font-mono mt-1">Strongest positive momentum on social media</div>
+        </div>
+
+        <!-- Highest Bearish Sentiment -->
+        <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col justify-between h-28">
+            <span class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Top Bearish Asset</span>
+            <div id="stat-top-bearish" class="text-xl font-bold text-[#FF5252] font-['JetBrains_Mono'] mt-2 flex items-center gap-2">
+                <span>--</span>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: --</span>
+            </div>
+            <div class="text-[11px] text-[#4A6A70] font-mono mt-1">Strongest negative retail pressure</div>
+        </div>
+    </section>
+
+    <!-- Filters and Toolbar -->
+    <section class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col gap-4" id="filter-controls-container">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Search Text -->
+            <div class="flex flex-col gap-1.5 col-span-1 lg:col-span-2">
+                <label for="filterSearch" class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Search Keywords / Tickers</label>
+                <div class="relative">
+                    <input type="text" id="filterSearch" placeholder="Search by ticker, company, summary text..." 
+                           class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                </div>
+            </div>
+
+            <!-- Platform Filter -->
+            <div class="flex flex-col gap-1.5">
+                <label for="filterPlatform" class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Social Platform</label>
+                <select id="filterPlatform" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <option value="">All Platforms</option>
+                    <option value="reddit">Reddit</option>
+                    <option value="twitter">Twitter / X</option>
+                </select>
+            </div>
+
+            <!-- Asset Ticker Filter -->
+            <div class="flex flex-col gap-1.5">
+                <label for="filterTicker" class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Specific Ticker</label>
+                <select id="filterTicker" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <option value="">All Tickers</option>
+                </select>
+            </div>
+        </div>
+    </section>
+
+    <!-- Social Feed List -->
+    <section class="space-y-4" id="feed-items-container">
+        <!-- Live Loading Shimmer Placeholders -->
+        <div id="loading-placeholders" class="space-y-4">
+            <div class="bg-[#0B1317] border border-[#1A2A30] rounded-lg p-5 flex flex-col gap-4">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full skeleton-bar"></div>
+                        <div class="w-28 h-4 rounded skeleton-bar"></div>
+                    </div>
+                    <div class="w-16 h-6 rounded-full skeleton-bar"></div>
+                </div>
+                <div class="w-3/4 h-5 rounded skeleton-bar"></div>
+                <div class="w-full h-16 rounded skeleton-bar"></div>
+            </div>
+            <div class="bg-[#0B1317] border border-[#1A2A30] rounded-lg p-5 flex flex-col gap-4">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full skeleton-bar"></div>
+                        <div class="w-28 h-4 rounded skeleton-bar"></div>
+                    </div>
+                    <div class="w-16 h-6 rounded-full skeleton-bar"></div>
+                </div>
+                <div class="w-3/4 h-5 rounded skeleton-bar"></div>
+                <div class="w-full h-16 rounded skeleton-bar"></div>
+            </div>
+        </div>
+
+        <!-- Empty Feed Indicator -->
+        <div id="empty-feed-indicator" class="hidden text-center py-16 border border-dashed border-[#1A2A30] rounded-lg bg-[#0A1216]">
+            <i class="fa-solid fa-ghost text-4xl text-[#4A6A70] mb-3"></i>
+            <p class="text-[#D6E5E3] font-mono text-sm font-semibold">No social chatter found</p>
+            <p class="text-[#4A6A70] text-xs mt-1">Try modifying your filter settings or search terms</p>
+        </div>
+
+        <!-- Populated Cards -->
+        <div id="social-feed-cards" class="space-y-4"></div>
+    </section>
+
+    <!-- Pagination Controls -->
+    <nav class="flex items-center justify-between border-t border-[#1A2A30] pt-4 select-none" id="pagination-controls">
+        <button id="prevPageBtn" class="px-4 py-2 bg-[#0A1216] border border-[#1A2A30] hover:border-[#00A6B2] text-xs text-[#D6E5E3] font-mono rounded disabled:opacity-50 disabled:hover:border-[#1A2A30] transition-colors">
+            <i class="fa-solid fa-arrow-left mr-1"></i> Prev Page
+        </button>
+        <span id="pageIndicator" class="text-xs text-[#4A6A70] font-mono">Page 1 of 1</span>
+        <button id="nextPageBtn" class="px-4 py-2 bg-[#0A1216] border border-[#1A2A30] hover:border-[#00A6B2] text-xs text-[#D6E5E3] font-mono rounded disabled:opacity-50 disabled:hover:border-[#1A2A30] transition-colors">
+            Next Page <i class="fa-solid fa-arrow-right ml-1"></i>
+        </button>
+    </nav>
+</div>
+
+<script>
+    let currentPage = 1;
+    const limit = 15;
+    let availableTickers = [];
+
+    // Core Filter Inputs
+    const filterSearch = document.getElementById('filterSearch');
+    const filterPlatform = document.getElementById('filterPlatform');
+    const filterTicker = document.getElementById('filterTicker');
+
+    // DOM Outlets
+    const socialFeedCards = document.getElementById('social-feed-cards');
+    const loadingPlaceholders = document.getElementById('loading-placeholders');
+    const emptyFeedIndicator = document.getElementById('empty-feed-indicator');
+    const pageIndicator = document.getElementById('pageIndicator');
+    const prevPageBtn = document.getElementById('prevPageBtn');
+    const nextPageBtn = document.getElementById('nextPageBtn');
+
+    // Fetch Unique Tickers to populate dropdown
+    async function loadFilterTickers() {
+        try {
+            const resp = await fetch('/api/v1/social/tickers');
+            if (resp.ok) {
+                const data = await resp.json();
+                availableTickers = data.tickers || [];
+                
+                // Clear existing except first
+                filterTicker.innerHTML = '<option value="">All Tickers</option>';
+                availableTickers.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.ticker;
+                    option.textContent = `${item.ticker} (${item.asset_name})`;
+                    filterTicker.appendChild(option);
+                });
+            }
+        } catch (err) {
+            console.error("Failed to load tickers:", err);
+        }
+    }
+
+    // Parse and render feed cards
+    async function loadSocialFeed() {
+        showLoading(true);
+        
+        const platform = filterPlatform.value;
+        const ticker = filterTicker.value;
+        const search = filterSearch.value.trim();
+        
+        let url = `/api/v1/social/feed?page=${currentPage}&limit=${limit}`;
+        if (platform) url += `&platform=${encodeURIComponent(platform)}`;
+        if (ticker) url += `&ticker=${encodeURIComponent(ticker)}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        
+        try {
+            const resp = await fetch(url);
+            if (resp.ok) {
+                const result = await resp.json();
+                renderCards(result.data || []);
+                updatePagination(result.total || 0);
+            } else {
+                renderCards([]);
+            }
+        } catch (err) {
+            console.error("Error loading social feed:", err);
+            renderCards([]);
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    // Format human-readable relative time
+    function formatRelativeTime(dateStr) {
+        const d = new Date(dateStr);
+        const now = new Date();
+        const diffMs = now - d;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Render cards to DOM
+    function renderCards(data) {
+        socialFeedCards.innerHTML = '';
+        if (data.length === 0) {
+            emptyFeedIndicator.classList.remove('hidden');
+            return;
+        }
+        emptyFeedIndicator.classList.add('hidden');
+        
+        data.forEach(item => {
+            const score = parseFloat(item.sentiment_score);
+            let sentimentLabel = 'Neutral';
+            let sentimentClass = 'badge-neutral';
+            let fillClass = 'sentiment-fill-neutral';
+            
+            if (score > 0.15) {
+                sentimentLabel = 'Bullish';
+                sentimentClass = 'badge-bullish';
+                fillClass = 'sentiment-fill-bullish';
+            } else if (score < -0.15) {
+                sentimentLabel = 'Bearish';
+                sentimentClass = 'badge-bearish';
+                fillClass = 'sentiment-fill-bearish';
+            }
+            
+            const platformIcon = item.platform === 'reddit' 
+                ? '<i class="fa-brands fa-reddit platform-reddit text-lg"></i>' 
+                : '<i class="fa-brands fa-twitter platform-twitter text-lg"></i>';
+                
+            const platformName = item.platform === 'reddit' ? 'Reddit' : 'Twitter';
+            const progressPercent = Math.round(((score + 1.0) / 2.0) * 100);
+            
+            // Build the card structure
+            const card = document.createElement('article');
+            card.className = 'social-card rounded-lg p-5 flex flex-col gap-3';
+            card.innerHTML = `
+                <!-- Top Header Row -->
+                <header class="flex justify-between items-start gap-4">
+                    <div class="flex items-center gap-2.5">
+                        ${platformIcon}
+                        <div class="flex flex-col">
+                            <span class="text-xs font-mono text-[#D6E5E3] font-semibold">${item.channel}</span>
+                            <span class="text-[10px] text-[#4A6A70] font-mono">${platformName} • ${formatRelativeTime(item.bucket_ts)}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="border rounded px-2.5 py-0.5 text-[10px] font-mono font-semibold ${sentimentClass}">
+                            ${sentimentLabel}
+                        </span>
+                    </div>
+                </header>
+
+                <!-- Asset Reference Ticker Bar -->
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <a href="/asset/${item.ticker}" class="px-2 py-0.5 bg-[#112229] border border-[#1C363F] text-[#00A6B2] rounded font-mono font-bold hover:bg-[#00A6B2] hover:text-[#0B1317] transition-all">
+                        $${item.ticker}
+                    </a>
+                    <span class="text-[#8BA4A8]">${item.asset_name}</span>
+                    <span class="text-[#4A6A70] font-mono ml-auto text-[11px] flex gap-2">
+                        <span><i class="fa-solid fa-message mr-1"></i>${item.post_count} posts</span>
+                        <span><i class="fa-solid fa-fire mr-1"></i>${item.engagement_score} engagement</span>
+                    </span>
+                </div>
+
+                <!-- Sentiment Meter -->
+                <div class="flex items-center gap-3 my-1">
+                    <span class="text-[10px] font-mono text-[#4A6A70] w-8 text-right">-1.0</span>
+                    <div class="flex-grow bg-[#111A20] rounded-full h-2 border border-[#1A2A30] overflow-hidden relative">
+                        <div class="absolute top-0 bottom-0 left-1/2 w-0.5 bg-[#2A4A50] z-10"></div>
+                        <div class="${fillClass} h-full transition-all duration-500 rounded-full" style="width: ${progressPercent}%;"></div>
+                    </div>
+                    <span class="text-[10px] font-mono text-[#D6E5E3] w-12 text-left">+${score.toFixed(2)} (${Math.round(item.confidence * 100)}% conf)</span>
+                </div>
+
+                <!-- Consolidated Post Preview Summary -->
+                <div class="bg-[#060A0D] border border-[#101E24] rounded p-3 text-xs text-[#8BA4A8] font-sans leading-relaxed whitespace-pre-line max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-[#1A2A30] scrollbar-track-transparent">
+                    ${item.summary_text || 'No post summary content provided.'}
+                </div>
+            `;
+            socialFeedCards.appendChild(card);
+        });
+    }
+
+    // Toggle Loading state visibility
+    function showLoading(isLoading) {
+        if (isLoading) {
+            loadingPlaceholders.classList.remove('hidden');
+            socialFeedCards.classList.add('hidden');
+            emptyFeedIndicator.classList.add('hidden');
+        } else {
+            loadingPlaceholders.classList.add('hidden');
+            socialFeedCards.classList.remove('hidden');
+        }
+    }
+
+    // Handle pagination updating
+    function updatePagination(total) {
+        const totalPages = Math.ceil(total / limit) || 1;
+        pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
+        
+        prevPageBtn.disabled = currentPage === 1;
+        nextPageBtn.disabled = currentPage === totalPages;
+    }
+
+    // Fetch and populate top Stats Dashboard
+    async function loadStatsDashboard() {
+        try {
+            // We reuse /api/v1/social/feed with a larger limit to calculate stats locally
+            const resp = await fetch('/api/v1/social/feed?page=1&limit=100');
+            if (resp.ok) {
+                const result = await resp.json();
+                const data = result.data || [];
+                
+                if (data.length === 0) return;
+                
+                // 1. Calculate Ticker counts (mentions)
+                const tickerCounts = {};
+                const tickerNames = {};
+                data.forEach(item => {
+                    tickerCounts[item.ticker] = (tickerCounts[item.ticker] || 0) + item.post_count;
+                    tickerNames[item.ticker] = item.asset_name;
+                });
+                
+                let activeTicker = null;
+                let maxMentions = 0;
+                for (const t in tickerCounts) {
+                    if (tickerCounts[t] > maxMentions) {
+                        maxMentions = tickerCounts[t];
+                        activeTicker = t;
+                    }
+                }
+                if (activeTicker) {
+                    document.getElementById('stat-most-active').innerHTML = `
+                        <a href="/asset/${activeTicker}" class="text-[#00A6B2] hover:underline">$${activeTicker}</a>
+                        <span class="text-xs text-[#4A6A70] font-normal font-sans">${maxMentions} posts</span>
+                    `;
+                }
+                
+                // 2. Find top Bullish & Bearish
+                let topBullish = null;
+                let topBearish = null;
+                let maxBullishScore = -1.1;
+                let minBearishScore = 1.1;
+                
+                data.forEach(item => {
+                    const score = parseFloat(item.sentiment_score);
+                    if (score > maxBullishScore) {
+                        maxBullishScore = score;
+                        topBullish = item;
+                    }
+                    if (score < minBearishScore) {
+                        minBearishScore = score;
+                        topBearish = item;
+                    }
+                });
+                
+                if (topBullish && maxBullishScore > 0.15) {
+                    document.getElementById('stat-top-bullish').innerHTML = `
+                        <a href="/asset/${topBullish.ticker}" class="text-[#00E676] hover:underline">$${topBullish.ticker}</a>
+                        <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: +${maxBullishScore.toFixed(2)}</span>
+                    `;
+                }
+                if (topBearish && minBearishScore < -0.15) {
+                    document.getElementById('stat-top-bearish').innerHTML = `
+                        <a href="/asset/${topBearish.ticker}" class="text-[#FF5252] hover:underline">$${topBearish.ticker}</a>
+                        <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: ${minBearishScore.toFixed(2)}</span>
+                    `;
+                }
+            }
+        } catch (err) {
+            console.error("Error loading stats dashboard:", err);
+        }
+    }
+
+    // Set event triggers
+    filterPlatform.addEventListener('change', () => {
+        currentPage = 1;
+        loadSocialFeed();
+    });
+    
+    filterTicker.addEventListener('change', () => {
+        currentPage = 1;
+        loadSocialFeed();
+    });
+
+    // Debounce search text updates
+    let searchDebounceTimer;
+    filterSearch.addEventListener('input', () => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            currentPage = 1;
+            loadSocialFeed();
+        }, 300);
+    });
+
+    prevPageBtn.addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            loadSocialFeed();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    });
+
+    nextPageBtn.addEventListener('click', () => {
+        currentPage++;
+        loadSocialFeed();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    // Initialize Page load
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadFilterTickers();
+        loadSocialFeed();
+        loadStatsDashboard();
+        
+        // Refresh every 5 minutes automatically
+        setInterval(() => {
+            loadSocialFeed();
+            loadStatsDashboard();
+        }, 300000);
+    });
+</script>
+{% endblock %}

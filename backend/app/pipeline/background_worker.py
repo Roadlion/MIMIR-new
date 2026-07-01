@@ -33,14 +33,11 @@ ROUTER_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 PUSH_TO_DB_PATH = os.path.join(PROJECT_ROOT, "scripts", "push_to_db.py")
 PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline copy.py")
+SCRAPE_SOCIAL_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_social.py")
 
 def fetch_and_cache_minute_ticker(ticker_symbol: str, conn=None):
     """Fetches 1d of 1-minute interval history and caches it in SQL."""
     ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
-    close_conn = False
-    if conn is None:
-        conn = get_db_connection()
-        close_conn = True
     try:
         session = Session(impersonate="chrome")
         session.verify = False
@@ -69,28 +66,34 @@ def fetch_and_cache_minute_ticker(ticker_symbol: str, conn=None):
         if not records:
             return False
             
-        cur = conn.cursor()
-        sql = f"""
-        INSERT INTO {settings.mimir_schema}.mimir_minute_ohlcv (ticker, timestamp, open, high, low, close, volume)
-        VALUES %s
-        ON CONFLICT (ticker, timestamp) DO UPDATE 
-        SET open = EXCLUDED.open,
-            high = EXCLUDED.high,
-            low = EXCLUDED.low,
-            close = EXCLUDED.close,
-            volume = EXCLUDED.volume,
-            scraped_at = NOW();
-        """
-        execute_values(cur, sql, records)
-        conn.commit()
-        cur.close()
-        return True
+        # Open DB connection ONLY when inserting
+        close_conn = False
+        if conn is None:
+            conn = get_db_connection()
+            close_conn = True
+        try:
+            cur = conn.cursor()
+            sql = f"""
+            INSERT INTO {settings.mimir_schema}.mimir_minute_ohlcv (ticker, timestamp, open, high, low, close, volume)
+            VALUES %s
+            ON CONFLICT (ticker, timestamp) DO UPDATE 
+            SET open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                scraped_at = NOW();
+            """
+            execute_values(cur, sql, records)
+            conn.commit()
+            cur.close()
+            return True
+        finally:
+            if close_conn and conn:
+                conn.close()
     except Exception as e:
         print(f"[BG_WORKER] Error caching minute OHLCV for {ticker_symbol}: {e}")
         return False
-    finally:
-        if close_conn and conn:
-            conn.close()
 
 def run_price_fetch_cycle():
     """Gathers all active tickers and fetches their 1-minute prices concurrently."""
@@ -101,15 +104,42 @@ def run_price_fetch_cycle():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_sentiment_impacts WHERE ticker IS NOT NULL")
+        # Join with mimir_raw_articles to only fetch tickers active in the last 12 hours
+        cur.execute(f"""
+            SELECT DISTINCT i.ticker 
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts i
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON i.article_id = a.id
+            WHERE i.ticker IS NOT NULL
+              AND a.published_ts >= NOW() - INTERVAL '12 hours'
+        """)
         impact_tickers = [row[0] for row in cur.fetchall()]
-        cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_dynamic_tickers WHERE ticker IS NOT NULL")
-        dynamic_tickers = [row[0] for row in cur.fetchall()]
+        
+        # Query portfolio tickers
+        try:
+            cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE ticker IS NOT NULL")
+            portfolio_tickers = [row[0] for row in cur.fetchall()]
+        except Exception:
+            portfolio_tickers = []
+            
         cur.close()
         conn.close()
         
-        combined = set(tickers_to_fetch + impact_tickers + dynamic_tickers)
-        cleaned = [t.strip().lstrip('$').upper() for t in combined if t]
+        combined = set(tickers_to_fetch + impact_tickers + portfolio_tickers)
+        cleaned = []
+        for t in combined:
+            if not t:
+                continue
+            symbol = t.strip().lstrip('$').upper()
+            # Filter out mutual funds (starting with 0P, or containing/ending with .F)
+            if symbol.startswith('0P') or '.F' in symbol or symbol.endswith('.F'):
+                continue
+            # Filter out garbage hallucinations
+            if len(symbol) > 10:
+                continue
+            # Only keep alphanumeric characters plus ^, =, ., -
+            if not all(c.isalnum() or c in '^=.-' for c in symbol):
+                continue
+            cleaned.append(symbol)
         tickers_to_fetch = sorted(list(set(cleaned)))
     except Exception as e:
         print(f"[BG_WORKER] Error gathering tickers: {e}")
@@ -165,6 +195,17 @@ def run_news_and_sentiment_cycle():
     except Exception as e:
         print(f"[BG_WORKER] Error running sentiment pipeline: {e}")
         
+    # 2.5 Run social sentiment scraper (Option B)
+    try:
+        print("[BG_WORKER] Executing social sentiment scraper (scrape_social.py)...")
+        res = subprocess.run([sys.executable, SCRAPE_SOCIAL_PATH], env=env, cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            print(f"[BG_WORKER] Social scraper failed: {res.stderr}")
+        else:
+            print("[BG_WORKER] Social scraping completed successfully.")
+    except Exception as e:
+        print(f"[BG_WORKER] Error running social scraper: {e}")
+        
     # 3. Run Guerilla Quant niche scan
     try:
         run_niche_scan()
@@ -193,10 +234,8 @@ def run_niche_scan():
         print("[BG_WORKER] No niche articles scraped, skipping.")
         return
 
-    conn = get_db_connection()
-    cur = conn.cursor()
     analyzer = DeepSeekSentiment()
-    inserted = 0
+    scored_items = []
 
     for art in articles:
         title = (art.get("title") or "")[:500]
@@ -222,25 +261,56 @@ def run_niche_scan():
         else:
             pub_ts = datetime.now(timezone.utc)
 
-        # Insert with ON CONFLICT DO NOTHING on title_hash, RETURNING id
-        cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_raw_articles
-                (source_name, feed_url, title, link, published_raw, published_ts, summary, url_hash, title_hash, scoring_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
-            ON CONFLICT (title_hash) DO NOTHING
-            RETURNING id
-        """, (f"niche-{source_type}", "", title, link, pub_raw, pub_ts, summary, url_hash, title_hash))
+        # Score immediately via DeepSeek in-memory (network call)
+        assets = []
+        scoring_status = 'pending'
+        try:
+            result = analyzer.score_article_with_assets(title, summary, force_relevance=True)
+            assets = result.get("assets", [])
+            scoring_status = 'scored' if assets else 'empty'
+        except Exception as e:
+            print(f"[BG_WORKER] Niche scoring error for title '{title[:40]}...': {e}")
+            scoring_status = 'failed'
 
-        row = cur.fetchone()
-        if row:
-            article_id = row[0]
+        scored_items.append({
+            "source_name": f"niche-{source_type}",
+            "feed_url": "",
+            "title": title,
+            "link": link,
+            "published_raw": pub_raw,
+            "published_ts": pub_ts,
+            "summary": summary,
+            "url_hash": url_hash,
+            "title_hash": title_hash,
+            "scoring_status": scoring_status,
+            "assets": assets
+        })
 
-            # Score immediately via DeepSeek
-            try:
-                result = analyzer.score_article_with_assets(title, summary, force_relevance=True)
-                if "assets" in result and result["assets"]:
+    # Now open connection ONLY to perform bulk insertion
+    conn = get_db_connection()
+    cur = conn.cursor()
+    inserted = 0
+    try:
+        for item in scored_items:
+            # Insert article
+            cur.execute(f"""
+                INSERT INTO {settings.mimir_schema}.mimir_raw_articles
+                    (source_name, feed_url, title, link, published_raw, published_ts, summary, url_hash, title_hash, scoring_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (title_hash) DO NOTHING
+                RETURNING id
+            """, (
+                item["source_name"], item["feed_url"], item["title"], item["link"],
+                item["published_raw"], item["published_ts"], item["summary"],
+                item["url_hash"], item["title_hash"], item["scoring_status"]
+            ))
+            row = cur.fetchone()
+            if row:
+                article_id = row[0]
+                assets = item["assets"]
+                if assets:
                     impact_rows = []
-                    for asset in result["assets"]:
+                    for asset in assets:
                         ticker = asset.get("ticker")
                         if not ticker:
                             continue
@@ -267,21 +337,14 @@ def run_niche_scan():
                             VALUES %s ON CONFLICT (article_id, asset_name) DO NOTHING
                         """
                         execute_values(cur, insert_sql, impact_rows)
-
-                    cur.execute(f"""
-                        UPDATE {settings.mimir_schema}.mimir_raw_articles
-                        SET scoring_status = 'scored' WHERE id = %s
-                    """, (article_id,))
-                else:
-                    cur.execute(f"""
-                        UPDATE {settings.mimir_schema}.mimir_raw_articles
-                        SET scoring_status = 'empty' WHERE id = %s
-                    """, (article_id,))
-            except Exception as e:
-                print(f"[BG_WORKER] Niche scoring error for article {article_id}: {e}")
-            inserted += 1
-
-    conn.commit()
+                inserted += 1
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[BG_WORKER] Database error during niche scan insertion: {e}")
+    finally:
+        cur.close()
+        conn.close()
 
     # Compute and persist pair signals
     try:
@@ -289,9 +352,6 @@ def run_niche_scan():
         print(f"[BG_WORKER] Niche scan complete: {inserted} articles inserted, {len(opportunities)} pair signals generated.")
     except Exception as e:
         print(f"[BG_WORKER] Error computing niche pair signals: {e}")
-
-    cur.close()
-    conn.close()
 
 async def start_price_loop():
     """5-minute async loop for fetching 1-minute prices."""

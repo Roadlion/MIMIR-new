@@ -26,9 +26,23 @@ router = APIRouter()
 settings = get_settings()
 
 DEFAULT_TICKERS = [
-    "SPY", "QQQ", "^DJI", "^VIX", "GC=F", "CL=F", "DX-Y.NYB", 
-    "EURUSD=X", "USDJPY=X", "AAPL", "MSFT", "NVDA", "TSLA", "^SET50.BK",
-    "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "BNB-USD", "ADA-USD"
+    # Stock Indices
+    "SPY", "QQQ", "^DJI", "^VIX", "^N225", "000300.SS", "^KS11", "^SET50.BK", 
+    "^FTSE", "^GDAXI", "^FCHI", "FTSEMIB.MI", "^IBEX", "^STOXX50E", "^NSEI", 
+    "^GSPTSE", "^AXJO", "^BVSP",
+    # Currencies (FX)
+    "DX-Y.NYB", "EURUSD=X", "USDJPY=X", "GBPUSD=X", "USDCHF=X", "USDCNY=X", 
+    "USDTHB=X", "USDKRW=X", "USDINR=X", "USDCAD=X", "AUDUSD=X", "USDBRL=X",
+    # Commodities
+    "GC=F", "CL=F",
+    # Cryptos
+    "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "BNB-USD", "ADA-USD",
+    # Sectors (US GICS)
+    "XLF", "XLB", "XLC", "XLRE", "XLU", "XLE", "XLI", "XLP", "XLK", "XLY", "XLV",
+    # Bond Yields
+    "^TNX", "^FVX", "^TYX",
+    # Benchmark Equities
+    "AAPL", "MSFT", "NVDA", "TSLA"
 ]
 
 def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
@@ -38,10 +52,6 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
     """
     ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
     print(f"[YFINANCE] Starting fetch for {ticker_symbol}...")
-    close_conn = False
-    if conn is None:
-        conn = get_db_connection()
-        close_conn = True
     try:
         session = Session(impersonate="chrome")
         session.verify = False
@@ -75,30 +85,35 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
             print(f"[YFINANCE] No records parsed for {ticker_symbol}")
             return False
             
-        cur = conn.cursor()
-        # Insert or update
-        sql = f"""
-        INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
-        VALUES %s
-        ON CONFLICT (ticker, timestamp) DO UPDATE 
-        SET open = EXCLUDED.open,
-            high = EXCLUDED.high,
-            low = EXCLUDED.low,
-            close = EXCLUDED.close,
-            volume = EXCLUDED.volume,
-            scraped_at = NOW();
-        """
-        execute_values(cur, sql, records)
-        conn.commit()
-        cur.close()
-        print(f"[YFINANCE] Successfully cached {len(records)} OHLCV records for {ticker_symbol}")
-        return True
+        # Open DB connection ONLY when inserting
+        close_conn = False
+        if conn is None:
+            conn = get_db_connection()
+            close_conn = True
+        try:
+            cur = conn.cursor()
+            sql = f"""
+            INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
+            VALUES %s
+            ON CONFLICT (ticker, timestamp) DO UPDATE 
+            SET open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                scraped_at = NOW();
+            """
+            execute_values(cur, sql, records)
+            conn.commit()
+            cur.close()
+            print(f"[YFINANCE] Successfully cached {len(records)} OHLCV records for {ticker_symbol}")
+            return True
+        finally:
+            if close_conn and conn:
+                conn.close()
     except Exception as e:
         print(f"[YFINANCE] Error fetching/caching {ticker_symbol}: {e}")
         return False
-    finally:
-        if close_conn and conn:
-            conn.close()
 
 def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
     """
@@ -107,10 +122,6 @@ def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
     """
     ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
     print(f"[YFINANCE] Starting daily fetch for {ticker_symbol} (1y)...")
-    close_conn = False
-    if conn is None:
-        conn = get_db_connection()
-        close_conn = True
     try:
         session = Session(impersonate="chrome")
         session.verify = False
@@ -140,29 +151,35 @@ def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
         if not records:
             return False
 
-        cur = conn.cursor()
-        sql = f"""
-        INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
-        VALUES %s
-        ON CONFLICT (ticker, timestamp) DO UPDATE
-        SET open = EXCLUDED.open,
-            high = EXCLUDED.high,
-            low = EXCLUDED.low,
-            close = EXCLUDED.close,
-            volume = EXCLUDED.volume,
-            scraped_at = NOW();
-        """
-        execute_values(cur, sql, records)
-        conn.commit()
-        cur.close()
-        print(f"[YFINANCE] Cached {len(records)} daily records for {ticker_symbol}")
-        return True
+        # Open DB connection ONLY when inserting
+        close_conn = False
+        if conn is None:
+            conn = get_db_connection()
+            close_conn = True
+        try:
+            cur = conn.cursor()
+            sql = f"""
+            INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
+            VALUES %s
+            ON CONFLICT (ticker, timestamp) DO UPDATE
+            SET open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                scraped_at = NOW();
+            """
+            execute_values(cur, sql, records)
+            conn.commit()
+            cur.close()
+            print(f"[YFINANCE] Cached {len(records)} daily records for {ticker_symbol}")
+            return True
+        finally:
+            if close_conn and conn:
+                conn.close()
     except Exception as e:
         print(f"[YFINANCE] Error fetching daily cache for {ticker_symbol}: {e}")
         return False
-    finally:
-        if close_conn and conn:
-            conn.close()
 
 def fetch_and_cache_tickers_concurrently(tickers: List[str]):
     """
@@ -492,8 +509,17 @@ async def get_candles(
                 FROM {settings.mimir_schema}.mimir_raw_articles a
                 JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
                 WHERE si.ticker = %s AND COALESCE(a.published_ts, a.scraped_at) >= %s
+                
+                UNION ALL
+                
+                SELECT 
+                    bucket_ts AS time,
+                    sentiment_score
+                FROM {settings.mimir_schema}.mimir_social_chatter
+                WHERE ticker = %s AND bucket_ts >= %s
+                
                 ORDER BY time ASC
-            """, (ticker, start_time - timedelta(days=1)))
+            """, (ticker, start_time - timedelta(days=1), ticker, start_time - timedelta(days=1)))
             sent_rows = cur.fetchall()
         except Exception as sent_err:
             print(f"[CANDLES] Sentiment fetch error: {sent_err}")
@@ -1025,21 +1051,37 @@ async def get_heatmap(index: str = Query("sp500")):
                 SELECT
                     si.ticker,
                     AVG(si.sentiment_score) AS current_sentiment
-                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
-                JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+                FROM (
+                    SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
+                    
+                    UNION ALL
+                    
+                    SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
+                    FROM {settings.mimir_schema}.mimir_social_chatter sc
+                ) si
                 WHERE si.ticker = ANY(%s)
-                  AND a.published_ts > NOW() - INTERVAL '24 hours'
+                  AND si.published_ts > NOW() - INTERVAL '24 hours'
                 GROUP BY si.ticker
             ),
             prev_sentiment AS (
                 SELECT
                     si.ticker,
                     AVG(si.sentiment_score) AS prev_sentiment
-                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
-                JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+                FROM (
+                    SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
+                    
+                    UNION ALL
+                    
+                    SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
+                    FROM {settings.mimir_schema}.mimir_social_chatter sc
+                ) si
                 WHERE si.ticker = ANY(%s)
-                  AND a.published_ts > NOW() - INTERVAL '48 hours'
-                  AND a.published_ts <= NOW() - INTERVAL '24 hours'
+                  AND si.published_ts > NOW() - INTERVAL '48 hours'
+                  AND si.published_ts <= NOW() - INTERVAL '24 hours'
                 GROUP BY si.ticker
             )
             SELECT
@@ -1458,15 +1500,14 @@ async def get_ticker_details(ticker: str, nocache: bool = False):
                 "summary": r["summary"] or ""
             })
             
-        # Get overall sentiment
-        cur.execute(f"""
-            SELECT AVG(sentiment_score) as avg_score 
-            FROM {settings.mimir_schema}.mimir_sentiment_impacts 
-            WHERE ticker = %s
+        # Get overall sentiment (unifying news and social chatter)
+        cur.execute("""
+            SELECT weighted_score 
+            FROM yggdrasil.mimir_weighted_sentiment(p_ticker := %s)
         """, (ticker_symbol,))
         avg_row = cur.fetchone()
-        if avg_row and avg_row["avg_score"] is not None:
-            sentiment_score = float(avg_row["avg_score"])
+        if avg_row and avg_row["weighted_score"] is not None:
+            sentiment_score = float(avg_row["weighted_score"])
             
         # Select one positive article summary for Bullish view and one negative for Bearish view
         cur.execute(f"""

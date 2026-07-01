@@ -7,9 +7,89 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from ..database import get_db_connection_dict
 from ..config import get_settings
-
+import time
 router = APIRouter()
 settings = get_settings()
+
+# In-memory cache for /summary endpoint: (days, region, country) -> (timestamp, response_data)
+_summary_cache = {}
+CACHE_TTL_SECONDS = 60
+
+
+@router.get("/social/feed")
+async def get_social_feed(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=100),
+    platform: Optional[str] = Query(None),
+    ticker: Optional[str] = Query(None),
+    search: Optional[str] = Query(None)
+):
+    """Fetch aggregated social media chatter with pagination and filters."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    where_clauses = []
+    params = []
+    
+    if platform:
+        where_clauses.append("platform = %s")
+        params.append(platform)
+        
+    if ticker:
+        where_clauses.append("ticker = %s")
+        params.append(ticker.upper().strip())
+        
+    if search:
+        where_clauses.append("(ticker ILIKE %s OR asset_name ILIKE %s OR summary_text ILIKE %s)")
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+        
+    where_str = ""
+    if where_clauses:
+        where_str = "WHERE " + " AND ".join(where_clauses)
+        
+    # Count query
+    count_sql = f"SELECT COUNT(*) FROM yggdrasil.mimir_social_chatter {where_str}"
+    cur.execute(count_sql, params)
+    total_count = cur.fetchone()["count"]
+    
+    # Data query
+    offset = (page - 1) * limit
+    data_sql = f"""
+        SELECT id, platform, channel, ticker, asset_name, bucket_ts, 
+               sentiment_score, confidence, post_count, engagement_score, summary_text
+        FROM yggdrasil.mimir_social_chatter
+        {where_str}
+        ORDER BY bucket_ts DESC
+        LIMIT %s OFFSET %s
+    """
+    cur.execute(data_sql, params + [limit, offset])
+    rows = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+    
+    return {
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+        "data": [dict(r) for r in rows]
+    }
+
+
+@router.get("/social/tickers")
+async def get_social_tickers():
+    """Get all unique tickers currently present in social chatter."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT DISTINCT ticker, asset_name 
+        FROM yggdrasil.mimir_social_chatter 
+        ORDER BY ticker
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return {"tickers": [dict(r) for r in rows]}
 
 
 @router.get("/summary")
@@ -19,6 +99,13 @@ async def get_sentiment_summary(
     country: Optional[str] = Query(None)
 ):
     """Get overall sentiment summary for the last N days, optionally filtered by region or country."""
+    cache_key = (days, region, country)
+    now = time.time()
+    if cache_key in _summary_cache:
+        ts, cached_data = _summary_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
@@ -51,7 +138,7 @@ async def get_sentiment_summary(
     cur.execute(query1, tuple(params))
     result = cur.fetchone()
     
-    # 2. Top mover query
+    # 2. Top mover query (Optimized to pre-filter by active tickers)
     filter_clause = ""
     mover_params = [days, days, days]
     
@@ -63,34 +150,7 @@ async def get_sentiment_summary(
         mover_params = [days, region, days, days, region]
         
     query2 = f"""
-        WITH ticker_prices AS (
-            SELECT DISTINCT ON (ticker)
-                ticker,
-                close AS latest_price,
-                timestamp AS latest_ts
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
-            ORDER BY ticker, timestamp DESC
-        ),
-        ticker_prices_24h AS (
-            SELECT DISTINCT ON (p.ticker)
-                p.ticker,
-                h.close AS prev_price
-            FROM ticker_prices p
-            JOIN {settings.mimir_schema}.mimir_hourly_ohlcv h ON p.ticker = h.ticker
-            WHERE h.timestamp <= p.latest_ts - INTERVAL '24 hours'
-            ORDER BY p.ticker, h.timestamp DESC
-        ),
-        price_changes AS (
-            SELECT 
-                p.ticker,
-                CASE 
-                    WHEN p24.prev_price > 0 THEN ((p.latest_price - p24.prev_price) / p24.prev_price) * 100
-                    ELSE 0.0
-                END AS price_change_percent
-            FROM ticker_prices p
-            LEFT JOIN ticker_prices_24h p24 ON p.ticker = p24.ticker
-        ),
-        sentiment_24h AS (
+        WITH sentiment_24h AS (
             SELECT 
                 si.asset_name,
                 si.ticker,
@@ -101,6 +161,37 @@ async def get_sentiment_summary(
             WHERE a.published_ts > NOW() - INTERVAL '%s days'
               {filter_clause}
             GROUP BY si.asset_name, si.ticker
+        ),
+        active_tickers AS (
+            SELECT DISTINCT ticker FROM sentiment_24h WHERE ticker IS NOT NULL
+        ),
+        ticker_prices AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                close AS latest_price,
+                timestamp AS latest_ts
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker IN (SELECT ticker FROM active_tickers)
+            ORDER BY ticker, timestamp DESC
+        ),
+        ticker_prices_24h AS (
+            SELECT DISTINCT ON (h.ticker)
+                h.ticker,
+                h.close AS prev_price
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv h
+            WHERE h.ticker IN (SELECT ticker FROM active_tickers)
+              AND h.timestamp <= NOW() - INTERVAL '24 hours'
+            ORDER BY h.ticker, h.timestamp DESC
+        ),
+        price_changes AS (
+            SELECT 
+                p.ticker,
+                CASE 
+                    WHEN p24.prev_price > 0 THEN ((p.latest_price - p24.prev_price) / p24.prev_price) * 100
+                    ELSE 0.0
+                END AS price_change_percent
+            FROM ticker_prices p
+            LEFT JOIN ticker_prices_24h p24 ON p.ticker = p24.ticker
         ),
         sentiment_prev AS (
             SELECT 
@@ -147,7 +238,7 @@ async def get_sentiment_summary(
     cur.close()
     conn.close()
     
-    return {
+    response_data = {
         "total_articles": result.get("total_articles", 0) if result else 0,
         "avg_sentiment": float(result.get("avg_sentiment") or 0.0) if result else 0.0,
         "bullish_count": result.get("bullish_count", 0) if result else 0,
@@ -158,6 +249,10 @@ async def get_sentiment_summary(
         "top_mover_sentiment": float(top_mover.get("avg_sentiment")) if top_mover and top_mover.get("avg_sentiment") is not None else 0.0,
         "top_mover_sentiment_change": round(top_mover_sentiment_change, 2)
     }
+    
+    # Store in memory cache
+    _summary_cache[cache_key] = (now, response_data)
+    return response_data
 
 
 @router.get("/morning-report")
@@ -285,6 +380,8 @@ async def get_ticker_sentiments(
     tickers: Optional[str] = Query(None),
     weighted: bool = Query(False),
     hours: int = Query(24, ge=1, le=168),
+    social_half_life: float = Query(6.0),
+    social_weight: float = Query(0.25),
 ):
     """
     Get current and previous average sentiment for each ticker.
@@ -302,14 +399,16 @@ async def get_ticker_sentiments(
     cur = conn.cursor()
 
     if weighted:
-        # Use the weighted sentiment function (includes spillover)
+        # Use the weighted sentiment function (includes social and spillover)
         results = []
         for t in ticker_list:
             cur.execute(
                 "SELECT * FROM yggdrasil.mimir_weighted_sentiment("
                 "p_ticker := %s, p_hours_window := %s, p_half_life_hours := 12, "
-                "p_include_spillover := TRUE)"
-                "", (t, hours))
+                "p_include_spillover := TRUE, p_social_half_life_hours := %s, "
+                "p_social_weight_multiplier := %s)",
+                (t, hours, social_half_life, social_weight)
+            )
             row = cur.fetchone()
             if row:
                 results.append({
@@ -341,21 +440,37 @@ async def get_ticker_sentiments(
             SELECT
                 si.ticker,
                 AVG(si.sentiment_score) AS current_sentiment
-            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
-            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            FROM (
+                SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
+                JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
+                
+                UNION ALL
+                
+                SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
+                FROM {settings.mimir_schema}.mimir_social_chatter sc
+            ) si
             WHERE si.ticker = ANY(%s)
-              AND a.published_ts > NOW() - INTERVAL '24 hours'
+              AND si.published_ts > NOW() - INTERVAL '24 hours'
             GROUP BY si.ticker
         ),
         prev_sentiment AS (
             SELECT
                 si.ticker,
                 AVG(si.sentiment_score) AS prev_sentiment
-            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
-            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            FROM (
+                SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
+                JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
+                
+                UNION ALL
+                
+                SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
+                FROM {settings.mimir_schema}.mimir_social_chatter sc
+            ) si
             WHERE si.ticker = ANY(%s)
-              AND a.published_ts > NOW() - INTERVAL '48 hours'
-              AND a.published_ts <= NOW() - INTERVAL '24 hours'
+              AND si.published_ts > NOW() - INTERVAL '48 hours'
+              AND si.published_ts <= NOW() - INTERVAL '24 hours'
             GROUP BY si.ticker
         )
         SELECT
@@ -1227,6 +1342,52 @@ COUNTRY_INDEX_MAP = {
     "BR": "^BVSP"
 }
 
+REGION_REPRESENTATIVE_COUNTRY = {
+    "NA": "US",
+    "EU": "EU",
+    "APAC": "JP",
+    "ASEAN": "TH",
+    "LATAM": "BR",
+    "AFRICA": "ZA",
+    "MENA": "SA"
+}
+
+COUNTRY_CURRENCY_MAP = {
+    "US": "DX-Y.NYB",
+    "GB": "GBPUSD=X",
+    "JP": "USDJPY=X",
+    "CN": "USDCNY=X",
+    "EU": "EURUSD=X", "DE": "EURUSD=X", "FR": "EURUSD=X", "IT": "EURUSD=X", "ES": "EURUSD=X",
+    "TH": "USDTHB=X",
+    "AU": "AUDUSD=X",
+    "CA": "USDCAD=X",
+    "KR": "USDKRW=X",
+    "SG": "USDSGD=X",
+    "IN": "USDINR=X",
+    "BR": "USDBRL=X",
+    "ZA": "USDZAR=X"
+}
+
+REGION_CURRENCY_MAP = {
+    "NA": "DX-Y.NYB",
+    "EU": "EURUSD=X",
+    "APAC": "USDJPY=X",
+    "ASEAN": "USDTHB=X",
+    "LATAM": "USDBRL=X",
+    "AFRICA": "USDZAR=X",
+    "MENA": "USDTRY=X"
+}
+
+REGION_INDEX_MAP = {
+    "NA": "SPY",
+    "EU": "^STOXX50E",
+    "APAC": "^N225",
+    "ASEAN": "^SET50.BK",
+    "LATAM": "^BVSP",
+    "AFRICA": "^GSPC",
+    "MENA": "^GSPC"
+}
+
 def get_region_for_country(country_code: str) -> Optional[str]:
     country_to_region = {
         "US": "NA", "CA": "NA", "MX": "NA", "GL": "NA",
@@ -1243,7 +1404,7 @@ def get_region_for_country(country_code: str) -> Optional[str]:
 @router.get("/countries/{country}/details")
 async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
     """
-    Get detailed macroeconomic, central bank, bond yields, and sector performance data for a country.
+    Get detailed macroeconomic, central bank, bond yields, sector performance, stock index, and currency data for a country.
     """
     country_code = country.upper()
     conn = get_db_connection_dict()
@@ -1296,7 +1457,6 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
             hawkish_count = int(cb_res["hawkish_count"]) if cb_res["hawkish_count"] is not None else 0
             dovish_count = int(cb_res["dovish_count"]) if cb_res["dovish_count"] is not None else 0
             
-        # Determine stance label
         stance = "neutral"
         if hawkish_count > dovish_count:
             stance = "hawkish"
@@ -1312,25 +1472,49 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
             "stance": stance
         }
 
-        # 3. Bond Yield (Fetch latest from ohlcv, fallback to yfinance if stale)
+        # 3. Setup pricing queries (bond, index, currency, sectors) in a single bulk request
         bond_ticker = COUNTRY_BOND_MAP.get(country_code)
+        index_ticker = COUNTRY_INDEX_MAP.get(country_code)
+        currency_ticker = COUNTRY_CURRENCY_MAP.get(country_code)
+        
+        target_map = COUNTRY_SECTOR_TICKERS.get(country_code, COUNTRY_SECTOR_TICKERS["US"])
+        if isinstance(target_map, str):
+            target_map = COUNTRY_SECTOR_TICKERS[target_map]
+            
+        sector_list = list(SECTOR_TICKERS.keys())
+        target_tickers = [target_map.get(name, SECTOR_TICKERS[name]) for name in sector_list]
+        us_tickers = list(SECTOR_TICKERS.values())
+        all_sector_tickers = list(set(target_tickers + us_tickers))
+        
+        # Combine all tickers for a single bulk query
+        price_query_tickers = [t for t in [bond_ticker, index_ticker, currency_ticker] if t] + all_sector_tickers
+        
+        from .prices import get_ticker_changes
+        price_changes_res = await get_ticker_changes(tickers=",".join(price_query_tickers))
+        tickers_list = price_changes_res.get("tickers", []) if price_changes_res else []
+        price_changes_map = {item["ticker"]: item for item in tickers_list}
+        
+        # A. Bond Yield
         bond_data = {"ticker": bond_ticker, "yield": None, "change_percent": None}
-        if bond_ticker:
-            from .prices import get_ticker_changes
-            try:
-                # Call pricing router logic
-                price_changes_res = await get_ticker_changes(tickers=bond_ticker)
-                if price_changes_res and "tickers" in price_changes_res and price_changes_res["tickers"]:
-                    bond_data["yield"] = price_changes_res["tickers"][0]["current_price"]
-                    bond_data["change_percent"] = price_changes_res["tickers"][0]["change_percent"]
-            except Exception as e:
-                print(f"Error fetching bond yield: {e}")
+        if bond_ticker and bond_ticker in price_changes_map:
+            bond_data["yield"] = price_changes_map[bond_ticker]["current_price"]
+            bond_data["change_percent"] = price_changes_map[bond_ticker]["change_percent"]
+            
+        # B. Stock Index
+        index_data = {"ticker": index_ticker, "price": None, "change_percent": None}
+        if index_ticker and index_ticker in price_changes_map:
+            index_data["price"] = price_changes_map[index_ticker]["current_price"]
+            index_data["change_percent"] = price_changes_map[index_ticker]["change_percent"]
+            
+        # C. Currency
+        currency_data = {"ticker": currency_ticker, "price": None, "change_percent": None}
+        if currency_ticker and currency_ticker in price_changes_map:
+            currency_data["price"] = price_changes_map[currency_ticker]["current_price"]
+            currency_data["change_percent"] = price_changes_map[currency_ticker]["change_percent"]
 
-        # 4. Equity Sectors
-        # A. Query sentiment scores at three levels: Country, Region, and Global
+        # 4. Equity Sectors Sentiments
         region_code = get_region_for_country(country_code)
         
-        # Helper to retrieve sector sentiments for a given query and key
         async def fetch_sector_sentiments(filter_col: Optional[str], filter_val: Optional[str]):
             where_clause = ""
             params = [days]
@@ -1373,31 +1557,14 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
         country_sent_map = await fetch_sector_sentiments("country", country_code)
         region_sent_map = await fetch_sector_sentiments("region", region_code) if region_code else {}
         global_sent_map = await fetch_sector_sentiments(None, None)
-
-        # B. Fetch country-specific sector prices from COUNTRY_SECTOR_TICKERS map
-        target_map = COUNTRY_SECTOR_TICKERS.get(country_code, COUNTRY_SECTOR_TICKERS["US"])
-        if isinstance(target_map, str):
-            target_map = COUNTRY_SECTOR_TICKERS[target_map]
-            
-        sector_list = list(SECTOR_TICKERS.keys())
-        target_tickers = [target_map.get(name, SECTOR_TICKERS[name]) for name in sector_list]
-        us_tickers = list(SECTOR_TICKERS.values())
-        all_query_tickers = list(set(target_tickers + us_tickers))
-        
-        from .prices import get_ticker_changes
-        price_changes_res = await get_ticker_changes(tickers=",".join(all_query_tickers))
-        tickers_list = price_changes_res.get("tickers", []) if price_changes_res else []
-        price_changes_map = {item["ticker"]: item for item in tickers_list}
         
         sectors = []
         for name in sector_list:
             ticker = target_map.get(name, SECTOR_TICKERS[name])
             p_data = price_changes_map.get(ticker, {})
-            
             price = p_data.get("current_price")
             change_percent = p_data.get("change_percent")
             
-            # fallback to US if empty
             if price is None or change_percent is None:
                 us_ticker = SECTOR_TICKERS[name]
                 us_data = price_changes_map.get(us_ticker, {})
@@ -1405,7 +1572,6 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
                 change_percent = us_data.get("change_percent")
                 ticker = us_ticker
                 
-            # 2) Country/Region/Global Sentiment Fallbacks
             avg_sent = 0.0
             if name in country_sent_map:
                 avg_sent = country_sent_map[name]
@@ -1427,6 +1593,8 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
             "economy_sentiment": economy_sentiment,
             "central_bank": central_bank,
             "bond_yield": bond_data,
+            "stock_index": index_data,
+            "currency": currency_data,
             "sectors": sectors
         }
 
@@ -1435,6 +1603,298 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
     finally:
         cur.close()
         conn.close()
+
+
+@router.get("/regions/{region}/details")
+async def get_region_details(region: str, days: int = Query(7, ge=1, le=90)):
+    """
+    Get detailed macroeconomic, central bank, bond yields, sector performance, stock index, and currency data for a region.
+    """
+    region_code = region.upper()
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Economic Sentiment
+        cur.execute(f"""
+            SELECT AVG(si.sentiment_score) as avg_sentiment, COUNT(DISTINCT si.article_id) as count
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            WHERE si.region = %s AND si.asset_category = 'ECONOMY'
+              AND a.published_ts > NOW() - INTERVAL '%s days'
+        """, (region_code, days))
+        eco_res = cur.fetchone()
+        economy_sentiment = {
+            "avg_sentiment": float(eco_res["avg_sentiment"]) if eco_res and eco_res["avg_sentiment"] is not None else 0.0,
+            "count": eco_res["count"] if eco_res else 0
+        }
+        
+        # Representative country code for Central Bank and Bond Yield
+        rep_country = REGION_REPRESENTATIVE_COUNTRY.get(region_code, "US")
+        
+        # 2. Central Bank Stance (Representative of region)
+        cb_name = COUNTRY_CB_MAP.get(rep_country)
+        cb_sentiment = 0.0
+        cb_count = 0
+        hawkish_count = 0
+        dovish_count = 0
+        
+        cb_where = "si.country = %s"
+        cb_params = [rep_country, days]
+        if cb_name:
+            cb_where = "(si.country = %s OR si.asset_name = %s)"
+            cb_params = [rep_country, cb_name, days]
+            
+        cur.execute(f"""
+            SELECT 
+                AVG(si.sentiment_score) as avg_sentiment,
+                COUNT(*) as count,
+                SUM(CASE WHEN si.policy_signal = 'hawkish' THEN 1 ELSE 0 END) as hawkish_count,
+                SUM(CASE WHEN si.policy_signal = 'dovish' THEN 1 ELSE 0 END) as dovish_count
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            WHERE {cb_where} AND si.asset_category = 'POLICY' AND si.asset_sub_category = 'CENTRAL_BANK'
+              AND a.published_ts > NOW() - INTERVAL '%s days'
+        """, tuple(cb_params))
+        cb_res = cur.fetchone()
+        
+        if cb_res and cb_res["count"] > 0:
+            cb_sentiment = float(cb_res["avg_sentiment"]) if cb_res["avg_sentiment"] is not None else 0.0
+            cb_count = cb_res["count"]
+            hawkish_count = int(cb_res["hawkish_count"]) if cb_res["hawkish_count"] is not None else 0
+            dovish_count = int(cb_res["dovish_count"]) if cb_res["dovish_count"] is not None else 0
+            
+        stance = "neutral"
+        if hawkish_count > dovish_count:
+            stance = "hawkish"
+        elif dovish_count > hawkish_count:
+            stance = "dovish"
+            
+        central_bank = {
+            "name": cb_name or f"{region_code} Main Central Bank",
+            "avg_sentiment": cb_sentiment,
+            "count": cb_count,
+            "hawkish_count": hawkish_count,
+            "dovish_count": dovish_count,
+            "stance": stance
+        }
+        
+        # 3. Setup pricing queries (bond, index, currency, sectors) in a single bulk request
+        bond_ticker = COUNTRY_BOND_MAP.get(rep_country)
+        index_ticker = REGION_INDEX_MAP.get(region_code)
+        currency_ticker = REGION_CURRENCY_MAP.get(region_code)
+        
+        target_map = COUNTRY_SECTOR_TICKERS.get(rep_country, COUNTRY_SECTOR_TICKERS["US"])
+        if isinstance(target_map, str):
+            target_map = COUNTRY_SECTOR_TICKERS[target_map]
+            
+        sector_list = list(SECTOR_TICKERS.keys())
+        target_tickers = [target_map.get(name, SECTOR_TICKERS[name]) for name in sector_list]
+        us_tickers = list(SECTOR_TICKERS.values())
+        all_sector_tickers = list(set(target_tickers + us_tickers))
+        
+        price_query_tickers = [t for t in [bond_ticker, index_ticker, currency_ticker] if t] + all_sector_tickers
+        
+        from .prices import get_ticker_changes
+        price_changes_res = await get_ticker_changes(tickers=",".join(price_query_tickers))
+        tickers_list = price_changes_res.get("tickers", []) if price_changes_res else []
+        price_changes_map = {item["ticker"]: item for item in tickers_list}
+        
+        # A. Bond Yield
+        bond_data = {"ticker": bond_ticker, "yield": None, "change_percent": None}
+        if bond_ticker and bond_ticker in price_changes_map:
+            bond_data["yield"] = price_changes_map[bond_ticker]["current_price"]
+            bond_data["change_percent"] = price_changes_map[bond_ticker]["change_percent"]
+            
+        # B. Stock Index
+        index_data = {"ticker": index_ticker, "price": None, "change_percent": None}
+        if index_ticker and index_ticker in price_changes_map:
+            index_data["price"] = price_changes_map[index_ticker]["current_price"]
+            index_data["change_percent"] = price_changes_map[index_ticker]["change_percent"]
+            
+        # C. Currency
+        currency_data = {"ticker": currency_ticker, "price": None, "change_percent": None}
+        if currency_ticker and currency_ticker in price_changes_map:
+            currency_data["price"] = price_changes_map[currency_ticker]["current_price"]
+            currency_data["change_percent"] = price_changes_map[currency_ticker]["change_percent"]
+            
+        # 4. Sector performance (Regional aggregate)
+        cur.execute(f"""
+            SELECT 
+                si.asset_name,
+                si.asset_category,
+                si.asset_sub_category,
+                AVG(si.sentiment_score) as avg_sentiment
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON a.id = si.article_id
+            WHERE si.region = %s AND (
+                si.asset_category = 'SECTOR' OR 
+                (si.asset_category = 'EQUITY' AND si.asset_sub_category IS NOT NULL)
+            )
+              AND a.published_ts > NOW() - INTERVAL '%s days'
+            GROUP BY si.asset_name, si.asset_category, si.asset_sub_category
+        """, (region_code, days))
+        rows = cur.fetchall()
+        
+        s_map = {}
+        for r in rows:
+            norm_name = None
+            if r["asset_category"] == "EQUITY" and r["asset_sub_category"]:
+                norm_name = SECTOR_NORM_MAP.get(r["asset_sub_category"].strip().upper())
+            else:
+                norm_name = normalize_sector_name(r["asset_name"])
+                
+            if norm_name:
+                if norm_name not in s_map:
+                    s_map[norm_name] = []
+                s_map[norm_name].append(float(r["avg_sentiment"]))
+        region_sent_map = {k: sum(v)/len(v) for k, v in s_map.items()}
+        
+        sectors = []
+        for name in sector_list:
+            ticker = target_map.get(name, SECTOR_TICKERS[name])
+            p_data = price_changes_map.get(ticker, {})
+            price = p_data.get("current_price")
+            change_percent = p_data.get("change_percent")
+            
+            if price is None or change_percent is None:
+                us_ticker = SECTOR_TICKERS[name]
+                us_data = price_changes_map.get(us_ticker, {})
+                price = us_data.get("current_price")
+                change_percent = us_data.get("change_percent")
+                ticker = us_ticker
+                
+            avg_sent = region_sent_map.get(name, 0.0)
+            
+            sectors.append({
+                "sector": name,
+                "ticker": ticker,
+                "price": round(price, 2) if price is not None else None,
+                "change_percent": round(change_percent, 2) if change_percent is not None else None,
+                "sentiment_score": round(avg_sent, 2)
+            })
+            
+        return {
+            "region": region_code,
+            "economy_sentiment": economy_sentiment,
+            "central_bank": central_bank,
+            "bond_yield": bond_data,
+            "stock_index": index_data,
+            "currency": currency_data,
+            "sectors": sectors
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error in region details: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/countries/{target}/briefing")
+async def generate_target_briefing(target: str, days: int = Query(3, ge=1, le=14)):
+    """
+    Generate a dynamic geopolitical/geoeconomic briefing for a country, region, or global
+    by analyzing recent news articles and sentiment impact reasonings.
+    """
+    target_code = target.upper()
+    is_region = target_code in ["NA", "EU", "APAC", "ASEAN", "LATAM", "AFRICA", "MENA"]
+    is_global = target_code == "GLOBAL"
+    
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    if is_global:
+        where_clause = "1=1"
+        query_params = (days,)
+    else:
+        where_clause = "si.region = %s" if is_region else "si.country = %s"
+        query_params = (target_code, days)
+        
+    cur.execute(f"""
+        SELECT DISTINCT
+            a.title,
+            a.published_ts,
+            si.asset_name,
+            si.sentiment_score,
+            si.reasoning
+        FROM {settings.mimir_schema}.mimir_raw_articles a
+        JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
+        WHERE {where_clause} AND si.reasoning IS NOT NULL AND si.reasoning != ''
+          AND a.published_ts > NOW() - INTERVAL '%s days'
+        ORDER BY a.published_ts DESC
+        LIMIT 40
+    """, query_params)
+    
+    results = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    if not results:
+        return {
+            "status": "empty",
+            "briefing": f"No recent news flow or sentiment impacts recorded for {target_code} in the last {days} days to generate a briefing."
+        }
+        
+    context_text = ""
+    for idx, r in enumerate(results):
+        context_text += f"Article #{idx+1}: {r['title']}\n"
+        context_text += f"Asset Affected: {r['asset_name']} (Sentiment: {r['sentiment_score']})\n"
+        context_text += f"Analyst Reasoning: {r['reasoning']}\n\n"
+        
+    prompt = f"""You are MIMIR's Chief Geopolitical Quant. 
+Analyze the following recent market intelligence and analyst reasonings for {target_code} (representing a {'region' if is_region else 'country'}):
+
+{context_text}
+
+Generate a concise "Geopolitical and Geoeconomic Situation Briefing" for {target_code}.
+Structure your briefing as exactly 3-4 bullet points (using markdown '-').
+Cover the following areas:
+1. Central Bank & Monetary Policy: Stance, direction, or sentiment based on the news (hawkish/dovish indicators).
+2. Stock Market & Currency: Market performance, index movements, or currency trends.
+3. Major Macro Risks or Drivers: Growth outlook, trade, geopolitical tensions, or commodities impacts.
+
+Be extremely quantitative, direct, and clinical (Bloomberg Terminal style). Avoid pleasantries, introductory sentences, or filler words. Stick strictly to the facts and figures present in the articles.
+Keep the total response under 150 words.
+"""
+
+    if not settings.deepseek_api_key:
+        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY is not set.")
+        
+    import requests
+    headers = {
+        "Authorization": f"Bearer {settings.deepseek_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    model_name = settings.deepseek_model
+    if "pro" in model_name:
+        model_name = "deepseek-v4-pro"
+        
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a senior macroeconomic analyst. You write dense, highly informative Bloomberg-style summaries."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.2
+    }
+    
+    try:
+        api_url = f"{settings.deepseek_base_url}/chat/completions"
+        response = requests.post(api_url, json=payload, headers=headers, verify=False, timeout=30)
+        response.raise_for_status()
+        res_data = response.json()
+        briefing = res_data["choices"][0]["message"]["content"].strip()
+        return {"status": "success", "briefing": briefing}
+    except Exception as e:
+        print(f"Error generating briefing: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM generation failed: {str(e)}")
 
 
 @router.get("/spillover-log/{ticker}")

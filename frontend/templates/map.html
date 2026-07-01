@@ -247,7 +247,6 @@
 
         // Create main polygon series for countries
         polygonSeries = chart.series.push(am5map.MapPolygonSeries.new(am5Root, {
-            geoJSON: am5geodata_worldLow,
             exclude: ["AQ"] // exclude Antarctica
         }));
 
@@ -389,6 +388,9 @@
             
             handleMapClick(countryId, region, countryName);
         });
+
+        // Set geoJSON to trigger the datavalidated event
+        polygonSeries.set("geoJSON", am5geodata_worldLow);
     }
 
     // Apply color gradients to the map based on loaded data
@@ -504,6 +506,55 @@
         
         // Update side panel contents
         await updateSidePanel();
+       // Trigger Geopolitical situation briefing generation via DeepSeek API
+    async function triggerBriefing(target) {
+        const btn = document.getElementById("generate-briefing-btn");
+        const loader = document.getElementById("briefing-loading");
+        const box = document.getElementById("briefing-box");
+        
+        if (btn) btn.classList.add("hidden");
+        if (loader) loader.classList.remove("hidden");
+        if (box) box.classList.add("hidden");
+        
+        try {
+            const res = await fetch(`/api/v1/countries/${target}/briefing?days=${currentDays}`, {
+                method: "POST"
+            });
+            if (!res.ok) throw new Error("Failed to generate briefing");
+            const data = await res.json();
+            
+            if (loader) loader.classList.add("hidden");
+            if (box) {
+                box.classList.remove("hidden");
+                let text = data.briefing || "No briefing text returned.";
+                box.innerHTML = "";
+                
+                // Support basic markdown format conversion
+                let formattedText = text
+                    .replace(/\n/g, "<br>")
+                    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+                    .replace(/- ([^*<]+)(<br>|$)/g, "• $1$2");
+                
+                let i = 0;
+                let interval = setInterval(() => {
+                    box.innerHTML = formattedText.substring(0, i);
+                    i += 3;
+                    if (i >= formattedText.length + 3) {
+                        clearInterval(interval);
+                        box.innerHTML = formattedText;
+                    }
+                    box.scrollTop = box.scrollHeight;
+                }, 15);
+            }
+        } catch (err) {
+            console.error(err);
+            if (loader) loader.classList.add("hidden");
+            if (box) {
+                box.classList.remove("hidden");
+                box.innerHTML = `<span class="text-[#FF5252]">Failed to generate situation briefing. DeepSeek API error: ${err.message}</span>`;
+            }
+            if (btn) btn.classList.remove("hidden");
+        }
     }
 
     // Dynamic Side Panel update based on active filters
@@ -515,19 +566,162 @@
         if (body) body.classList.add("hidden");
 
         try {
+            let details = null;
+            let articles = [];
+            let targetTitle = "Global Situation Room";
+            let targetSubtitle = "Global Geopolitical Overview";
+            let targetCode = "GLOBAL";
+            let clearBtnHtml = "";
+
             if (activeCountry) {
-                // 1. Fetch country detail data
+                targetCode = activeCountry;
+                targetTitle = activeCountryName || activeCountry;
+                targetSubtitle = `Country Situation Room [${activeCountry}]`;
+                clearBtnHtml = `
+                    <button onclick="clearFilter()" class="text-xs font-mono text-[#00A6B2] hover:text-[#00E5F2] focus:outline-none flex items-center gap-1 bg-[#16242C] px-2.5 py-1 rounded border border-[#2A4A50] transition-colors">
+                        ✕ Clear
+                    </button>`;
+
                 const detailsRes = await fetch(`/api/v1/countries/${activeCountry}/details?days=${currentDays}`);
                 if (!detailsRes.ok) throw new Error("Failed to fetch country details");
-                const details = await detailsRes.json();
+                details = await detailsRes.json();
 
-                // 2. Fetch recent country articles
                 const articlesRes = await fetch(`/api/v1/articles?country=${activeCountry}&days=${currentDays}&sort=impact&limit=3`);
-                if (!articlesRes.ok) throw new Error("Failed to fetch country articles");
-                const articlesData = await articlesRes.json();
-                const articles = articlesData.articles || [];
+                if (articlesRes.ok) {
+                    const articlesData = await articlesRes.json();
+                    articles = articlesData.articles || [];
+                }
+            } else if (activeRegion) {
+                targetCode = activeRegion;
+                targetTitle = `${activeRegion} Region`;
+                targetSubtitle = `Regional Geopolitical Overview`;
+                clearBtnHtml = `
+                    <button onclick="clearFilter()" class="text-xs font-mono text-[#00A6B2] hover:text-[#00E5F2] focus:outline-none flex items-center gap-1 bg-[#16242C] px-2.5 py-1 rounded border border-[#2A4A50] transition-colors">
+                        ✕ Clear
+                    </button>`;
 
-                // Render Country Detail Panel
+                const detailsRes = await fetch(`/api/v1/regions/${activeRegion}/details?days=${currentDays}`);
+                if (!detailsRes.ok) throw new Error("Failed to fetch region details");
+                details = await detailsRes.json();
+
+                const articlesRes = await fetch(`/api/v1/articles?region=${activeRegion}&days=${currentDays}&sort=impact&limit=3`);
+                if (articlesRes.ok) {
+                    const articlesData = await articlesRes.json();
+                    articles = articlesData.articles || [];
+                }
+            } else {
+                const articlesRes = await fetch(`/api/v1/articles?days=${currentDays}&sort=impact&limit=5`);
+                if (articlesRes.ok) {
+                    const articlesData = await articlesRes.json();
+                    articles = articlesData.articles || [];
+                }
+
+                const summaryRes = await fetch(`/api/v1/summary?days=${currentDays}`);
+                let globalSentiment = 0.0;
+                let globalArticleCount = 0;
+                if (summaryRes.ok) {
+                    const summaryData = await summaryRes.json();
+                    globalSentiment = summaryData.avg_sentiment || 0.0;
+                    globalArticleCount = summaryData.total_articles || 0;
+                }
+
+                const priceRes = await fetch(`/api/v1/prices/ticker-changes?tickers=SPY,^STOXX50E,^N225,^FTSE,DX-Y.NYB,EURUSD=X,USDJPY=X,GBPUSD=X`);
+                let priceMap = {};
+                if (priceRes.ok) {
+                    const priceData = await priceRes.json();
+                    if (priceData.tickers) {
+                        priceData.tickers.forEach(t => {
+                            priceMap[t.ticker] = t;
+                        });
+                    }
+                }
+
+                details = {
+                    global: true,
+                    economy_sentiment: {
+                        avg_sentiment: globalSentiment,
+                        count: globalArticleCount
+                    },
+                    prices: priceMap
+                };
+            }
+
+            let html = `
+            <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-4">
+                <div>
+                    <h3 class="font-bold text-[#D6E5E3] font-['JetBrains_Mono'] tracking-tight text-sm uppercase">
+                        ${targetTitle}
+                    </h3>
+                    <span class="text-[10px] text-[#4A6A70] font-mono">${targetSubtitle}</span>
+                </div>
+                ${clearBtnHtml}
+            </div>
+            
+            <!-- AI Situation Briefing Generator -->
+            <div class="bg-[#0B1317] border border-[#1D2F36] p-4 rounded-lg flex flex-col gap-2.5 mb-4 relative overflow-hidden group">
+                <div class="flex items-center justify-between">
+                    <span class="text-[10px] font-mono text-[#00A6B2] uppercase tracking-wider flex items-center gap-1.5 font-bold">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-[#00A6B2] animate-pulse"></span>
+                        Geopolitical AI Analyst
+                    </span>
+                    <span class="text-[9px] font-mono text-[#4A6A70]">DeepSeek-V4</span>
+                </div>
+                <button id="generate-briefing-btn" onclick="triggerBriefing('${targetCode}')" class="w-full py-2 bg-[#00A6B2]/10 border border-[#00A6B2]/30 text-[#00A6B2] hover:bg-[#00A6B2]/20 hover:text-[#00E5F2] hover:border-[#00E5F2]/50 font-mono text-xs rounded transition-all flex items-center justify-center gap-2 font-bold focus:outline-none">
+                    ⚡ Generate Situation Briefing
+                </button>
+                <div id="briefing-loading" class="hidden flex flex-col items-center justify-center gap-2 py-4">
+                    <div class="w-5 h-5 rounded-full border border-t-[#00A6B2] border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+                    <span class="text-[10px] font-mono text-[#4A6A70] tracking-wider uppercase">Parsing intelligence feed...</span>
+                </div>
+                <div id="briefing-box" class="hidden font-mono text-xs text-[#8a9e9b] leading-relaxed border border-[#16242C] bg-[#070D10] p-3 rounded-lg max-h-[220px] overflow-y-auto mt-1 custom-scrollbar"></div>
+            </div>`;
+
+            if (details.global) {
+                const ecoScore = details.economy_sentiment.avg_sentiment;
+                const ecoColor = ecoScore > 0.05 ? 'text-[#00E676]' : (ecoScore < -0.05 ? 'text-[#FF5252]' : 'text-[#FFD740]');
+                const ecoDirection = ecoScore > 0.05 ? 'Bullish' : (ecoScore < -0.05 ? 'Bearish' : 'Neutral');
+                const ecoScoreStr = ecoScore > 0 ? '+' + ecoScore.toFixed(2) : ecoScore.toFixed(2);
+
+                const getTickerHtml = (ticker, label) => {
+                    const tData = details.prices[ticker] || {};
+                    const price = tData.current_price !== undefined && tData.current_price !== null ? (tData.current_price < 5 ? tData.current_price.toFixed(4) : tData.current_price.toFixed(2)) : '--';
+                    const change = tData.change_percent !== undefined && tData.change_percent !== null ? tData.change_percent.toFixed(2) + '%' : '--';
+                    const changeClass = (tData.change_percent || 0) >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+                    const arrow = (tData.change_percent || 0) >= 0 ? '↗' : '↘';
+                    return `
+                    <div class="bg-[#0B1317] border border-[#1A2A30] p-2.5 rounded-lg flex flex-col justify-between h-[65px]">
+                        <span class="text-[9px] font-mono text-[#4A6A70] uppercase">${label}</span>
+                        <div class="flex items-baseline justify-between mt-1">
+                            <span class="text-xs font-mono font-bold text-[#D6E5E3]">${price}</span>
+                            <span class="text-[9px] font-mono ${changeClass} font-semibold">${arrow} ${change}</span>
+                        </div>
+                    </div>`;
+                };
+
+                html += `
+                <!-- Global Macro Stats -->
+                <div class="mb-4">
+                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Global Macro Summary</h4>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-[#0B1317] border border-[#1A2A30] p-2.5 rounded-lg flex flex-col justify-between h-[65px] col-span-2">
+                            <span class="text-[9px] font-mono text-[#4A6A70] uppercase">Global Economic Sentiment</span>
+                            <div class="flex items-baseline gap-2 mt-1">
+                                <span class="text-base font-bold font-mono ${ecoColor}">${ecoScoreStr}</span>
+                                <span class="text-[10px] font-semibold font-mono ${ecoColor}">${ecoDirection}</span>
+                                <span class="text-[9px] font-mono text-[#2A4A50] ml-auto">Across ${details.economy_sentiment.count} articles</span>
+                            </div>
+                        </div>
+                        ${getTickerHtml('SPY', 'S&P 500 Index')}
+                        ${getTickerHtml('^STOXX50E', 'Euro Stoxx 50')}
+                        ${getTickerHtml('^N225', 'Nikkei 225')}
+                        ${getTickerHtml('^FTSE', 'FTSE 100 Index')}
+                        ${getTickerHtml('DX-Y.NYB', 'US Dollar Index')}
+                        ${getTickerHtml('EURUSD=X', 'Euro (EUR/USD)')}
+                        ${getTickerHtml('USDJPY=X', 'Yen (USD/JPY)')}
+                        ${getTickerHtml('GBPUSD=X', 'Pound (GBP/USD)')}
+                    </div>
+                </div>`;
+            } else {
                 const ecoScore = details.economy_sentiment.avg_sentiment;
                 const ecoColor = ecoScore > 0.05 ? 'text-[#00E676]' : (ecoScore < -0.05 ? 'text-[#FF5252]' : 'text-[#FFD740]');
                 const ecoDirection = ecoScore > 0.05 ? 'Bullish' : (ecoScore < -0.05 ? 'Bearish' : 'Neutral');
@@ -546,168 +740,141 @@
                 const yieldChangeClass = (by.change_percent || 0) >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
                 const yieldChangeStr = by.change_percent !== null ? ((by.change_percent || 0) >= 0 ? `+${by.change_percent.toFixed(2)}%` : `${by.change_percent.toFixed(2)}%`) : '--';
 
-                let html = `
-                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-4">
-                    <div>
-                        <h3 class="font-bold text-[#D6E5E3] font-['JetBrains_Mono'] tracking-tight text-sm uppercase">
-                            ${activeCountryName || activeCountry}
-                        </h3>
-                        <span class="text-[10px] text-[#4A6A70] font-mono">Macroeconomic Sentiment & Indicators</span>
+                const idx = details.stock_index;
+                const idxValStr = idx.price !== null ? idx.price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '--';
+                const idxChangeClass = (idx.change_percent || 0) >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+                const idxChangeStr = idx.change_percent !== null ? ((idx.change_percent || 0) >= 0 ? `+${idx.change_percent.toFixed(2)}%` : `${idx.change_percent.toFixed(2)}%`) : '--';
+
+                const cur = details.currency;
+                const curValStr = cur.price !== null ? (cur.price < 5 ? cur.price.toFixed(4) : cur.price.toFixed(2)) : '--';
+                const curChangeClass = (cur.change_percent || 0) >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+                const curChangeStr = cur.change_percent !== null ? ((cur.change_percent || 0) >= 0 ? `+${cur.change_percent.toFixed(2)}%` : `${cur.change_percent.toFixed(2)}%`) : '--';
+
+                html += `
+                <!-- Macro Snapshot Grid -->
+                <div class="mb-4">
+                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Macro Indicators</h4>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-[#0B1317] border border-[#1A2A30] p-2.5 rounded-lg flex flex-col justify-between h-[65px]">
+                            <span class="text-[9px] font-mono text-[#4A6A70] uppercase">Economic Sentiment</span>
+                            <div class="flex items-baseline gap-1 mt-1">
+                                <span class="text-xs font-bold font-mono ${ecoColor}">${ecoScoreStr}</span>
+                                <span class="text-[9px] font-semibold font-mono ${ecoColor}">${ecoDirection}</span>
+                            </div>
+                        </div>
+                        <div class="bg-[#0B1317] border border-[#1A2A30] p-2.5 rounded-lg flex flex-col justify-between h-[65px]">
+                            <span class="text-[9px] font-mono text-[#4A6A70] uppercase">Stock Index [${idx.ticker || '--'}]</span>
+                            <div class="flex items-baseline justify-between mt-1">
+                                <span class="text-xs font-bold font-mono text-[#D6E5E3] truncate max-w-[70px]">${idxValStr}</span>
+                                <span class="text-[9px] font-mono ${idxChangeClass} font-semibold">${idxChangeStr}</span>
+                            </div>
+                        </div>
+                        <div class="bg-[#0B1317] border border-[#1A2A30] p-2.5 rounded-lg flex flex-col justify-between h-[65px]">
+                            <span class="text-[9px] font-mono text-[#4A6A70] uppercase">Currency [${cur.ticker || '--'}]</span>
+                            <div class="flex items-baseline justify-between mt-1">
+                                <span class="text-xs font-bold font-mono text-[#D6E5E3]">${curValStr}</span>
+                                <span class="text-[9px] font-mono ${curChangeClass} font-semibold">${curChangeStr}</span>
+                            </div>
+                        </div>
+                        <div class="bg-[#0B1317] border border-[#1A2A30] p-2.5 rounded-lg flex flex-col justify-between h-[65px]">
+                            <span class="text-[9px] font-mono text-[#4A6A70] uppercase">10Y Bond [${by.ticker || '--'}]</span>
+                            <div class="flex items-baseline justify-between mt-1">
+                                <span class="text-xs font-bold font-mono text-[#D6E5E3]">${yieldValStr}</span>
+                                <span class="text-[9px] font-mono ${yieldChangeClass} font-semibold">${yieldChangeStr}</span>
+                            </div>
+                        </div>
                     </div>
-                    <button onclick="clearFilter()" class="text-xs font-mono text-[#00A6B2] hover:text-[#00E5F2] focus:outline-none flex items-center gap-1 bg-[#16242C] px-2 py-1 rounded border border-[#2A4A50]">
-                        ✕ Clear
-                    </button>
                 </div>
                 
-                <!-- Macro Stats -->
-                <div class="grid grid-cols-2 gap-3 mb-4">
-                    <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col justify-between">
-                        <span class="text-[9px] font-mono text-[#4A6A70] uppercase">Economic Sentiment</span>
-                        <div class="mt-1 flex items-baseline gap-1.5">
-                            <span class="text-base font-bold font-mono ${ecoColor}">${ecoScoreStr}</span>
-                            <span class="text-[10px] font-semibold font-mono ${ecoColor}">${ecoDirection}</span>
-                        </div>
-                        <span class="text-[9px] font-mono text-[#2A4A50] mt-1">Based on ${details.economy_sentiment.count} articles</span>
-                    </div>
-
-                    <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col justify-between">
-                        <span class="text-[9px] font-mono text-[#4A6A70] uppercase">10Y Bond Yield</span>
-                        <div class="mt-1 flex items-baseline gap-1.5">
-                            <span class="text-base font-bold font-mono text-[#D6E5E3]">${yieldValStr}</span>
-                            <span class="text-[10px] font-mono ${yieldChangeClass}">${yieldChangeStr}</span>
-                        </div>
-                        <span class="text-[9px] font-mono text-[#2A4A50] mt-1">Ticker: ${by.ticker || '--'}</span>
-                    </div>
-                </div>
-
                 <!-- Central Bank Widget -->
-                <div class="bg-[#0B1317] border border-[#1A2A30] p-4 rounded-lg flex flex-col gap-2 mb-4">
+                <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col gap-1.5 mb-4">
                     <div class="flex items-center justify-between">
-                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Central Bank: ${cb.name}</span>
-                        <span class="px-2 py-0.5 border rounded text-[10px] font-bold uppercase tracking-wider ${cbStanceClass}">${cb.stance}</span>
+                        <span class="text-[9px] font-mono text-[#4A6A70] uppercase truncate max-w-[170px]">Central Bank: ${cb.name}</span>
+                        <span class="px-1.5 py-0.5 border rounded text-[9px] font-bold uppercase tracking-wider ${cbStanceClass}">${cb.stance}</span>
                     </div>
-                    <div class="flex items-center justify-between text-[10px] font-mono mt-1 text-[#8a9e9b]">
+                    <div class="flex items-center justify-between text-[9px] font-mono text-[#8a9e9b]">
                         <span>Hawkish signals: <span class="text-[#FF5252] font-bold">${cb.hawkish_count}</span></span>
                         <span>Dovish signals: <span class="text-[#00E676] font-bold">${cb.dovish_count}</span></span>
                     </div>
                 </div>
 
-                <!-- Equity Sectors Table -->
+                <!-- Equity Sectors Heatmap Grid -->
                 <div class="mb-4">
-                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Equity Sectors</h4>
-                    <div class="bg-[#0B1317] border border-[#1A2A30] rounded-lg overflow-hidden">
-                        <table class="w-full text-left border-collapse text-xs font-mono">
-                            <thead>
-                                <tr class="border-b border-[#1A2A30] bg-[#111A20] text-[#4A6A70] text-[9px] uppercase">
-                                    <th class="p-2.5 pl-3">Sector</th>
-                                    <th class="p-2.5 text-right">Price</th>
-                                    <th class="p-2.5 text-right">24H %</th>
-                                    <th class="p-2.5 text-right pr-3">Sent</th>
-                                </tr>
-                            </thead>
-                            <tbody>`;
-                            
-                            details.sectors.forEach(sec => {
-                                const priceStr = sec.price !== null ? `$${sec.price.toFixed(2)}` : '--';
-                                const changeStr = sec.change_percent !== null ? sec.change_percent.toFixed(2) + '%' : '--';
-                                const changeClass = sec.change_percent >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
-                                const arrow = sec.change_percent >= 0 ? '↗' : '↘';
-                                const changeBadge = sec.change_percent !== null ? `<span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-${sec.change_percent >= 0 ? '[#00E676]' : '[#FF5252]'}/10 ${changeClass}">${arrow} ${changeStr}</span>` : '--';
-                                
-                                const sentScore = sec.sentiment_score;
-                                const sentColor = sentScore > 0.05 ? 'text-[#00E676]' : (sentScore < -0.05 ? 'text-[#FF5252]' : 'text-[#FFD740]');
-                                const sentStr = sentScore > 0 ? '+' + sentScore.toFixed(2) : (sentScore < 0 ? sentScore.toFixed(2) : '0.00');
-                                
-                                html += `
-                                <tr class="border-b border-[#1A2A30]/50 hover:bg-[#16242C]/20 transition-colors">
-                                    <td class="p-2.5 pl-3 font-sans text-[#D6E5E3] font-medium text-[11px]">${sec.sector}</td>
-                                    <td class="p-2.5 text-right font-mono text-[#D6E5E3]">${priceStr}</td>
-                                    <td class="p-2.5 text-right font-mono">${changeBadge}</td>
-                                    <td class="p-2.5 text-right font-mono ${sentColor} pr-3">${sentStr}</td>
-                                </tr>`;
-                            });
-                            
-                            html += `
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Equity Sectors Performance Heatmap</h4>
+                    <div class="grid grid-cols-2 gap-2">`;
 
-                <!-- Country Top Stories -->
-                <div>
-                    <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Country Intel Stream</h4>
-                    <div class="flex flex-col gap-3">`;
+                    details.sectors.forEach(sec => {
+                        const priceStr = sec.price !== null ? `$${sec.price.toFixed(2)}` : '--';
+                        const changeStr = sec.change_percent !== null ? (sec.change_percent >= 0 ? '+' : '') + sec.change_percent.toFixed(2) + '%' : '--';
+                        const changeClass = sec.change_percent >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
                         
-                    if (articles.length === 0) {
-                        html += `<div class="text-center py-5 font-mono text-xs text-[#4A6A70] border border-dashed border-[#1A2A30] rounded-lg">No recent country stories.</div>`;
-                    } else {
-                        articles.forEach(art => {
-                            const score = art.sentiment_score !== null ? parseFloat(art.sentiment_score) : 0.0;
-                            const colorClass = score > 0.05 ? 'text-[#00E676] bg-[#00E676]/5' : (score < -0.05 ? 'text-[#FF5252] bg-[#FF5252]/5' : 'text-[#FFD740] bg-[#FFD740]/5');
-                            const scoreStr = score > 0 ? '+' + score.toFixed(2) : score.toFixed(2);
-                            
-                            html += `
-                            <div class="bg-[#0B1317] border border-[#1A2A30] p-3 rounded-lg flex flex-col gap-1.5 hover:border-[#00A6B2]/30 transition-all">
-                                <div class="flex items-center justify-between text-[9px] font-mono">
-                                    <span class="text-[#4A6A70]">${art.source_name || 'MIMIR Intel'}</span>
-                                    <span class="px-1.5 py-0.2 border border-[#1A2A30] rounded-full font-bold ${colorClass}">${scoreStr}</span>
-                                </div>
-                                <a href="${art.link || '#'}" target="_blank" class="text-[11px] font-medium text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-tight line-clamp-2">${art.title}</a>
-                            </div>`;
-                        });
-                    }
-                    
+                        let heatBg = 'bg-[#16242C]/10 border-[#1A2A30]';
+                        let heatBorder = 'border-[#1A2A30]';
+                        if (sec.change_percent > 0.05) {
+                            heatBg = 'bg-[#00E676]/5 hover:bg-[#00E676]/10';
+                            heatBorder = 'border-[#00E676]/25 hover:border-[#00E676]/50';
+                        } else if (sec.change_percent < -0.05) {
+                            heatBg = 'bg-[#FF5252]/5 hover:bg-[#FF5252]/10';
+                            heatBorder = 'border-[#FF5252]/25 hover:border-[#FF5252]/50';
+                        }
+                        
+                        const sentScore = sec.sentiment_score;
+                        const sentColor = sentScore > 0.05 ? 'text-[#00E676]' : (sentScore < -0.05 ? 'text-[#FF5252]' : 'text-[#FFD740]');
+                        const sentStr = sentScore > 0 ? '+' + sentScore.toFixed(2) : (sentScore < 0 ? sentScore.toFixed(2) : '0.00');
+
+                        html += `
+                        <div class="p-2 border rounded flex flex-col justify-between h-[65px] transition-all duration-200 ${heatBg} ${heatBorder}">
+                            <div class="flex items-center justify-between text-[9px] font-mono">
+                                <span class="font-bold text-[#D6E5E3] truncate max-w-[80px]" title="${sec.sector}">${sec.sector}</span>
+                                <span class="${changeClass} font-semibold">${changeStr}</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-1.5">
+                                <span class="text-xs font-mono font-bold text-[#D6E5E3]">${priceStr}</span>
+                                <span class="text-[9px] font-mono ${sentColor}">S:${sentStr}</span>
+                            </div>
+                        </div>`;
+                    });
+
                     html += `
                     </div>
                 </div>`;
-
-                body.innerHTML = html;
-
-            } else {
-                // Global or Region Stories list
-                let url = `/api/v1/articles?days=${currentDays}&sort=impact&limit=10`;
-                if (activeRegion) {
-                    url += `&region=${activeRegion}`;
-                }
-                const articlesRes = await fetch(url);
-                if (!articlesRes.ok) throw new Error("Failed to fetch articles");
-                const data = await articlesRes.json();
-                const articles = data.articles || [];
-
-                let html = `
-                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-4">
-                    <h3 class="font-bold text-[#D6E5E3] font-['JetBrains_Mono'] tracking-tight text-sm uppercase">
-                        ${activeRegion ? `Stories — ${activeRegion}` : 'Top Stories — Global'}
-                    </h3>
-                </div>
-                <div class="flex flex-col gap-4 max-h-[700px] overflow-y-auto pr-1">`;
-                
-                if (articles.length === 0) {
-                    html += `<div class="text-center py-10 font-mono text-xs text-[#4A6A70]">No recent high-impact stories found.</div>`;
-                } else {
-                    articles.forEach(art => {
-                        const score = art.sentiment_score !== null ? parseFloat(art.sentiment_score) : 0.0;
-                        const colorClass = score > 0.05 ? 'text-[#00E676] bg-[#00E676]/5 border-[#00E676]/20' : (score < -0.05 ? 'text-[#FF5252] bg-[#FF5252]/5 border-[#FF5252]/20' : 'text-[#FFD740] bg-[#FFD740]/5 border-[#FFD740]/20');
-                        const label = score > 0.05 ? 'Bullish' : (score < -0.05 ? 'Bearish' : 'Neutral');
-                        const scoreStr = score > 0 ? '+' + score.toFixed(2) : score.toFixed(2);
-                        
-                        html += `
-                        <div class="bg-[#0B1317] border border-[#1A2A30] hover:border-[#00A6B2]/50 p-4 rounded-lg flex flex-col gap-2 transition-all group duration-200">
-                            <div class="flex items-center justify-between text-[10px] font-mono">
-                                <span class="text-[#4A6A70]">${art.source_name || 'MIMIR Intel'}</span>
-                                <span class="px-2 py-0.5 border rounded-full font-bold ${colorClass}">${scoreStr} ${label}</span>
-                            </div>
-                            <a href="${art.link || '#'}" target="_blank" class="text-xs font-semibold text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-snug line-clamp-2">${art.title}</a>
-                            <p class="text-[11px] text-[#4A6A70] leading-relaxed line-clamp-3">${art.summary || ''}</p>
-                        </div>`;
-                    });
-                }
-                html += `</div>`;
-                body.innerHTML = html;
             }
+
+            html += `
+            <div>
+                <h4 class="text-[11px] font-mono text-[#4A6A70] uppercase tracking-wider mb-2">Geopolitical Intel Stream</h4>
+                <div class="flex flex-col gap-3">`;
+
+            if (articles.length === 0) {
+                html += `<div class="text-center py-5 font-mono text-xs text-[#4A6A70] border border-dashed border-[#1A2A30] rounded-lg">No recent high-impact stories.</div>`;
+            } else {
+                articles.forEach(art => {
+                    const score = art.sentiment_score !== null ? parseFloat(art.sentiment_score) : 0.0;
+                    const colorClass = score > 0.05 ? 'text-[#00E676] bg-[#00E676]/5 border-[#00E676]/20' : (score < -0.05 ? 'text-[#FF5252] bg-[#FF5252]/5 border-[#FF5252]/20' : 'text-[#FFD740] bg-[#FFD740]/5 border-[#FFD740]/20');
+                    const scoreStr = score > 0 ? '+' + score.toFixed(2) : score.toFixed(2);
+                    const label = score > 0.05 ? 'Bullish' : (score < -0.05 ? 'Bearish' : 'Neutral');
+
+                    html += `
+                    <div class="bg-[#0B1317] border border-[#1A2A30] hover:border-[#00A6B2]/40 p-3 rounded-lg flex flex-col gap-2 transition-all duration-200">
+                        <div class="flex items-center justify-between text-[9px] font-mono">
+                            <span class="text-[#4A6A70]">${art.source_name || 'MIMIR Intel'}</span>
+                            <span class="px-2 py-0.5 border rounded-full font-bold ${colorClass}">${scoreStr} ${label}</span>
+                        </div>
+                        <a href="${art.link || '#'}" target="_blank" class="text-[11px] font-semibold text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-tight line-clamp-2">${art.title}</a>
+                        ${art.summary ? `<p class="text-[10px] text-[#4A6A70] leading-relaxed line-clamp-2">${art.summary}</p>` : ''}
+                    </div>`;
+                });
+            }
+
+            html += `
+                </div>
+            </div>`;
+
+            body.innerHTML = html;
+
         } catch (err) {
             console.error("Error loading side panel:", err);
-            body.innerHTML = `<div class="text-center py-10 font-mono text-xs text-[#FF5252]">Error loading intelligence stream: ${err.message}</div>`;
+            body.innerHTML = `<div class="text-center py-10 font-mono text-xs text-[#FF5252]">Error loading situation room: ${err.message}</div>`;
         } finally {
             if (loader) loader.classList.add("hidden");
             if (body) body.classList.remove("hidden");
@@ -917,6 +1084,10 @@
                 updateSidePanel()
             ]);
             updateMapColors();
+            
+            // Fallback: Hide map loader if still active
+            const loader = document.getElementById("map-loader");
+            if (loader) loader.classList.add("opacity-0", "pointer-events-none");
         })();
     });
 </script>
