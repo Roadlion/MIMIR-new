@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio
+from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest
 from .config import get_settings
 
 settings = get_settings()
@@ -29,6 +29,7 @@ app.include_router(refresh.router, prefix="/api/v1", tags=["refresh"])
 app.include_router(taxonomy.router, prefix="/api/v1", tags=["taxonomy"])
 app.include_router(niche.router, prefix="/api/v1", tags=["niche"])
 app.include_router(portfolio.router, prefix="/api/v1", tags=["portfolio"])
+app.include_router(backtest.router)
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(BASE_DIR, "frontend", "static")

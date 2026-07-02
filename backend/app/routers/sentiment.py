@@ -907,8 +907,12 @@ Ensure the output is valid JSON, containing only the JSON structure.
         inserted_events = []
         for event in events[:6]:
             try:
-                event_time_str = event["event_time"]
+                # Create a savepoint for this iteration
+                cur.execute("SAVEPOINT event_insert_sp")
+                
+                event_time_str = event.get("event_time")
                 if not event.get("title") or not event_time_str:
+                    cur.execute("RELEASE SAVEPOINT event_insert_sp")
                     continue
                 
                 # Check for duplicates on the same day (case-insensitive title and date comparison)
@@ -920,7 +924,16 @@ Ensure the output is valid JSON, containing only the JSON structure.
                 
                 if cur.fetchone():
                     # Event already exists on this day, skip insertion
+                    cur.execute("RELEASE SAVEPOINT event_insert_sp")
                     continue
+                
+                # Check if source_article_id exists in mimir_raw_articles to prevent FK violation
+                source_id = event.get("source_article_id")
+                if source_id:
+                    cur.execute(f"SELECT 1 FROM {settings.mimir_schema}.mimir_raw_articles WHERE id = %s", (source_id,))
+                    if not cur.fetchone():
+                        # Set to None to prevent FK constraint failure
+                        source_id = None
                 
                 cur.execute(f"""
                     INSERT INTO {settings.mimir_schema}.mimir_upcoming_events 
@@ -933,12 +946,20 @@ Ensure the output is valid JSON, containing only the JSON structure.
                     event_time_str,
                     event.get("category", "OTHER"),
                     event.get("importance", "MEDIUM"),
-                    event.get("source_article_id")
+                    source_id
                 ))
                 row_id = cur.fetchone()["id"]
                 event["id"] = row_id
                 inserted_events.append(event)
+                
+                # Release the savepoint on success
+                cur.execute("RELEASE SAVEPOINT event_insert_sp")
             except Exception as ex:
+                # Rollback to the savepoint so subsequent commands in this transaction can run
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT event_insert_sp")
+                except Exception:
+                    pass
                 print(f"Skipping invalid event record: {event}. Error: {ex}")
                 continue
                 

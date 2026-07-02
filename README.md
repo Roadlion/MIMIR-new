@@ -1,6 +1,6 @@
 # 🌳 MIMIR: Market Intelligence & Macroeconomic Indicator Reactor
 
-Welcome to **MIMIR** (Market Intelligence & Macroeconomic Indicator Reactor), a real-time market intelligence pipeline, macroeconomic sentiment analyzer, and statistical arbitrage engine. 
+Welcome to **MIMIR** (Market Intelligence & Macroeconomic Indicator Reactor), a real-time market intelligence pipeline, macroeconomic sentiment analyzer, statistical arbitrage engine, and **quantitative strategy backtester**. 
 
 This document serves as a comprehensive developer guide and system documentation. It explains how the codebase is structured, how data flows, how the database schema works, how to use the APIs, and how future developers can seamlessly maintain, run, and expand MIMIR.
 
@@ -41,13 +41,22 @@ graph TD
     YF[Yahoo Finance API] -->|OHLCV Data| P_FETCH[background_worker.py / prices.py]
     P_FETCH -->|1m & 1h Candles| PRICE_DB[(yggdrasil.mimir_minute_ohlcv / mimir_hourly_ohlcv)]
     
+    %% Daily Aggregator View
+    PRICE_DB -->|Daily Aggregation| D_VIEW[v_mimir_daily_ohlcv]
+    
+    %% Vectorized Quant Backtester Engine
+    D_VIEW & IMP_DB & SOC_DB -->|Aligned Matrices| B_ENG[backtester.py]
+    PARS[expression_parser.py] -->|Compiled AST Operators| B_ENG
+    B_ENG -->|PnL & Diagnostics| HIST_DB[(yggdrasil.mimir_backtest_history)]
+
+    %% Stat Arbitrage (Guerilla Quant)
     PRICE_DB --> COINT[cointegration.py]
     IMP_DB --> HYB[guerilla_hybrid.py]
     COINT -->|Spread z-score| HYB
     HYB -->|Overlay Sentiment| SIG_DB[(yggdrasil.mimir_pair_signals)]
 
     %% Frontend API
-    API[FastAPI App] -->|Query DB| RAW_DB & IMP_DB & PRICE_DB & SIG_DB & SOC_DB
+    API[FastAPI App] -->|Query DB| RAW_DB & IMP_DB & PRICE_DB & SIG_DB & SOC_DB & HIST_DB
     API -->|Generate Advice| LLM
     Web[Browser / Frontend] -->|API Calls / HTML| API
 ```
@@ -127,6 +136,9 @@ Use the provided scripts to initialize the database:
 python scripts/seed_niche_assets.py
 python scripts/seed_asset_relationships.py
 python scripts/backfill_hourly_ohlcv.py
+
+# Backfill dynamic tickers (run in background to download price history for sentiment tickers)
+python scripts/backfill_dynamic_tickers_hourly.py
 ```
 
 ### 5. Running the Application
@@ -148,7 +160,12 @@ Below is the directory structure, which makes it easy to understand where featur
 * **`database.py`**: Connection pool logic returning `RealDictCursor` or standard tuples.
 * **`config.py`**: Configuration loader using `pydantic-settings`.
 
+### 📁 Quantitative Analytics (`backend/app/analytics/`)
+* **`expression_parser.py`**: A secure AST (Abstract Syntax Tree) compiler that translates algebraic/functional formula strings into vectorized Pandas expressions. Supports multi-line assignments, conditional ternary selections (`if_else`), comparison operators, cross-sectional rankings, time-series linear decay, rolling covariance, etc.
+* **`backtester.py`**: A vectorized simulation engine that aligns price and sentiment matrices, handles holding period weight decay, applies transaction slippage fees, filters universe by regional exchanges, and calculates diagnostics (Sharpe, win rate, turnover, IC, drawdowns, fitness).
+
 ### 📁 Routers (`backend/app/routers/`)
+* **`backtest.py`**: Router for executing strategy simulations (`POST /run`) and querying previous strategy histories (`GET /history`).
 * **`articles.py`**: Endpoints for paginated news filtering.
 * **`prices.py`**: API for historical candles, heatmaps, and ticker searches.
 * **`sentiment.py`**: Endpoints aggregating geopolitical and macro sentiment.
@@ -158,14 +175,14 @@ Below is the directory structure, which makes it easy to understand where featur
 * **`refresh.py`**: Server-Sent Events (SSE) stream for manual pipeline triggering.
 
 ### 📁 Data Pipelines (`backend/app/pipeline/`)
-* **`background_worker.py`**: Spawns asynchronous loops running every 5 minutes (Price scraping and News scraping).
+* **`background_worker.py`**: Spawns loops running every 5 minutes (Price and News scraping).
 * **`sentiment_processor.py`**: Batches pending articles and dispatches them to DeepSeek.
 * **`spillover_engine.py`**: Graph-based engine propagating direct sentiment scores to related asset nodes based on decay factors.
 
 ### 📁 Natural Language Processing (`backend/app/sentiment/`)
 * **`deepseek_client.py`**: Formulates system prompts and parses LLM JSON outputs.
 * **`asset_mapper.py`**: Normalizes and maps string entities to proper financial tickers.
-* **`thematic_detector.py`**: Scans texts for macro themes (e.g., rate cuts, tariffs) to trigger thematic spillovers.
+* **`thematic_detector.py`**: Scans texts for macro themes to trigger thematic spillovers.
 
 ---
 
@@ -183,131 +200,110 @@ Holds individual sentiment scores extracted by the LLM.
 
 ### 3. `mimir_portfolio` (Shadow Portfolio Ledger)
 Stores user transaction details with P&L capabilities.
-* **Columns**: 
-  - `id (SERIAL)`
-  - `ticker (VARCHAR)`
-  - `order_date (TIMESTAMPTZ)`
-  - `buy_price (NUMERIC)` - Represents execution price.
-  - `quantity (NUMERIC)`
-  - `transaction_type (VARCHAR)` - Enforces `BUY` or `SELL` constraints.
+* **Columns**: `id (SERIAL)`, `ticker (VARCHAR)`, `order_date (TIMESTAMPTZ)`, `buy_price (NUMERIC)`, `quantity (NUMERIC)`, `transaction_type (VARCHAR)`.
 
-### 4. `mimir_pair_signals` & Price Tables
-* `mimir_pair_signals`: Tracks quantitative statistical arbitrage opportunities (z-scores).
-* `mimir_hourly_ohlcv` & `mimir_minute_ohlcv`: Stores OHLCV tick data. `mimir_minute_ohlcv` relies on TimescaleDB for automated data retention and compression.
+### 4. `mimir_backtest_history`
+Stores quant strategy backtest execution logs and results.
+* **Columns**: `id (SERIAL)`, `formula (TEXT)`, `universe`, `style`, `start_date`, `end_date`, `holding_period`, `slippage_bps`, `portfolio_size`, `markets (TEXT[])`, `sharpe`, `annualized_return`, `max_drawdown`, `turnover`, `fitness`, `win_rate`, `ic`, `created_at`.
+
+### 5. `v_mimir_daily_ohlcv` (Daily View)
+Aggregates hourly candle rows into daily open, high, low, close, and volume bars for all tickers.
 
 ---
 
 ## 🔌 API Usage Guide & Examples
 
-Future developers can easily build external integrations using MIMIR's REST APIs.
-
-### 1. Fetch Portfolio & P&L Summary
-**Endpoint:** `GET /api/v1/portfolio`
-**Response:**
-```json
-{
-  "holdings": {
-    "AAPL": {
-      "ticker": "AAPL",
-      "quantity": 15.0,
-      "avg_buy_price": 145.20,
-      "current_price": 175.50,
-      "total_cost": 2178.00,
-      "current_value": 2632.50,
-      "profit_loss": 454.50,
-      "profit_loss_pct": 20.86,
-      "realized_pl": 120.00,
-      "transactions": [...]
-    }
-  },
-  "total_cost": 2178.0,
-  "total_value": 2632.50,
-  "total_profit_loss": 454.50,
-  "total_realized_pl": 120.00,
-  "grand_total_pl": 574.50
-}
-```
-
-### 2. Log a Shadow Portfolio Transaction
-**Endpoint:** `POST /api/v1/portfolio`
+### 1. Simulate a Quant Strategy
+**Endpoint:** `POST /api/v1/backtest/run`  
 **Payload:**
 ```json
 {
-  "ticker": "AAPL",
-  "buy_price": 150.0,
-  "quantity": 10.0,
-  "transaction_type": "SELL",
-  "order_date": "2026-07-02T10:00:00"
+  "formula": "z_score = ts_zscore(sentiment, 20);\nspike = if_else(z_score > 1.5, sentiment, 0.0);\nneutralize(scale(spike))",
+  "start_date": "2025-06-01",
+  "end_date": "2026-06-30",
+  "universe": "core",
+  "style": "long_short",
+  "holding_period": 3,
+  "slippage_bps": 5.0,
+  "markets": ["us", "crypto"]
 }
 ```
-*(Note: Attempting to SELL more shares than actively held will return an HTTP 400 Validation Error).*
-
-### 3. Fetch News Articles (With Sentiment)
-**Endpoint:** `GET /api/v1/articles?ticker=NVDA&limit=5`
 **Response:**
 ```json
 {
-  "items": [
-    {
-      "id": 1024,
-      "title": "Nvidia Announces New Superchip",
-      "published_ts": "2026-07-02T08:00:00Z",
-      "sentiment_score": 0.85,
-      "impacts": [...]
-    }
+  "metrics": {
+    "sharpe": 0.92,
+    "annualized_return": 5.62,
+    "max_drawdown": -5.73,
+    "turnover": 29.54,
+    "win_rate": 39.9,
+    "ic": 0.0086,
+    "fitness": 0.74
+  },
+  "chart": [
+    { "date": "2025-06-01", "strategy": 100.0, "benchmark": 100.0, "drawdown": 0.0 },
+    ...
   ],
-  "total": 42
+  "trades": [
+    { "date": "2026-06-30", "ticker": "AAPL", "action": "Rebalance Long", "weight": 2.5, "price": 286.20 },
+    ...
+  ]
 }
+```
+
+### 2. Fetch Backtest History List
+**Endpoint:** `GET /api/v1/backtest/history`  
+**Response:**
+```json
+[
+  {
+    "id": 44,
+    "formula": "raw = -ts_rank(returns, 10);\nts_decay_linear(raw, 5)",
+    "universe": "core",
+    "style": "long_short",
+    "start_date": "2025-06-01",
+    "end_date": "2026-06-30",
+    "holding_period": 2,
+    "slippage_bps": 5.0,
+    "markets": ["us"],
+    "sharpe": -0.71,
+    "annualized_return": -6.71,
+    "max_drawdown": -12.18,
+    "turnover": 44.52,
+    "fitness": -0.42,
+    "win_rate": 42.1,
+    "ic": -0.0041,
+    "created_at": "2026-07-02 19:29:49"
+  }
+]
 ```
 
 ---
 
 ## 🛠️ How to Further Develop MIMIR
 
-MIMIR is designed to be highly modular. Here is how you can easily extend it:
+### 1. Adding a New Mathematical Operator to the Formula Parser
+To introduce a new WorldQuant operator (e.g. `ts_min` or a custom metric):
+1. Open `backend/app/analytics/expression_parser.py`.
+2. Map your operator name in `_eval_function()`.
+3. Write the vectorized Pandas or NumPy rolling logic.
+4. Add the operator notation to the HTML cheat sheet in `frontend/templates/backtest.html`.
 
-### 1. Adding a New UI Web Page
-1. Create your HTML template in `frontend/templates/` (e.g. `calendar.html`), extending `base.html`.
-2. Add a rendering route in `backend/app/main.py`:
-   ```python
-   @app.get("/calendar", response_class=HTMLResponse)
-   async def calendar_page(request: Request):
-       return templates.TemplateResponse(request, "calendar.html")
-   ```
-
-### 2. Extending the AI Sentiment Analysis
-To add new analytical dimensions (e.g., extracting "regulatory risk"):
-1. Modify the system prompt located in `backend/app/sentiment/deepseek_client.py`.
-2. Add the corresponding columns to the `mimir_sentiment_impacts` SQL table.
-3. Update `sentiment_processor.py` to map the new JSON field into the SQL `INSERT` statement.
-
-### 3. Adding New RSS Scraper Targets
-1. Open `backend/app/scrapers/rss_scraper.py`.
-2. Append your feed URL to the `FINANCIAL_RSS_FEEDS` list. The background worker will automatically pick it up on the next cycle.
-
-### 4. Adding Macro Thematic Triggers
-To implement spillovers based on global events (like an "AI Boom" or "Rate Cut"):
-1. Open `backend/app/sentiment/thematic_detector.py`.
-2. Add a dictionary pattern into the `THEMATIC_PATTERNS` array:
-   ```python
-   {
-       "patterns": [r"\b(?:ai\s+infrastructure|data\s+center\s+demand)\b"],
-       "theme": "ai_boom",
-       "decay": 0.25,
-       "direction_override": None,
-       "affected": ["NVDA", "AMD", "SMCI"]
-   }
-   ```
+### 2. Exposing New Input Data Fields
+If you add new time-series data tables to the database (e.g., *fundamental ratios* or *analyst target changes*):
+1. Load and pivot the raw data inside `BacktestEngine.load_data()` in `backtester.py`.
+2. Add the resulting DataFrame to the `self.dfs` registry (e.g., `self.dfs['pe_ratio'] = pivoted_pe_ratio`).
+3. The parser will automatically recognize `pe_ratio` as an active variable in expressions.
 
 ---
 
 ## 💡 Troubleshooting & Notes
 
-* **YFinance Rate Limiting (`401 Unauthorized` / Crumb Errors):** MIMIR bypasses caching issues by aggressively spoofing headers and maintaining volatile sessions using `curl_cffi` within `prices.py`. Ensure `curl_cffi` is properly installed if price fetches suddenly stop.
-* **Negative Quantity Sales Rejected:** The system strictly calculates active positions. You cannot record a `SELL` transaction if it exceeds your accumulated `BUY` shares for a given ticker.
-* **Sentiment Decay:** Real-time sentiment uses a time-decay factor (Half-life: 12 hours for news, 6 hours for social media) to ensure that the dashboard represents the *current* market regime rather than historical baggage.
+* **YFinance Rate Limiting:** MIMIR bypasses caching issues by spoofing headers and maintaining sessions using `curl_cffi` within `prices.py`.
+* **Negative Quantity Sales Rejected:** The system strictly calculates active positions. You cannot record a `SELL` transaction if it exceeds your accumulated `BUY` shares.
+* **Sentiment Decay:** Real-time sentiment uses a time-decay factor (Half-life: 12 hours for news, 6 hours for social media) to ensure that the dashboard represents the *current* market regime.
 
 ---
 
-**MIMIR: The tree watches.** 
-For any major architectural questions, consult the underlying Python scripts inside `backend/app/pipeline/` or review the logs outputted via the background threads.
+**MIMIR: The tree watches.**  
+For major architectural questions, consult the underlying Python scripts inside `backend/app/pipeline/` or review the logs outputted via the background threads.
