@@ -21,9 +21,32 @@ from curl_cffi.requests import Session
 from psycopg2.extras import execute_values, RealDictCursor
 from ..database import get_db_connection_dict, get_db_connection
 from ..config import get_settings
+import asyncio
+import time
 
 router = APIRouter()
 settings = get_settings()
+
+_ticker_changes_cache = {}
+CACHE_TTL_SECONDS = 300
+
+
+# Thread-local curl_cffi sessions — one per thread, reused across fetches
+import threading as _thr
+_tls = _thr.local()
+
+
+def _get_tls_session():
+    if not hasattr(_tls, 'session'):
+        sess = Session(impersonate="chrome")
+        sess.verify = False
+        sess.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        _tls.session = sess
+    return _tls.session
 
 DEFAULT_TICKERS = [
     # Stock Indices
@@ -53,13 +76,7 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
     ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
     print(f"[YFINANCE] Starting fetch for {ticker_symbol}...")
     try:
-        session = Session(impersonate="chrome")
-        session.verify = False
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
+        session = _get_tls_session()
         ticker = yf.Ticker(ticker_symbol, session=session)
         # Fetch 7d hourly data
         df = ticker.history(period="7d", interval="1h")
@@ -123,13 +140,7 @@ def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
     ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
     print(f"[YFINANCE] Starting daily fetch for {ticker_symbol} (1y)...")
     try:
-        session = Session(impersonate="chrome")
-        session.verify = False
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
+        session = _get_tls_session()
         ticker = yf.Ticker(ticker_symbol, session=session)
         df = ticker.history(period="1y", interval="1d")
         time.sleep(0.5)
@@ -285,7 +296,7 @@ def get_ticker_price_data(ticker_symbol: str, conn):
     }
 
 @router.get("/prices/ticker-changes")
-async def get_ticker_changes(tickers: Optional[str] = Query(None)):
+def get_ticker_changes(tickers: Optional[str] = Query(None)):
     """
     Get current price and 24h change percentage for specified tickers.
     If no tickers are provided, returns default list.
@@ -295,6 +306,13 @@ async def get_ticker_changes(tickers: Optional[str] = Query(None)):
     if tickers:
         ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
         
+    cache_key = tuple(ticker_list)
+    now = time.time()
+    if cache_key in _ticker_changes_cache:
+        ts, cached_data = _ticker_changes_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
@@ -376,10 +394,12 @@ async def get_ticker_changes(tickers: Optional[str] = Query(None)):
                 "change_percent": round(change_percent, 2)
             })
             
-    return {"tickers": results}
+    response_data = {"tickers": results}
+    _ticker_changes_cache[cache_key] = (now, response_data)
+    return response_data
 
 @router.get("/prices/candles")
-async def get_candles(
+def get_candles(
     ticker: str,
     interval: str = Query("1h", pattern="^(1m|5m|15m|30m|1h|4h|1d)$"),
     days: int = Query(7, ge=1, le=365)
@@ -557,20 +577,38 @@ async def get_candles(
     for c in candles:
         c_time = make_naive(c["time"])
         
-        # 24 hour rolling window
-        window_start = c_time - timedelta(hours=24)
-        scores_in_window = [s["score"] for s in parsed_sent if window_start <= s["time"] <= c_time]
+        # Consider all sentiments up to this candle
+        prior_sent = [s for s in parsed_sent if s["time"] <= c_time]
         
-        if scores_in_window:
-            current_sentiment = sum(scores_in_window) / len(scores_in_window)
-        else:
-            # Fallback to the latest score prior to c_time
-            prior_scores = [s["score"] for s in parsed_sent if s["time"] <= c_time]
-            if prior_scores:
-                current_sentiment = prior_scores[-1]
+        if prior_sent:
+            # Only consider news within the last 72 hours for decay relevance and performance
+            recent_sent = [s for s in prior_sent if (c_time - s["time"]) <= timedelta(hours=72)]
+            
+            if recent_sent:
+                weighted_sum = 0.0
+                weight_total = 0.0
+                max_weight = 0.0
+                half_life_hours = 24.0
+                
+                for s in recent_sent:
+                    dt_hours = (c_time - s["time"]).total_seconds() / 3600.0
+                    weight = 2 ** (-dt_hours / half_life_hours)
+                    weighted_sum += s["score"] * weight
+                    weight_total += weight
+                    if weight > max_weight:
+                        max_weight = weight
+                
+                if weight_total > 0:
+                    weighted_avg = weighted_sum / weight_total
+                    # Scale by max_weight so that the sentiment decays to 0 if the latest news gets old
+                    current_sentiment = weighted_avg * max_weight
+                else:
+                    current_sentiment = 0.0
             else:
                 current_sentiment = 0.0
-                
+        else:
+            current_sentiment = 0.0
+            
         candles_list.append({
             "time": c["time"],
             "open": float(c["open"]) if c["open"] is not None else 0.0,
@@ -592,7 +630,7 @@ async def get_candles(
 _ticker_info_cache = {}
 
 @router.get("/prices/logos")
-async def get_ticker_logos(tickers: str = Query(...)):
+def get_ticker_logos(tickers: str = Query(...)):
     """
     Get logo URLs and short names for the given comma-separated tickers.
     Results are cached in memory to avoid redundant yfinance calls.
@@ -1017,7 +1055,7 @@ _heatmap_cache = {}  # {index_key: {"data": [...], "fetched_at": datetime}}
 HEATMAP_CACHE_TTL_MINUTES = 15
 
 @router.get("/prices/heatmap")
-async def get_heatmap(index: str = Query("sp500")):
+def get_heatmap(index: str = Query("sp500")):
     """
     Returns constituent stock data for the specified index for heatmap rendering.
     Data is cached for 15 minutes to avoid excessive yfinance calls.
@@ -1219,7 +1257,7 @@ async def get_heatmap(index: str = Query("sp500")):
     }
 
 @router.get("/prices/search")
-async def search_tickers(q: str = Query(..., min_length=1)):
+def search_tickers(q: str = Query(..., min_length=1)):
     """
     Search for tickers by name or symbol using yfinance.
     Returns up to 8 matching results with ticker, logo_url, and long_name.
@@ -1251,7 +1289,7 @@ _ticker_details_cache = {}  # {ticker_symbol: {"data": ..., "fetched_at": dateti
 DETAILS_CACHE_TTL_MINUTES = 10
 
 @router.get("/prices/ticker-details/{ticker}")
-async def get_ticker_details(ticker: str, nocache: bool = False):
+def get_ticker_details(ticker: str, nocache: bool = False):
     ticker_symbol = ticker.strip().upper().lstrip('$')
     now = datetime.now(timezone.utc)
     
@@ -1503,7 +1541,7 @@ async def get_ticker_details(ticker: str, nocache: bool = False):
         # Get overall sentiment (unifying news and social chatter)
         cur.execute("""
             SELECT weighted_score 
-            FROM yggdrasil.mimir_weighted_sentiment(p_ticker := %s)
+            FROM yggdrasil.mimir_weighted_sentiment(p_ticker := %s::TEXT)
         """, (ticker_symbol,))
         avg_row = cur.fetchone()
         if avg_row and avg_row["weighted_score"] is not None:

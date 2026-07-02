@@ -38,8 +38,8 @@
             
             <!-- Timeframe selector -->
             <div class="flex items-center gap-1 bg-[#111A20] border border-[#1A2A30] p-0.5 rounded text-xs font-mono">
-                <button id="tf-24h" onclick="changeTimeframe(1, this)" class="timeframe-btn px-2.5 py-1 rounded text-[#4A6A70] hover:text-[#D6E5E3] transition-colors">24H</button>
-                <button id="tf-7d" onclick="changeTimeframe(7, this)" class="timeframe-btn px-2.5 py-1 rounded bg-[#1A2A30] text-[#00A6B2] font-semibold transition-colors">7D</button>
+                <button id="tf-24h" onclick="changeTimeframe(1, this)" class="timeframe-btn px-2.5 py-1 rounded bg-[#1A2A30] text-[#00A6B2] font-semibold transition-colors">24H</button>
+                <button id="tf-7d" onclick="changeTimeframe(7, this)" class="timeframe-btn px-2.5 py-1 rounded text-[#4A6A70] hover:text-[#D6E5E3] transition-colors">7D</button>
                 <button id="tf-30d" onclick="changeTimeframe(30, this)" class="timeframe-btn px-2.5 py-1 rounded text-[#4A6A70] hover:text-[#D6E5E3] transition-colors">30D</button>
             </div>
         </div>
@@ -142,7 +142,7 @@
 {% block scripts %}
 <script>
     // State management
-    let currentDays = 7;
+    let currentDays = 1;
     let regionSentimentData = {};
     let countrySentimentData = {};
     let am5Root = null;
@@ -582,11 +582,14 @@
                         ✕ Clear
                     </button>`;
 
-                const detailsRes = await fetch(`/api/v1/countries/${activeCountry}/details?days=${currentDays}`);
+                const [detailsRes, articlesRes] = await Promise.all([
+                    fetch(`/api/v1/countries/${activeCountry}/details?days=${currentDays}`),
+                    fetch(`/api/v1/articles?country=${activeCountry}&days=${currentDays}&sort=impact&limit=3`)
+                ]);
+                
                 if (!detailsRes.ok) throw new Error("Failed to fetch country details");
                 details = await detailsRes.json();
 
-                const articlesRes = await fetch(`/api/v1/articles?country=${activeCountry}&days=${currentDays}&sort=impact&limit=3`);
                 if (articlesRes.ok) {
                     const articlesData = await articlesRes.json();
                     articles = articlesData.articles || [];
@@ -600,23 +603,30 @@
                         ✕ Clear
                     </button>`;
 
-                const detailsRes = await fetch(`/api/v1/regions/${activeRegion}/details?days=${currentDays}`);
+                const [detailsRes, articlesRes] = await Promise.all([
+                    fetch(`/api/v1/regions/${activeRegion}/details?days=${currentDays}`),
+                    fetch(`/api/v1/articles?region=${activeRegion}&days=${currentDays}&sort=impact&limit=3`)
+                ]);
+
                 if (!detailsRes.ok) throw new Error("Failed to fetch region details");
                 details = await detailsRes.json();
 
-                const articlesRes = await fetch(`/api/v1/articles?region=${activeRegion}&days=${currentDays}&sort=impact&limit=3`);
                 if (articlesRes.ok) {
                     const articlesData = await articlesRes.json();
                     articles = articlesData.articles || [];
                 }
             } else {
-                const articlesRes = await fetch(`/api/v1/articles?days=${currentDays}&sort=impact&limit=5`);
+                const [articlesRes, summaryRes, priceRes] = await Promise.all([
+                    fetch(`/api/v1/articles?days=${currentDays}&sort=impact&limit=5`),
+                    fetch(`/api/v1/summary?days=${currentDays}`),
+                    fetch(`/api/v1/prices/ticker-changes?tickers=SPY,^STOXX50E,^N225,^FTSE,DX-Y.NYB,EURUSD=X,USDJPY=X,GBPUSD=X`)
+                ]);
+                
                 if (articlesRes.ok) {
                     const articlesData = await articlesRes.json();
                     articles = articlesData.articles || [];
                 }
 
-                const summaryRes = await fetch(`/api/v1/summary?days=${currentDays}`);
                 let globalSentiment = 0.0;
                 let globalArticleCount = 0;
                 if (summaryRes.ok) {
@@ -625,7 +635,6 @@
                     globalArticleCount = summaryData.total_articles || 0;
                 }
 
-                const priceRes = await fetch(`/api/v1/prices/ticker-changes?tickers=SPY,^STOXX50E,^N225,^FTSE,DX-Y.NYB,EURUSD=X,USDJPY=X,GBPUSD=X`);
                 let priceMap = {};
                 if (priceRes.ok) {
                     const priceData = await priceRes.json();
@@ -1053,16 +1062,20 @@
         buttonEl.classList.add("bg-[#1A2A30]", "text-[#00A6B2]", "font-semibold");
         buttonEl.classList.remove("text-[#4A6A70]");
         
-        // Reload data
-        await Promise.all([
-            loadSummaryMetrics(days, activeRegion, activeCountry),
-            loadCountrySentiment(days),
-            loadRegionalSentiment(days),
-            updateSidePanel()
-        ]);
+        // Load map specific data first and color the map without waiting for side panel
+        try {
+            await Promise.all([
+                loadSummaryMetrics(days, activeRegion, activeCountry),
+                loadCountrySentiment(days),
+                loadRegionalSentiment(days)
+            ]);
+            updateMapColors();
+        } catch (e) {
+            console.error("Error loading map data:", e);
+        }
         
-        // Paint the map polygons
-        updateMapColors();
+        // Load side panel asynchronously
+        updateSidePanel().catch(e => console.error("Error loading side panel:", e));
         
         // Hide map loader
         if (loader) {
@@ -1077,17 +1090,22 @@
         
         // Initial load
         (async () => {
-            await Promise.all([
-                loadSummaryMetrics(currentDays, activeRegion, activeCountry),
-                loadCountrySentiment(currentDays),
-                loadRegionalSentiment(currentDays),
-                updateSidePanel()
-            ]);
-            updateMapColors();
+            try {
+                await Promise.all([
+                    loadSummaryMetrics(currentDays, activeRegion, activeCountry),
+                    loadCountrySentiment(currentDays),
+                    loadRegionalSentiment(currentDays)
+                ]);
+                updateMapColors();
+            } catch (e) {
+                console.error("Error during initial data load:", e);
+            }
             
             // Fallback: Hide map loader if still active
             const loader = document.getElementById("map-loader");
             if (loader) loader.classList.add("opacity-0", "pointer-events-none");
+            
+            updateSidePanel().catch(e => console.error("Error loading side panel on init:", e));
         })();
     });
 </script>

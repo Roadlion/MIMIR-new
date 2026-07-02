@@ -28,6 +28,22 @@ from ..sentiment.deepseek_client import DeepSeekSentiment
 
 settings = get_settings()
 
+# Thread-local curl_cffi sessions — one per thread, reused across ticker fetches
+_tls = threading.local()
+
+
+def _get_tls_session():
+    if not hasattr(_tls, 'session'):
+        sess = Session(impersonate="chrome")
+        sess.verify = False
+        sess.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        _tls.session = sess
+    return _tls.session
+
 # Pathing for subprocess execution
 ROUTER_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -35,184 +51,85 @@ PUSH_TO_DB_PATH = os.path.join(PROJECT_ROOT, "scripts", "push_to_db.py")
 PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline copy.py")
 SCRAPE_SOCIAL_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_social.py")
 
-def fetch_and_cache_minute_ticker(ticker_symbol: str, conn=None):
-    """Fetches 1d of 1-minute interval history and caches it in SQL."""
-    ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
-    try:
-        session = Session(impersonate="chrome")
-        session.verify = False
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
-        ticker = yf.Ticker(ticker_symbol, session=session)
-        df = ticker.history(period="1d", interval="1m")
-        time.sleep(0.3)
-
-        if df is None or df.empty:
-            return False
-            
-        records = []
-        for index, row in df.iterrows():
-            ts = index.to_pydatetime()
-            open_val = float(row["Open"])
-            high_val = float(row["High"])
-            low_val = float(row["Low"])
-            close_val = float(row["Close"])
-            volume_val = int(row["Volume"]) if "Volume" in row else 0
-            records.append((ticker_symbol, ts, open_val, high_val, low_val, close_val, volume_val))
-            
-        if not records:
-            return False
-            
-        # Open DB connection ONLY when inserting
-        close_conn = False
-        if conn is None:
-            conn = get_db_connection()
-            close_conn = True
-        try:
-            cur = conn.cursor()
-            sql = f"""
-            INSERT INTO {settings.mimir_schema}.mimir_minute_ohlcv (ticker, timestamp, open, high, low, close, volume)
-            VALUES %s
-            ON CONFLICT (ticker, timestamp) DO UPDATE 
-            SET open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                scraped_at = NOW();
-            """
-            execute_values(cur, sql, records)
-            conn.commit()
-            cur.close()
-            return True
-        finally:
-            if close_conn and conn:
-                conn.close()
-    except Exception as e:
-        print(f"[BG_WORKER] Error caching minute OHLCV for {ticker_symbol}: {e}")
-        return False
+PRICE_FETCH_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_price_fetch.py")
 
 def run_price_fetch_cycle():
-    """Gathers all active tickers and fetches their 1-minute prices concurrently."""
-    print(f"[BG_WORKER] Starting 1-minute price fetch cycle at {datetime.now()}")
-    
-    # Combine static and dynamic tickers
-    tickers_to_fetch = list(DEFAULT_TICKERS)
+    """Runs the price fetcher as a separate subprocess to avoid GIL contention."""
+    print(f"[BG_WORKER] Spawning price fetch subprocess at {datetime.now()}")
+    env = _subprocess_env()
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        # Join with mimir_raw_articles to only fetch tickers active in the last 12 hours
-        cur.execute(f"""
-            SELECT DISTINCT i.ticker 
-            FROM {settings.mimir_schema}.mimir_sentiment_impacts i
-            JOIN {settings.mimir_schema}.mimir_raw_articles a ON i.article_id = a.id
-            WHERE i.ticker IS NOT NULL
-              AND a.published_ts >= NOW() - INTERVAL '12 hours'
-        """)
-        impact_tickers = [row[0] for row in cur.fetchall()]
-        
-        # Query portfolio tickers
-        try:
-            cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE ticker IS NOT NULL")
-            portfolio_tickers = [row[0] for row in cur.fetchall()]
-        except Exception:
-            portfolio_tickers = []
-            
-        cur.close()
-        conn.close()
-        
-        combined = set(tickers_to_fetch + impact_tickers + portfolio_tickers)
-        cleaned = []
-        for t in combined:
-            if not t:
-                continue
-            symbol = t.strip().lstrip('$').upper()
-            # Filter out mutual funds (starting with 0P, or containing/ending with .F)
-            if symbol.startswith('0P') or '.F' in symbol or symbol.endswith('.F'):
-                continue
-            # Filter out garbage hallucinations
-            if len(symbol) > 10:
-                continue
-            # Only keep alphanumeric characters plus ^, =, ., -
-            if not all(c.isalnum() or c in '^=.-' for c in symbol):
-                continue
-            cleaned.append(symbol)
-        tickers_to_fetch = sorted(list(set(cleaned)))
+        res = subprocess.run([sys.executable, PRICE_FETCH_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            print(f"[BG_WORKER] Price fetch subprocess failed: {res.stderr}")
+        else:
+            print("[BG_WORKER] Price fetch subprocess completed successfully.")
     except Exception as e:
-        print(f"[BG_WORKER] Error gathering tickers: {e}")
-        
-    if not tickers_to_fetch:
-        return
-        
-    print(f"[BG_WORKER] Fetching 1-minute prices for {len(tickers_to_fetch)} tickers...")
-    max_workers = min(len(tickers_to_fetch), 5)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        executor.map(lambda t: fetch_and_cache_minute_ticker(t, None), tickers_to_fetch)
-        
-    # Manual retention cleanup (failsafe if TimescaleDB extension is missing)
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_minute_ohlcv WHERE timestamp < NOW() - INTERVAL '14 days'")
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("[BG_WORKER] Cleaned up minute-level records older than 14 days.")
-    except Exception as e:
-        print(f"[BG_WORKER] Retention cleanup error: {e}")
-        
-    print(f"[BG_WORKER] 1-minute price fetch cycle completed.")
+        print(f"[BG_WORKER] Error spawning price fetch subprocess: {e}")
 
-def run_news_and_sentiment_cycle():
-    """Runs push_to_db.py followed by run_full_pipeline copy.py sequentially in a background thread."""
-    print(f"[BG_WORKER] Starting breaking news & sentiment loop at {datetime.now()}")
+def _subprocess_env():
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    
-    # 1. Scrape articles
+    return env
+
+
+def run_scrape_cycle():
+    """Lightweight: scrapes fresh articles and social chatter. No LLM calls."""
+    print(f"[BG_WORKER] Starting scrape cycle at {datetime.now()}")
+    env = _subprocess_env()
+
+    # 1. Scrape articles (RSS + NewsAPI + GNews)
     try:
         print("[BG_WORKER] Executing news scraper (push_to_db.py)...")
-        res = subprocess.run([sys.executable, PUSH_TO_DB_PATH], env=env, cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        res = subprocess.run([sys.executable, PUSH_TO_DB_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
         if res.returncode != 0:
             print(f"[BG_WORKER] News scraper failed: {res.stderr}")
         else:
             print("[BG_WORKER] News scraping completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running news scraper: {e}")
-        
-    # 2. Run sentiment pipeline
-    try:
-        print("[BG_WORKER] Executing sentiment pipeline (run_full_pipeline copy.py)...")
-        res = subprocess.run([sys.executable, PIPELINE_PATH], env=env, cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
-            print(f"[BG_WORKER] Sentiment pipeline failed: {res.stderr}")
-        else:
-            print("[BG_WORKER] Sentiment pipeline completed successfully.")
-    except Exception as e:
-        print(f"[BG_WORKER] Error running sentiment pipeline: {e}")
-        
-    # 2.5 Run social sentiment scraper (Option B)
+
+    # 2. Social sentiment scraper (Reddit RSS + DeepSeek)
     try:
         print("[BG_WORKER] Executing social sentiment scraper (scrape_social.py)...")
-        res = subprocess.run([sys.executable, SCRAPE_SOCIAL_PATH], env=env, cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        res = subprocess.run([sys.executable, SCRAPE_SOCIAL_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
         if res.returncode != 0:
             print(f"[BG_WORKER] Social scraper failed: {res.stderr}")
         else:
             print("[BG_WORKER] Social scraping completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running social scraper: {e}")
-        
-    # 3. Run Guerilla Quant niche scan
+
+    print(f"[BG_WORKER] Scrape cycle completed.")
+
+
+def run_sentiment_cycle():
+    """Heavy: LLM sentiment pipeline, niche scan, relationship graph. Runs less often."""
+    print(f"[BG_WORKER] Starting sentiment pipeline at {datetime.now()}")
+    env = _subprocess_env()
+
+    # 1. Score pending articles via DeepSeek (the expensive part)
+    try:
+        print("[BG_WORKER] Executing sentiment pipeline (run_full_pipeline copy.py)...")
+        res = subprocess.run([sys.executable, PIPELINE_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            print(f"[BG_WORKER] Sentiment pipeline failed: {res.stderr}")
+        else:
+            print("[BG_WORKER] Sentiment pipeline completed successfully.")
+    except Exception as e:
+        print(f"[BG_WORKER] Error running sentiment pipeline: {e}")
+
+    # 2. Guerilla Quant niche scan
     try:
         run_niche_scan()
     except Exception as e:
         print(f"[BG_WORKER] Error running niche scan: {e}")
 
-    # 4. Refresh relationship graph (for spillover engine)
+    # 3. Refresh relationship graph (for spillover engine)
     try:
         from backend.app.sentiment.relationship_graph import refresh_relationship_graph
         n = refresh_relationship_graph()
@@ -221,7 +138,14 @@ def run_news_and_sentiment_cycle():
     except Exception as e:
         print(f"[BG_WORKER] Relationship graph refresh skipped: {e}")
 
-    print(f"[BG_WORKER] Breaking news & sentiment loop completed.")
+    print(f"[BG_WORKER] Sentiment pipeline completed.")
+
+
+# ponytail: kept for backward compat — redirects to split cycles
+def run_news_and_sentiment_cycle():
+    """DEPRECATED: use run_scrape_cycle() + run_sentiment_cycle() instead."""
+    run_scrape_cycle()
+    run_sentiment_cycle()
 
 def run_niche_scan():
     """
@@ -357,38 +281,57 @@ async def start_price_loop():
     """5-minute async loop for fetching 1-minute prices."""
     while True:
         try:
-            # Run the block in a thread executor to avoid blocking the async event loop
             await asyncio.to_thread(run_price_fetch_cycle)
         except Exception as e:
             print(f"[BG_WORKER] Error in price loop: {e}")
-        await asyncio.sleep(300) # every 5 minutes
+        await asyncio.sleep(300)  # every 5 minutes
 
+
+async def start_scrape_loop():
+    """5-minute async loop for scraping fresh articles (no heavy LLM work)."""
+    while True:
+        try:
+            await asyncio.to_thread(run_scrape_cycle)
+        except Exception as e:
+            print(f"[BG_WORKER] Error in scrape loop: {e}")
+        await asyncio.sleep(300)  # every 5 minutes
+
+
+async def start_sentiment_loop():
+    """15-minute async loop for heavy sentiment pipeline (LLM calls)."""
+    while True:
+        try:
+            await asyncio.to_thread(run_sentiment_cycle)
+        except Exception as e:
+            print(f"[BG_WORKER] Error in sentiment loop: {e}")
+        await asyncio.sleep(900)  # every 15 minutes
+
+
+# ponytail: kept for backward compat
 async def start_news_loop():
-    """5-minute async loop for fetching articles and analyzing sentiment."""
+    """DEPRECATED: use start_scrape_loop() + start_sentiment_loop() instead."""
     while True:
         try:
             await asyncio.to_thread(run_news_and_sentiment_cycle)
         except Exception as e:
             print(f"[BG_WORKER] Error in news loop: {e}")
-        await asyncio.sleep(300) # every 5 minutes
+        await asyncio.sleep(300)
+
 
 def start_background_worker():
     """Initializes and runs the background loops in daemon threads."""
     print("[BG_WORKER] Initializing MIMIR background workers...")
-    
-    def price_thread_worker():
+
+    def _thread_target(loop_func):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(start_price_loop())
-        
-    def news_thread_worker():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(start_news_loop())
-        
-    t_price = threading.Thread(target=price_thread_worker, daemon=True)
-    t_news = threading.Thread(target=news_thread_worker, daemon=True)
-    
+        loop.run_until_complete(loop_func())
+
+    t_price = threading.Thread(target=_thread_target, args=(start_price_loop,), daemon=True)
+    t_scrape = threading.Thread(target=_thread_target, args=(start_scrape_loop,), daemon=True)
+    t_sentiment = threading.Thread(target=_thread_target, args=(start_sentiment_loop,), daemon=True)
+
     t_price.start()
-    t_news.start()
-    print("[BG_WORKER] MIMIR background threads started successfully.")
+    t_scrape.start()
+    t_sentiment.start()
+    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m).")

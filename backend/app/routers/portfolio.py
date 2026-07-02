@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ..database import get_db_connection_dict, get_db_connection
 from ..config import get_settings
+from ..sentiment.llm_client import send_chat_completion
 
 router = APIRouter()
 settings = get_settings()
@@ -19,6 +20,7 @@ class TransactionCreate(BaseModel):
     order_date: datetime
     buy_price: float
     quantity: float
+    transaction_type: str = "BUY"
 
 class TransactionResponse(BaseModel):
     id: int
@@ -26,6 +28,7 @@ class TransactionResponse(BaseModel):
     order_date: datetime
     buy_price: float
     quantity: float
+    transaction_type: str
     created_at: datetime
 
 class HoldingDetail(BaseModel):
@@ -37,6 +40,7 @@ class HoldingDetail(BaseModel):
     current_value: float
     profit_loss: float
     profit_loss_pct: float
+    realized_pl: float
     transactions: List[Dict]
 
 class PortfolioSummary(BaseModel):
@@ -45,6 +49,8 @@ class PortfolioSummary(BaseModel):
     total_value: float
     total_profit_loss: float
     total_profit_loss_pct: float
+    total_realized_pl: float
+    grand_total_pl: float
 
 # Helper to fetch current prices using yfinance
 def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
@@ -88,13 +94,13 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
     return prices
 
 @router.get("/portfolio", response_model=PortfolioSummary)
-async def get_portfolio():
+def get_portfolio():
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
     # Fetch all transactions
     cur.execute(f"""
-        SELECT id, ticker, order_date, buy_price, quantity, created_at
+        SELECT id, ticker, order_date, buy_price, quantity, created_at, transaction_type
         FROM {settings.mimir_schema}.mimir_portfolio
         ORDER BY order_date DESC
     """)
@@ -108,7 +114,9 @@ async def get_portfolio():
             "total_cost": 0.0,
             "total_value": 0.0,
             "total_profit_loss": 0.0,
-            "total_profit_loss_pct": 0.0
+            "total_profit_loss_pct": 0.0,
+            "total_realized_pl": 0.0,
+            "grand_total_pl": 0.0
         }
         
     # Group transactions by ticker
@@ -126,26 +134,52 @@ async def get_portfolio():
     holdings = {}
     total_cost = 0.0
     total_value = 0.0
+    total_realized_pl = 0.0
     
     for ticker, txs in raw_holdings.items():
-        qty_sum = sum(float(tx["quantity"]) for tx in txs)
-        if qty_sum <= 0:
-            continue
+        # Sort chronologically to compute weighted average cost basis and realized P&L
+        txs_sorted = sorted(txs, key=lambda x: x["order_date"])
+        
+        qty_sum = 0.0
+        avg_buy = 0.0
+        realized_pl = 0.0
+        
+        for tx in txs_sorted:
+            tx_qty = float(tx["quantity"])
+            tx_price = float(tx["buy_price"])
+            tx_type = tx.get("transaction_type", "BUY").upper()
             
-        cost_sum = sum(float(tx["buy_price"]) * float(tx["quantity"]) for tx in txs)
-        avg_buy = cost_sum / qty_sum
+            if tx_type == "BUY":
+                if qty_sum + tx_qty > 0:
+                    avg_buy = (qty_sum * avg_buy + tx_qty * tx_price) / (qty_sum + tx_qty)
+                else:
+                    avg_buy = 0.0
+                qty_sum += tx_qty
+            elif tx_type == "SELL":
+                realized_pl += tx_qty * (tx_price - avg_buy)
+                qty_sum -= tx_qty
+                if qty_sum <= 0:
+                    qty_sum = 0.0
+                    avg_buy = 0.0
+
         curr_price = current_prices.get(ticker, 0.0)
         
-        # If current price is 0.0, fallback to average buy price to prevent weird profit/loss
-        if curr_price == 0.0 and len(txs) > 0:
-            curr_price = float(txs[0]["buy_price"])
+        # If current price is 0.0, fallback to last buy price to prevent weird profit/loss
+        if curr_price == 0.0:
+            buys = [float(tx["buy_price"]) for tx in txs_sorted if tx.get("transaction_type", "BUY").upper() == "BUY"]
+            if buys:
+                curr_price = buys[-1]
+            elif txs_sorted:
+                curr_price = float(txs_sorted[-1]["buy_price"])
             
+        cost_sum = qty_sum * avg_buy
         curr_val = qty_sum * curr_price
         pl = curr_val - cost_sum
         pl_pct = (pl / cost_sum * 100) if cost_sum > 0 else 0.0
         
         total_cost += cost_sum
         total_value += curr_val
+        total_realized_pl += realized_pl
         
         holdings[ticker] = {
             "ticker": ticker,
@@ -156,12 +190,14 @@ async def get_portfolio():
             "current_value": curr_val,
             "profit_loss": pl,
             "profit_loss_pct": pl_pct,
+            "realized_pl": realized_pl,
             "transactions": [
                 {
                     "id": tx["id"],
                     "order_date": tx["order_date"],
                     "buy_price": float(tx["buy_price"]),
                     "quantity": float(tx["quantity"]),
+                    "transaction_type": tx.get("transaction_type", "BUY"),
                     "created_at": tx["created_at"]
                 }
                 for tx in txs
@@ -170,20 +206,20 @@ async def get_portfolio():
         
     total_pl = total_value - total_cost
     total_pl_pct = (total_pl / total_cost * 100) if total_cost > 0 else 0.0
+    grand_total = total_pl + total_realized_pl
     
     return {
         "holdings": holdings,
         "total_cost": total_cost,
         "total_value": total_value,
         "total_profit_loss": total_pl,
-        "total_profit_loss_pct": total_pl_pct
+        "total_profit_loss_pct": total_pl_pct,
+        "total_realized_pl": total_realized_pl,
+        "grand_total_pl": grand_total
     }
 
 @router.post("/portfolio", response_model=TransactionResponse)
-async def add_transaction(tx: TransactionCreate):
-    conn = get_db_connection_dict()
-    cur = conn.cursor()
-    
+def add_transaction(tx: TransactionCreate):
     # Enforce GMT+7 (Asia/Bangkok) timezone for order date
     from datetime import timezone, timedelta
     gmt_plus_7 = timezone(timedelta(hours=7))
@@ -192,12 +228,40 @@ async def add_transaction(tx: TransactionCreate):
     else:
         localized_date = tx.order_date.astimezone(gmt_plus_7)
         
+    # Check current quantity for SELL validation
+    if tx.transaction_type.upper() == "SELL":
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        try:
+            cur.execute(f"""
+                SELECT transaction_type, quantity
+                FROM {settings.mimir_schema}.mimir_portfolio
+                WHERE ticker = %s
+            """, (tx.ticker.upper().strip(),))
+            existing_txs = cur.fetchall()
+            current_qty = 0.0
+            for etx in existing_txs:
+                etype = etx["transaction_type"].upper()
+                eqty = float(etx["quantity"])
+                if etype == "BUY":
+                    current_qty += eqty
+                elif etype == "SELL":
+                    current_qty -= eqty
+            
+            if tx.quantity > current_qty:
+                raise HTTPException(status_code=400, detail=f"Cannot sell {tx.quantity} shares of {tx.ticker}. You only own {current_qty} shares.")
+        finally:
+            cur.close()
+            conn.close()
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
     try:
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, ticker, order_date, buy_price, quantity, created_at
-        """, (tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity))
+            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at
+        """, (tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper()))
         new_tx = cur.fetchone()
         conn.commit()
         return new_tx
@@ -209,7 +273,7 @@ async def add_transaction(tx: TransactionCreate):
         conn.close()
 
 @router.delete("/portfolio/{tx_id}")
-async def delete_transaction(tx_id: int):
+def delete_transaction(tx_id: int):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -287,7 +351,7 @@ def fetch_macro_indicators() -> Dict[str, Dict]:
     return results
 
 @router.get("/portfolio/advice")
-async def get_portfolio_advice():
+def get_portfolio_advice():
     # 1. Fetch current portfolio
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -413,23 +477,17 @@ Sections required:
 4. <div class="mb-4"><h3 class="text-xl font-bold text-[#00E5F2] mb-3">💰 Alternative MIMIR Profit Strategies</h3><ul class="list-disc list-inside text-sm text-[#D6E5E3] space-y-2"><li><strong>Swing Trading Sentinel:</strong> Describe how to swing trade stocks when sentiment swings heavily into bullish (>0.40) or bearish (<-0.40) ranges.</li><li><strong>Guerilla Arbitrage:</strong> Explain how to use MIMIR's Guerilla Quant tab to find statistical arbitrage pairs and monitor their spread.</li><li><strong>Volume Anomaly Trigger:</strong> Outline how tracking volume spikes alongside news sentiment is a powerful signal for breakout trading.</li></ul></div>
 """
 
-    # Call DeepSeek API
+    # Call LLM via centralized completion router
     try:
-        headers = {
-            "Authorization": f"Bearer {settings.deepseek_api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": settings.deepseek_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0.3
-        }
-        resp = requests.post(f"{settings.deepseek_base_url}/chat/completions", headers=headers, json=payload, timeout=60, verify=False)
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        content = send_chat_completion(
+            messages=messages,
+            temperature=0.3,
+            timeout=60
+        )
         
         # Clean markdown code block wraps if LLM returns them
         if content.startswith("```html"):

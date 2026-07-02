@@ -18,22 +18,26 @@
     </div>
 
     <!-- Stats Row -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">Total Portfolio Value</span>
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Portfolio Value</span>
             <span id="kpiValue" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
         </div>
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">Total Cost Basis</span>
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Cost Basis</span>
             <span id="kpiCost" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
         </div>
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">Total Profit / Loss</span>
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Unrealized P&L</span>
             <span id="kpiPL" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00 (0.00%)</span>
         </div>
-        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24 border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)]">
-            <span class="text-xs font-mono text-[#4A6A70] uppercase">Active Positions</span>
-            <span id="kpiHoldings" class="text-2xl font-bold text-[#00A6B2] font-mono mt-1">0</span>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Realized P&L</span>
+            <span id="kpiRealizedPL" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24 border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)] flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Grand Total P&L</span>
+            <span id="kpiGrandPL" class="text-2xl font-bold text-[#00A6B2] font-mono mt-1">$0.00</span>
         </div>
     </div>
 
@@ -53,16 +57,17 @@
                         <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
                             <th class="px-5 py-3">Asset Ticker</th>
                             <th class="px-5 py-3">Quantity</th>
-                            <th class="px-5 py-3">Avg Buy</th>
+                            <th class="px-5 py-3">Avg Buy Price</th>
                             <th class="px-5 py-3">Current Price</th>
                             <th class="px-5 py-3">Total Cost</th>
                             <th class="px-5 py-3">Current Value</th>
-                            <th class="px-5 py-3">P&L</th>
+                            <th class="px-5 py-3">Unrealized P&L</th>
+                            <th class="px-5 py-3">Realized P&L</th>
                         </tr>
                     </thead>
                     <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                         <tr>
-                            <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                            <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -71,13 +76,20 @@
             <!-- Log Order / Transaction Form -->
             <div class="card bg-[#111C21] p-6">
                 <h2 class="text-sm font-mono text-[#00A6B2] uppercase tracking-wider mb-4"><i class="fas fa-plus mr-1"></i> Log Order/Transaction</h2>
-                <form id="addTxForm" class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <form id="addTxForm" class="grid grid-cols-1 sm:grid-cols-5 gap-4">
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Action</label>
+                        <select id="txType" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                            <option value="BUY">BUY (Long)</option>
+                            <option value="SELL">SELL (Close)</option>
+                        </select>
+                    </div>
                     <div>
                         <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Ticker</label>
                         <input type="text" id="txTicker" required placeholder="e.g. AAPL" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Buy Price ($)</label>
+                        <label id="txPriceLabel" class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Buy Price ($)</label>
                         <input type="number" step="any" id="txPrice" required placeholder="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
                     <div>
@@ -88,9 +100,9 @@
                         <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Order Time</label>
                         <input type="datetime-local" id="txDate" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
-                    <div class="sm:col-span-4 flex justify-end">
-                        <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]">
-                            Add Purchase Record
+                    <div class="sm:col-span-5 flex justify-end">
+                        <button type="submit" id="txSubmitBtn" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]">
+                            Log Purchase
                         </button>
                     </div>
                 </form>
@@ -105,9 +117,10 @@
                     <thead>
                         <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
                             <th class="px-5 py-3">Ticker</th>
-                            <th class="px-5 py-3">Buy Price</th>
+                            <th class="px-5 py-3">Type</th>
+                            <th class="px-5 py-3">Price</th>
                             <th class="px-5 py-3">Quantity</th>
-                            <th class="px-5 py-3">Buy Date</th>
+                            <th class="px-5 py-3">Order Date</th>
                             <th class="px-5 py-3 text-right">Action</th>
                         </tr>
                     </thead>
@@ -158,6 +171,22 @@
         document.getElementById("txDate").value = now.toISOString().slice(0, 16);
         
         loadPortfolio();
+
+        // Type dropdown interactivity
+        const txTypeSelect = document.getElementById("txType");
+        const txPriceLabel = document.getElementById("txPriceLabel");
+        const txSubmitBtn = document.getElementById("txSubmitBtn");
+        
+        txTypeSelect.addEventListener("change", () => {
+            const isBuy = txTypeSelect.value === "BUY";
+            txPriceLabel.innerText = isBuy ? "Buy Price ($)" : "Sell Price ($)";
+            txSubmitBtn.innerText = isBuy ? "Log Purchase" : "Log Sale";
+            if (isBuy) {
+                txSubmitBtn.className = "px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]";
+            } else {
+                txSubmitBtn.className = "px-4 py-2 bg-[#FF5252] hover:bg-[#d32f2f] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(255,82,82,0.2)]";
+            }
+        });
         
         // Form submission
         document.getElementById("addTxForm").addEventListener("submit", async (e) => {
@@ -165,16 +194,20 @@
             const ticker = document.getElementById("txTicker").value.trim().toUpperCase();
             const buy_price = parseFloat(document.getElementById("txPrice").value);
             const quantity = parseFloat(document.getElementById("txQty").value);
-            const order_date = document.getElementById("txDate").value; // Raw string (e.g. "YYYY-MM-DDTHH:MM") without browser local tz shift
+            const transaction_type = document.getElementById("txType").value;
+            const order_date = document.getElementById("txDate").value; // Raw string (e.g. "YYYY-MM-DDTHH:MM")
             
             try {
                 const res = await fetch("/api/v1/portfolio", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ticker, buy_price, quantity, order_date })
+                    body: JSON.stringify({ ticker, buy_price, quantity, transaction_type, order_date })
                 });
                 
-                if (!res.ok) throw new Error("Failed to add transaction");
+                if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.detail || "Failed to add transaction");
+                }
                 
                 // Clear fields
                 document.getElementById("txTicker").value = "";
@@ -212,15 +245,30 @@
         const pl = data.total_profit_loss;
         const plPct = data.total_profit_loss_pct;
         const plEl = document.getElementById("kpiPL");
-        
         plEl.innerText = `${formatCurrency(pl)} (${plPct.toFixed(2)}%)`;
         if (pl >= 0) {
             plEl.className = "text-2xl font-bold text-[#00E676] font-mono mt-1";
         } else {
             plEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
         }
-        
-        document.getElementById("kpiHoldings").innerText = Object.keys(data.holdings).length;
+
+        const realized = data.total_realized_pl || 0.0;
+        const realizedEl = document.getElementById("kpiRealizedPL");
+        realizedEl.innerText = formatCurrency(realized);
+        if (realized >= 0) {
+            realizedEl.className = "text-2xl font-bold text-[#00E676] font-mono mt-1";
+        } else {
+            realizedEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
+        }
+
+        const grand = data.grand_total_pl || 0.0;
+        const grandEl = document.getElementById("kpiGrandPL");
+        grandEl.innerText = formatCurrency(grand);
+        if (grand >= 0) {
+            grandEl.className = "text-2xl font-bold text-[#00A6B2] font-mono mt-1";
+        } else {
+            grandEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
+        }
     }
 
     function renderHoldingsTable(holdings) {
@@ -228,18 +276,23 @@
         tbody.innerHTML = "";
         
         const holdingsKeys = Object.keys(holdings);
-        if (holdingsKeys.length === 0) {
+        // Only show tickers with active remaining shares, or if there's any active holdings
+        const activeHoldingsKeys = holdingsKeys.filter(t => holdings[t].quantity > 0);
+        
+        if (activeHoldingsKeys.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                    <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
                 </tr>
             `;
             return;
         }
         
-        holdingsKeys.sort().forEach(ticker => {
+        activeHoldingsKeys.sort().forEach(ticker => {
             const h = holdings[ticker];
             const plColor = h.profit_loss >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            const rColor = h.realized_pl >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
             tr.innerHTML = `
@@ -250,6 +303,7 @@
                 <td class="px-5 py-3 text-[#4A6A70]">${formatCurrency(h.total_cost)}</td>
                 <td class="px-5 py-3">${formatCurrency(h.current_value)}</td>
                 <td class="px-5 py-3 font-bold ${plColor}">${formatCurrency(h.profit_loss)} (${h.profit_loss_pct.toFixed(2)}%)</td>
+                <td class="px-5 py-3 font-bold ${rColor}">${formatCurrency(h.realized_pl)}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -283,16 +337,22 @@
         
         allTx.forEach(tx => {
             const dateStr = new Date(tx.order_date).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }) + ' (GMT+7)';
+            const typeStr = (tx.transaction_type || "BUY").toUpperCase();
+            const typeColor = typeStr === "BUY" ? "text-[#00E676] bg-[#00E676]/10" : "text-[#FF5252] bg-[#FF5252]/10";
+            
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
             tr.innerHTML = `
                 <td class="px-5 py-3 font-bold text-[#00A6B2]">${tx.ticker}</td>
+                <td class="px-5 py-3">
+                    <span class="px-2 py-0.5 rounded text-xs font-bold ${typeColor}">${typeStr}</span>
+                </td>
                 <td class="px-5 py-3">${formatCurrency(tx.buy_price)}</td>
                 <td class="px-5 py-3">${tx.quantity}</td>
                 <td class="px-5 py-3 text-[#4A6A70] text-xs">${dateStr}</td>
                 <td class="px-5 py-3 text-right">
                     <button onclick="deleteTx(${tx.id})" class="text-xs text-[#FF5252] hover:text-[#ff7575] border border-[#FF5252]/20 hover:border-[#FF5252]/60 px-2 py-0.5 rounded transition-all duration-200">
-                            <i class="fas fa-trash mr-1"></i> Delete
+                        <i class="fas fa-trash mr-1"></i> Delete
                     </button>
                 </td>
             `;
@@ -301,7 +361,7 @@
     }
 
     async function deleteTx(id) {
-        if (!confirm("Are you sure you want to delete this purchase transaction?")) return;
+        if (!confirm("Are you sure you want to delete this transaction?")) return;
         try {
             const res = await fetch(`/api/v1/portfolio/${id}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Failed to delete transaction");

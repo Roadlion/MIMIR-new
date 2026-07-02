@@ -7,17 +7,18 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from ..database import get_db_connection_dict
 from ..config import get_settings
+from ..sentiment.llm_client import send_chat_completion
 import time
 router = APIRouter()
 settings = get_settings()
 
 # In-memory cache for /summary endpoint: (days, region, country) -> (timestamp, response_data)
 _summary_cache = {}
-CACHE_TTL_SECONDS = 60
+CACHE_TTL_SECONDS = 300  # ponytail: matches 5-min scrape cycle, was 60s
 
 
 @router.get("/social/feed")
-async def get_social_feed(
+def get_social_feed(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=100),
     platform: Optional[str] = Query(None),
@@ -77,7 +78,7 @@ async def get_social_feed(
 
 
 @router.get("/social/tickers")
-async def get_social_tickers():
+def get_social_tickers():
     """Get all unique tickers currently present in social chatter."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -93,7 +94,7 @@ async def get_social_tickers():
 
 
 @router.get("/summary")
-async def get_sentiment_summary(
+def get_sentiment_summary(
     days: int = Query(1, ge=1, le=30),
     region: Optional[str] = Query(None),
     country: Optional[str] = Query(None)
@@ -256,7 +257,7 @@ async def get_sentiment_summary(
 
 
 @router.get("/morning-report")
-async def get_morning_report(limit: int = Query(10, ge=1, le=50)):
+def get_morning_report(limit: int = Query(10, ge=1, le=50)):
     """Get morning report: key headlines with sentiment for the last 24 hours."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -301,7 +302,7 @@ async def get_morning_report(limit: int = Query(10, ge=1, le=50)):
 
 
 @router.get("/asset/{asset_name}")
-async def get_asset_sentiment(
+def get_asset_sentiment(
     asset_name: str,
     days: int = Query(7, ge=1, le=90)
 ):
@@ -343,7 +344,7 @@ async def get_asset_sentiment(
 
 
 @router.get("/assets")
-async def get_available_assets():
+def get_available_assets():
     """Get all distinct assets (name + ticker) from sentiment impacts table."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -376,7 +377,7 @@ async def get_available_assets():
 
 
 @router.get("/ticker-sentiments")
-async def get_ticker_sentiments(
+def get_ticker_sentiments(
     tickers: Optional[str] = Query(None),
     weighted: bool = Query(False),
     hours: int = Query(24, ge=1, le=168),
@@ -404,9 +405,9 @@ async def get_ticker_sentiments(
         for t in ticker_list:
             cur.execute(
                 "SELECT * FROM yggdrasil.mimir_weighted_sentiment("
-                "p_ticker := %s, p_hours_window := %s, p_half_life_hours := 12, "
-                "p_include_spillover := TRUE, p_social_half_life_hours := %s, "
-                "p_social_weight_multiplier := %s)",
+                "p_ticker := %s::TEXT, p_hours_window := %s::INTEGER, p_half_life_hours := 12::NUMERIC, "
+                "p_include_spillover := TRUE::BOOLEAN, p_social_half_life_hours := %s::NUMERIC, "
+                "p_social_weight_multiplier := %s::NUMERIC)",
                 (t, hours, social_half_life, social_weight)
             )
             row = cur.fetchone()
@@ -503,9 +504,18 @@ async def get_ticker_sentiments(
     }
 
 
+_regional_cache = {}
+
 @router.get("/regional")
-async def get_regional_sentiment(days: int = Query(7, ge=1, le=90)):
+def get_regional_sentiment(days: int = Query(7, ge=1, le=90)):
     """Get average sentiment score and count for each region."""
+    cache_key = days
+    now = time.time()
+    if cache_key in _regional_cache:
+        ts, cached_data = _regional_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
@@ -528,7 +538,7 @@ async def get_regional_sentiment(days: int = Query(7, ge=1, le=90)):
     cur.close()
     conn.close()
     
-    return {
+    response_data = {
         "regions": [
             {
                 "region": r.get("region"),
@@ -541,6 +551,9 @@ async def get_regional_sentiment(days: int = Query(7, ge=1, le=90)):
             for r in results
         ]
     }
+    
+    _regional_cache[cache_key] = (now, response_data)
+    return response_data
 
 
 
@@ -582,7 +595,7 @@ def parse_json_response(content: str) -> dict:
 
 
 @router.get("/market-summary")
-async def get_market_summary():
+def get_market_summary():
     """Retrieve the latest generated market summary from the database."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -610,7 +623,7 @@ async def get_market_summary():
 
 
 @router.post("/market-summary/generate")
-async def generate_market_summary():
+def generate_market_summary():
     """Generate a new market summary using DeepSeek by summarizing articles from the last 24 hours."""
     import requests
     import urllib3
@@ -697,19 +710,8 @@ Output your response as a valid JSON object with the following structure:
 Ensure the output is valid JSON, containing only the JSON structure. Do not include markdown code block formatting like ```json or any introductory/concluding text.
 """
 
-    if not settings.deepseek_api_key:
-        cur.close()
-        conn.close()
-        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY is not set.")
-        
-    headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": 'deepseek-v4-pro',
-        "messages": [
+    try:
+        messages = [
             {
                 "role": "system",
                 "content": "You are a financial news intelligence analyst. You output JSON only."
@@ -718,22 +720,13 @@ Ensure the output is valid JSON, containing only the JSON structure. Do not incl
                 "role": "user",
                 "content": prompt
             }
-        ],
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"}
-    }
-    
-    try:
-        resp = requests.post(
-            f"{settings.deepseek_base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60,
-            verify=False
+        ]
+        model_content = send_chat_completion(
+            messages=messages,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            timeout=60
         )
-        resp.raise_for_status()
-        resp_data = resp.json()
-        model_content = resp_data["choices"][0]["message"]["content"]
         
         parsed_summary = parse_json_response(model_content)
         stories = parsed_summary.get("stories", [])
@@ -771,7 +764,7 @@ Ensure the output is valid JSON, containing only the JSON structure. Do not incl
 
 
 @router.get("/upcoming-events")
-async def get_upcoming_events():
+def get_upcoming_events():
     """Retrieve the list of upcoming market events."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -804,7 +797,7 @@ async def get_upcoming_events():
 
 
 @router.post("/upcoming-events/generate")
-async def generate_upcoming_events():
+def generate_upcoming_events():
     """Scan recent articles and generate upcoming events using DeepSeek."""
     import requests
     import urllib3
@@ -888,33 +881,23 @@ Output your response as a valid JSON object in this exact format:
 Ensure the output is valid JSON, containing only the JSON structure.
 """
 
-        headers = {
-            "Authorization": f"Bearer {settings.deepseek_api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": settings.deepseek_model,
-            "messages": [
+        try:
+            messages = [
                 {
                     "role": "system",
                     "content": "You are a macroeconomic events parser. You output JSON only. You must extract events and estimate dates."
                 },
                 {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"}
-        }
-        
-        resp = requests.post(
-            f"{settings.deepseek_base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60,
-            verify=False
-        )
-        resp.raise_for_status()
-        resp_data = resp.json()
-        model_content = resp_data["choices"][0]["message"]["content"]
+            ]
+            model_content = send_chat_completion(
+                messages=messages,
+                temperature=0.2,
+                response_format={"type": "json_object"},
+                timeout=60
+            )
+        except Exception as e:
+            print(f"Failed to parse events: {e}")
+            model_content = "{}"
         
         parsed_data = parse_json_response(model_content)
         events = parsed_data.get("events", [])
@@ -999,7 +982,7 @@ class EventCreate(BaseModel):
 
 
 @router.post("/upcoming-events")
-async def create_upcoming_event(event: EventCreate):
+def create_upcoming_event(event: EventCreate):
     """Manually insert a new calendar event."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -1058,7 +1041,7 @@ async def create_upcoming_event(event: EventCreate):
 
 
 @router.delete("/upcoming-events/{event_id}")
-async def delete_upcoming_event(event_id: int):
+def delete_upcoming_event(event_id: int):
     """Delete a calendar event by ID."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -1100,12 +1083,21 @@ async def delete_upcoming_event(event_id: int):
         conn.close()
 
 
+_countries_cache = {}
+
 @router.get("/countries")
-async def get_countries_sentiment(
+def get_countries_sentiment(
     days: int = Query(7, ge=1, le=90),
     region: Optional[str] = Query(None)
 ):
     """Get average sentiment score for each country, optionally filtered by region."""
+    cache_key = (days, region)
+    now = time.time()
+    if cache_key in _countries_cache:
+        ts, cached_data = _countries_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     conn = get_db_connection_dict()
     cur = conn.cursor()
     try:
@@ -1129,7 +1121,7 @@ async def get_countries_sentiment(
         """, tuple(params))
         
         results = cur.fetchall()
-        return {
+        response_data = {
             "countries": [
                 {
                     "country": r["country"].upper(),
@@ -1139,6 +1131,9 @@ async def get_countries_sentiment(
                 for r in results
             ]
         }
+        
+        _countries_cache[cache_key] = (now, response_data)
+        return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     finally:
@@ -1401,11 +1396,20 @@ def get_region_for_country(country_code: str) -> Optional[str]:
     }
     return country_to_region.get(country_code)
 
+_country_details_cache = {}
+
 @router.get("/countries/{country}/details")
-async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
+def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
     """
     Get detailed macroeconomic, central bank, bond yields, sector performance, stock index, and currency data for a country.
     """
+    cache_key = (country, days)
+    now = time.time()
+    if cache_key in _country_details_cache:
+        ts, cached_data = _country_details_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     country_code = country.upper()
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -1490,7 +1494,7 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
         price_query_tickers = [t for t in [bond_ticker, index_ticker, currency_ticker] if t] + all_sector_tickers
         
         from .prices import get_ticker_changes
-        price_changes_res = await get_ticker_changes(tickers=",".join(price_query_tickers))
+        price_changes_res = get_ticker_changes(tickers=",".join(price_query_tickers))
         tickers_list = price_changes_res.get("tickers", []) if price_changes_res else []
         price_changes_map = {item["ticker"]: item for item in tickers_list}
         
@@ -1515,7 +1519,7 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
         # 4. Equity Sectors Sentiments
         region_code = get_region_for_country(country_code)
         
-        async def fetch_sector_sentiments(filter_col: Optional[str], filter_val: Optional[str]):
+        def fetch_sector_sentiments(filter_col: Optional[str], filter_val: Optional[str]):
             where_clause = ""
             params = [days]
             if filter_col:
@@ -1554,9 +1558,9 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
                     
             return {k: sum(v)/len(v) for k, v in s_map.items()}
 
-        country_sent_map = await fetch_sector_sentiments("country", country_code)
-        region_sent_map = await fetch_sector_sentiments("region", region_code) if region_code else {}
-        global_sent_map = await fetch_sector_sentiments(None, None)
+        country_sent_map = fetch_sector_sentiments("country", country_code)
+        region_sent_map = fetch_sector_sentiments("region", region_code) if region_code else {}
+        global_sent_map = fetch_sector_sentiments(None, None)
         
         sectors = []
         for name in sector_list:
@@ -1588,7 +1592,7 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
                 "sentiment_score": round(avg_sent, 2)
             })
 
-        return {
+        result = {
             "country": country_code,
             "economy_sentiment": economy_sentiment,
             "central_bank": central_bank,
@@ -1597,6 +1601,8 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
             "currency": currency_data,
             "sectors": sectors
         }
+        _country_details_cache[cache_key] = (now, result)
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error in country details: {str(e)}")
@@ -1605,11 +1611,20 @@ async def get_country_details(country: str, days: int = Query(7, ge=1, le=90)):
         conn.close()
 
 
+_region_details_cache = {}
+
 @router.get("/regions/{region}/details")
-async def get_region_details(region: str, days: int = Query(7, ge=1, le=90)):
+def get_region_details(region: str, days: int = Query(7, ge=1, le=90)):
     """
     Get detailed macroeconomic, central bank, bond yields, sector performance, stock index, and currency data for a region.
     """
+    cache_key = (region, days)
+    now = time.time()
+    if cache_key in _region_details_cache:
+        ts, cached_data = _region_details_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     region_code = region.upper()
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -1696,7 +1711,7 @@ async def get_region_details(region: str, days: int = Query(7, ge=1, le=90)):
         price_query_tickers = [t for t in [bond_ticker, index_ticker, currency_ticker] if t] + all_sector_tickers
         
         from .prices import get_ticker_changes
-        price_changes_res = await get_ticker_changes(tickers=",".join(price_query_tickers))
+        price_changes_res = get_ticker_changes(tickers=",".join(price_query_tickers))
         tickers_list = price_changes_res.get("tickers", []) if price_changes_res else []
         price_changes_map = {item["ticker"]: item for item in tickers_list}
         
@@ -1791,7 +1806,7 @@ async def get_region_details(region: str, days: int = Query(7, ge=1, le=90)):
 
 
 @router.post("/countries/{target}/briefing")
-async def generate_target_briefing(target: str, days: int = Query(3, ge=1, le=14)):
+def generate_target_briefing(target: str, days: int = Query(3, ge=1, le=14)):
     """
     Generate a dynamic geopolitical/geoeconomic briefing for a country, region, or global
     by analyzing recent news articles and sentiment impact reasonings.
@@ -1857,22 +1872,8 @@ Be extremely quantitative, direct, and clinical (Bloomberg Terminal style). Avoi
 Keep the total response under 150 words.
 """
 
-    if not settings.deepseek_api_key:
-        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY is not set.")
-        
-    import requests
-    headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    model_name = settings.deepseek_model
-    if "pro" in model_name:
-        model_name = "deepseek-v4-pro"
-        
-    payload = {
-        "model": model_name,
-        "messages": [
+    try:
+        messages = [
             {
                 "role": "system",
                 "content": "You are a senior macroeconomic analyst. You write dense, highly informative Bloomberg-style summaries."
@@ -1881,16 +1882,12 @@ Keep the total response under 150 words.
                 "role": "user",
                 "content": prompt
             }
-        ],
-        "temperature": 0.2
-    }
-    
-    try:
-        api_url = f"{settings.deepseek_base_url}/chat/completions"
-        response = requests.post(api_url, json=payload, headers=headers, verify=False, timeout=30)
-        response.raise_for_status()
-        res_data = response.json()
-        briefing = res_data["choices"][0]["message"]["content"].strip()
+        ]
+        briefing = send_chat_completion(
+            messages=messages,
+            temperature=0.2,
+            timeout=30
+        ).strip()
         return {"status": "success", "briefing": briefing}
     except Exception as e:
         print(f"Error generating briefing: {e}")
@@ -1898,7 +1895,7 @@ Keep the total response under 150 words.
 
 
 @router.get("/spillover-log/{ticker}")
-async def get_spillover_log(
+def get_spillover_log(
     ticker: str,
     hours: int = Query(48, ge=1, le=168),
 ):

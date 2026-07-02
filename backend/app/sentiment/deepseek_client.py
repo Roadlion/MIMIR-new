@@ -8,6 +8,7 @@ import random
 from typing import Dict, List, Optional, Tuple
 from ..config import get_settings
 from .asset_mapper import resolve_ticker, resolve_country_code, resolve_region, ASSET_TO_TICKER
+from .llm_client import send_chat_completion
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -88,9 +89,7 @@ class DeepSeekSentiment:
     # ============================================================
     def score_article_with_assets(self, title: str, summary: str, force_relevance: bool = False) -> Dict:
         """
-        Send article to DeepSeek for multi-asset sentiment scoring.
-        Returns a dict with 'overall_sentiment' and list of 'assets',
-        each asset now includes a 'ticker' field.
+        Send article to LLM for multi-asset sentiment scoring.
         """
         key = (title, summary)
         if key in self._cache:
@@ -106,78 +105,47 @@ class DeepSeekSentiment:
 
         system_prompt = self._get_system_prompt()
         user_prompt = self._build_user_prompt(title, summary)
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
-        }
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
 
-        max_retries = 3
-        retry_delay = 2
+        try:
+            content = send_chat_completion(
+                messages=messages,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                timeout=60
+            )
 
-        for attempt in range(max_retries):
-            try:
-                resp = requests.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=60,
-                    verify=False
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
+            result = self._parse_json_response(content)
+            assets = result.get("assets", [])
+            if not isinstance(assets, list):
+                assets = []
 
-                # Log token usage if available
-                usage = data.get("usage", {})
-                logger.info(f"Token usage: {usage}")
+            # Validate and enrich assets
+            validated_assets = self._validate_assets(assets)
 
-                result = self._parse_json_response(content)
-                assets = result.get("assets", [])
-                if not isinstance(assets, list):
-                    assets = []
+            # Post-filter: remove broad assets not explicitly mentioned
+            validated_assets = self._post_filter_assets(validated_assets, title, summary)
 
-                # Validate and enrich assets
-                validated_assets = self._validate_assets(assets)
+            # Sort by confidence and take top 5 (if more)
+            validated_assets.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+            validated_assets = validated_assets[:5]
 
-                # Post-filter: remove broad assets not explicitly mentioned
-                validated_assets = self._post_filter_assets(validated_assets, title, summary)
+            final_result = {
+                "overall_sentiment": float(result.get("overall_sentiment", 0.0)),
+                "assets": validated_assets
+            }
 
-                # Sort by confidence and take top 5 (if more)
-                validated_assets.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-                validated_assets = validated_assets[:5]
+            # Cache the result
+            self._cache[key] = final_result
+            return final_result
 
-                final_result = {
-                    "overall_sentiment": float(result.get("overall_sentiment", 0.0)),
-                    "assets": validated_assets
-                }
-
-                # Cache the result
-                self._cache[key] = final_result
-                return final_result
-
-            except requests.exceptions.Timeout:
-                delay = retry_delay * (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Timeout (attempt {attempt+1}/{max_retries}). Retrying in {delay:.2f}s...")
-                time.sleep(delay)
-            except Exception as e:
-                logger.error(f"Failed: {e}")
-                if attempt == max_retries - 1:
-                    return {"overall_sentiment": 0.0, "assets": []}
-                time.sleep(retry_delay)
-
-        return {"overall_sentiment": 0.0, "assets": []}
+        except Exception as e:
+            logger.error(f"LLM score article failed: {e}")
+            return {"overall_sentiment": 0.0, "assets": []}
 
     # ============================================================
     # BACKWARD COMPATIBILITY (deprecated)

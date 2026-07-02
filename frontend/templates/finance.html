@@ -146,6 +146,7 @@
                         </div>
                         <div class="flex gap-1.5 items-center">
                             <button id="toggle-sentiment-btn" class="pill-btn" onclick="toggleSentimentLine()">Toggle Sentiment</button>
+                            <button id="toggle-normalize-btn" class="pill-btn" onclick="toggleNormalize()">Normalize</button>
                             <span class="w-[1px] h-4 bg-[#1A2A30] mx-1"></span>
                             <button class="pill-btn active" onclick="changeTimeframe('1d')">1D</button>
                             <button class="pill-btn" onclick="changeTimeframe('5d')">5D</button>
@@ -470,11 +471,25 @@
     let detailsData = null;
     let cachedCandles = null;
     let showSentiment = false;
+    let showNormalized = false;
 
     function toggleSentimentLine() {
         showSentiment = !showSentiment;
         const btn = document.getElementById("toggle-sentiment-btn");
         if (showSentiment) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
+        }
+        if (cachedCandles) {
+            renderChart(cachedCandles);
+        }
+    }
+
+    function toggleNormalize() {
+        showNormalized = !showNormalized;
+        const btn = document.getElementById("toggle-normalize-btn");
+        if (showNormalized) {
             btn.classList.add("active");
         } else {
             btn.classList.remove("active");
@@ -693,6 +708,20 @@
 
         const labels = candles.map(c => new Date(c.time).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
         const prices = candles.map(c => c.close);
+        const sentiments = candles.map(c => c.sentiment);
+
+        let displayPrices = prices;
+        let displaySentiments = sentiments;
+        
+        if (showNormalized) {
+            const minPrice = Math.min(...prices);
+            const maxPrice = Math.max(...prices);
+            displayPrices = prices.map(p => (maxPrice - minPrice > 0) ? ((p - minPrice) / (maxPrice - minPrice)) * 100 : 50);
+            
+            const minSent = Math.min(...sentiments);
+            const maxSent = Math.max(...sentiments);
+            displaySentiments = sentiments.map(s => (maxSent - minSent > 0) ? ((s - minSent) / (maxSent - minSent)) * 100 : 50);
+        }
 
         const isUp = prices[prices.length - 1] >= prices[0];
         const lineColor = isUp ? '#10B981' : '#FF5252';
@@ -702,7 +731,7 @@
 
         const datasets = [{
             label: 'Price',
-            data: prices,
+            data: displayPrices,
             borderColor: lineColor,
             borderWidth: 2,
             fill: true,
@@ -713,16 +742,15 @@
         }];
 
         if (showSentiment) {
-            const sentiments = candles.map(c => c.sentiment);
             datasets.push({
                 label: 'Sentiment',
-                data: sentiments,
+                data: displaySentiments,
                 borderColor: '#8B5CF6',
                 borderWidth: 2,
                 fill: false,
                 pointRadius: 0,
                 tension: 0.1,
-                yAxisID: 'y_sentiment'
+                yAxisID: showNormalized ? 'y' : 'y_sentiment'
             });
         }
 
@@ -750,13 +778,19 @@
                     y: {
                         position: 'left',
                         grid: { color: 'rgba(26, 42, 48, 0.2)' },
-                        ticks: { color: '#4A6A70', font: { family: 'monospace', size: 9 } }
+                        ticks: {
+                            color: '#4A6A70',
+                            font: { family: 'monospace', size: 9 },
+                            callback: function(value) {
+                                return showNormalized ? value.toFixed(0) + '%' : '$' + value.toFixed(2);
+                            }
+                        }
                     },
                     y_sentiment: {
                         position: 'right',
                         min: -1,
                         max: 1,
-                        display: showSentiment,
+                        display: showSentiment && !showNormalized,
                         grid: { display: false },
                         ticks: {
                             color: '#8B5CF6',

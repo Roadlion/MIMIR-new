@@ -76,6 +76,10 @@ async def guerilla_page(request: Request):
 async def map_page(request: Request):
     return templates.TemplateResponse(request, "map.html")
 
+@app.get("/backtest", response_class=HTMLResponse)
+async def map_page(request: Request):
+    return templates.TemplateResponse(request, "backtest.html")
+
 @app.get("/health")
 async def health():
     return {"status": "MIMIR is awake", "mode": settings.mode}
