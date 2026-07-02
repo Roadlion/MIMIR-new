@@ -7,3 +7,4 @@ requests
 redis
 pandas
 jinja2
+ib_async
