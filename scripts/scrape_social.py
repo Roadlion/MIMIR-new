@@ -11,6 +11,7 @@ import os
 import re
 import html
 import time
+import random
 import hashlib
 import urllib3
 import requests
@@ -126,10 +127,7 @@ def detect_assets(title, summary, known_tickers):
 
 def scrape_feeds():
     """Scrape Reddit feeds and return list of parsed posts."""
-    # A unique User-Agent compliant with Reddit's API guidelines to avoid 429 rate limiting.
-    headers = {
-        "User-Agent": "MIMIR-SocialSentimentScraper/1.0 (contact: developer@mimir.local; for research purposes)"
-    }
+    from curl_cffi.requests import Session
     
     posts = []
     seen_links = set()
@@ -138,17 +136,35 @@ def scrape_feeds():
     print("🤖 MIMIR SOCIAL SCRAPER (Reddit RSS)")
     print("="*60)
     
+    # Create an impersonated Chrome session to bypass Reddit's aggressive 429 rate limiting
+    sess = Session(impersonate="chrome")
+    sess.verify = False
+    sess.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
+    })
+    
     for channel, url in REDDIT_FEEDS.items():
         max_retries = 3
-        backoff = 2.0
+        backoff = 10.0
         
         for attempt in range(max_retries):
             try:
                 print(f"Fetching {channel} RSS (attempt {attempt+1}/{max_retries})...")
-                resp = requests.get(url, headers=headers, verify=False, timeout=10)
+                resp = sess.get(url, timeout=10)
                 
                 if resp.status_code == 429:
-                    delay = backoff * (2 ** attempt)
+                    delay = backoff * (2.5 ** attempt) + random.uniform(2.0, 5.0)
                     print(f"⚠️ Rate limited (429) on {channel}. Backing off for {delay:.1f}s...")
                     time.sleep(delay)
                     continue
@@ -202,7 +218,7 @@ def scrape_feeds():
                 time.sleep(2)
                 
         # Sleep between different feeds to be polite
-        time.sleep(3.0)
+        time.sleep(8.0 + random.uniform(2.0, 5.0))
             
     print(f"\nTotal posts scraped: {len(posts)}")
     return posts
@@ -275,7 +291,8 @@ def main():
             # Consolidate post contents
             consolidated = []
             for sp in subposts:
-                consolidated.append(f"Title: {sp['title']}\nContent: {sp['summary']}")
+                link_line = f"\nLink: {sp['link']}" if sp.get('link') else ""
+                consolidated.append(f"Title: {sp['title']}{link_line}\nContent: {sp['summary']}")
             summary_text = "\n\n---\n\n".join(consolidated)[:3000] # Cap size for API efficiency
             
             # Call DeepSeek with strict relevance scoring

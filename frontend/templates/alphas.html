@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR - Alphas{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    /* Styling for glassmorphic tables and animations */
+    .glass-panel {
+        background: rgba(10, 22, 28, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+    }
+    /* Custom scrollbar for drawer and lists */
+    .scrollbar-thin::-webkit-scrollbar {
+        width: 5px;
+        height: 5px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+        background: #1A2A30;
+        border-radius: 4px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+        background: #00A6B2;
+    }
+    /* Table row selections */
+    tr.selected-row {
+        background: rgba(0, 166, 178, 0.08) !important;
+        border-left: 2px solid #00A6B2;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-7xl mx-auto relative">
+    
+    <!-- Top Filter Bar -->
+    <div class="glass-panel p-5 rounded-xl border border-[#1A2A30] flex flex-col md:flex-row justify-between items-center gap-4">
+        <div>
+            <h1 class="text-lg font-bold text-[#D6E5E3] uppercase tracking-wider font-mono"><i class="fas fa-brain mr-2 text-[#00A6B2]"></i> Alpha Library</h1>
+            <p class="text-xs text-[#4A6A70] font-mono mt-1">Review saved quantitative signals and explore performance metrics.</p>
+        </div>
+        
+        <!-- Search and filters -->
+        <div class="flex items-center gap-3 w-full md:w-auto font-mono">
+            <div class="relative w-full md:w-64">
+                <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70]"></i>
+                <input type="text" id="formulaSearchInput"
+                       class="w-full bg-[#050A0D] border border-[#1A2A30] rounded pl-7 pr-3 py-1.5 text-xs text-[#D6E5E3] placeholder-[#4A6A70] focus:border-[#00A6B2] focus:outline-none transition-colors"
+                       placeholder="Filter by formula...">
+            </div>
+            
+            <select id="universeFilter" class="bg-[#050A0D] border border-[#1A2A30] text-[#8BA4A8] rounded px-3 py-1.5 text-xs focus:outline-none focus:border-[#00A6B2] capitalize">
+                <option value="">All Universes</option>
+                <option value="core">Core</option>
+                <option value="all">All (Dynamic)</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Main Alphas List Panel -->
+    <div class="glass-panel p-6 rounded-xl border border-[#1A2A30] space-y-4">
+        <h2 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono border-b border-[#1A2A30] pb-2 flex justify-between items-center">
+            <span><i class="fas fa-history mr-1.5 text-[#00A6B2]"></i> Alpha Backtest Run History</span>
+            <span id="historyCount" class="text-[10px] text-[#4A6A70] font-mono">0 runs saved</span>
+        </h2>
+        
+        <div class="overflow-x-auto min-h-[300px]">
+            <table class="w-full text-left font-mono text-xs text-[#8BA4A8]">
+                <thead>
+                    <tr class="border-b border-[#1A2A30] text-[#4A6A70] uppercase select-none">
+                        <th class="pb-3 pl-3">ID</th>
+                        <th class="pb-3">Formula</th>
+                        <th class="pb-3">Universe</th>
+                        <th class="pb-3">Style</th>
+                        <th class="pb-3 text-right">Sharpe</th>
+                        <th class="pb-3 text-right">Return</th>
+                        <th class="pb-3 text-right">Drawdown</th>
+                        <th class="pb-3 text-right">Turnover</th>
+                        <th class="pb-3 text-right">Fitness</th>
+                        <th class="pb-3 text-center">Date run</th>
+                    </tr>
+                </thead>
+                <tbody id="alphasTableBody">
+                    <tr>
+                        <td colspan="10" class="py-12 text-center text-[#4A6A70]">
+                            <i class="fas fa-circle-notch fa-spin text-base text-[#00A6B2] mr-2"></i>Loading simulation history...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Table Pagination -->
+        <div id="alphasPagination" class="flex justify-between items-center pt-4 border-t border-[#1A2A30]/60 text-[10px] font-mono text-[#8BA4A8]">
+            <div class="flex items-center space-x-1.5">
+                <span>Show</span>
+                <select id="alphasPageSize" class="bg-[#091518]/80 border border-[#1A2A30] text-[#D6E5E3] rounded px-1.5 py-0.5 focus:outline-none focus:border-[#00A6B2] text-[10px]">
+                    <option value="10">10</option>
+                    <option value="15" selected>15</option>
+                    <option value="30">30</option>
+                </select>
+                <span>rows</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button id="alphasPrevBtn" class="bg-[#091518]/80 border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00E5F2] px-2 py-0.5 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center">
+                    <i class="fas fa-chevron-left mr-1"></i> Prev
+                </button>
+                <span id="alphasPageIndicator" class="text-xs text-[#D6E5E3] font-semibold">Page 1 of 1</span>
+                <button id="alphasNextBtn" class="bg-[#091518]/80 border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00E5F2] px-2 py-0.5 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center">
+                    Next <i class="fas fa-chevron-right ml-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alpha Detail Side Drawer (WorldQuant Brain Style) -->
+    <div id="alphaDrawer" class="fixed top-0 right-0 h-full w-[40%] bg-[#081115] border-l border-[#1A2A30] shadow-2xl transform translate-x-full transition-transform duration-300 z-50 p-6 flex flex-col space-y-5 overflow-y-auto scrollbar-thin font-mono text-[#8BA4A8]">
+        <!-- Header -->
+        <div class="flex justify-between items-start border-b border-[#1A2A30] pb-3">
+            <div>
+                <span class="text-[9px] bg-[#112228] text-[#00E5F2] border border-[#1A3A40] px-2 py-0.5 rounded font-bold uppercase" id="drawerStatus">ACTIVE</span>
+                <h3 class="text-sm font-bold text-[#D6E5E3] mt-1" id="drawerTitle">Alpha ID: --</h3>
+            </div>
+            <button id="closeDrawerBtn" class="text-[#4A6A70] hover:text-[#FF5252] transition-colors p-1">
+                <i class="fas fa-times text-lg"></i>
+            </button>
+        </div>
+        
+        <!-- Code / Formula Block -->
+        <div class="space-y-1.5">
+            <div class="flex justify-between items-center text-[10px]">
+                <span class="uppercase font-bold text-[#4A6A70]"><i class="fas fa-code mr-1 text-[#00A6B2]"></i> Code Expression</span>
+                <button id="copyCodeBtn" class="text-[#00A6B2] hover:text-[#00E5F2] transition-colors"><i class="far fa-copy mr-1"></i> Copy</button>
+            </div>
+            <pre class="bg-[#04080B] border border-[#1A2A30] rounded p-3 text-xs text-[#00A6B2] overflow-x-auto whitespace-pre-wrap break-all select-all font-mono" id="drawerFormula">--</pre>
+        </div>
+        
+        <!-- Simulation Settings -->
+        <div class="space-y-1.5">
+            <span class="text-[10px] uppercase font-bold text-[#4A6A70]"><i class="fas fa-sliders-h mr-1 text-[#00A6B2]"></i> Simulation Settings</span>
+            <div class="overflow-x-auto border border-[#1A2A30] rounded">
+                <table class="w-full text-left text-[10px] bg-[#04080B]/50">
+                    <tr class="border-b border-[#1A2A30] bg-[#04080B]/80 text-[#4A6A70] uppercase font-mono">
+                        <th class="p-2">Universe</th>
+                        <th class="p-2">Style</th>
+                        <th class="p-2">Decay</th>
+                        <th class="p-2">Slippage</th>
+                        <th class="p-2">Limit N</th>
+                    </tr>
+                    <tr class="text-[#D6E5E3]">
+                        <td class="p-2 capitalize" id="settingUniverse">--</td>
+                        <td class="p-2 font-mono capitalize" id="settingStyle">--</td>
+                        <td class="p-2" id="settingDecay">--</td>
+                        <td class="p-2" id="settingSlippage">--</td>
+                        <td class="p-2 font-mono" id="settingLimit">--</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="text-[10px] text-[#4A6A70] mt-1 flex justify-between">
+                <span>Active Markets: <span class="text-[#8BA4A8] ml-1" id="settingMarkets">--</span></span>
+                <span>Date Range: <span class="text-[#8BA4A8] ml-1" id="settingRange">--</span></span>
+            </div>
+        </div>
+
+        <!-- Diagnostics/Metrics Grid -->
+        <div class="space-y-1.5">
+            <span class="text-[10px] uppercase font-bold text-[#4A6A70]"><i class="fas fa-chart-line mr-1 text-[#00A6B2]"></i> Diagnostics</span>
+            <div class="grid grid-cols-4 gap-2">
+                <div class="bg-[#04080B] border border-[#1A2A30] rounded p-2 text-center">
+                    <div class="text-[8px] text-[#4A6A70] uppercase">Sharpe</div>
+                    <div class="text-xs font-bold text-[#00E5F2] mt-0.5" id="drawerSharpe">--</div>
+                </div>
+                <div class="bg-[#04080B] border border-[#1A2A30] rounded p-2 text-center">
+                    <div class="text-[8px] text-[#4A6A70] uppercase">Return</div>
+                    <div class="text-xs font-bold text-[#D6E5E3] mt-0.5" id="drawerReturn">--</div>
+                </div>
+                <div class="bg-[#04080B] border border-[#1A2A30] rounded p-2 text-center">
+                    <div class="text-[8px] text-[#4A6A70] uppercase">Drawdown</div>
+                    <div class="text-xs font-bold text-[#FF5252] mt-0.5" id="drawerDrawdown">--</div>
+                </div>
+                <div class="bg-[#04080B] border border-[#1A2A30] rounded p-2 text-center">
+                    <div class="text-[8px] text-[#4A6A70] uppercase">Fitness</div>
+                    <div class="text-xs font-bold text-[#00E5F2] mt-0.5" id="drawerFitness">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chart Section -->
+        <div class="space-y-1.5 flex-grow flex flex-col min-h-[220px]">
+            <span class="text-[10px] uppercase font-bold text-[#4A6A70]"><i class="fas fa-chart-area mr-1 text-[#00A6B2]"></i> Performance Chart</span>
+            <div class="bg-[#04080B] border border-[#1A2A30] rounded p-3 flex-grow relative flex items-center justify-center" id="drawerChartContainer">
+                <div id="drawerChartSpinner" class="text-[10px] text-[#4A6A70] flex items-center space-x-2">
+                    <i class="fas fa-spinner fa-spin text-[#00A6B2]"></i>
+                    <span>Simulating historical curve...</span>
+                </div>
+                <div id="drawerChartError" class="hidden text-[10px] text-[#FF5252] flex items-center space-x-1.5">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Failed to retrieve backtest series</span>
+                </div>
+                <canvas id="drawerPerformanceChart" class="hidden w-full h-full max-h-[200px]"></canvas>
+            </div>
+        </div>
+
+        <!-- Action Panel -->
+        <div class="pt-2 border-t border-[#1A2A30] flex space-x-2">
+            <button id="loadInSimBtn" class="w-full bg-[#00A6B2] hover:bg-[#00E5F2] text-[#050A0D] font-bold py-2.5 rounded text-xs transition-colors flex items-center justify-center space-x-1.5">
+                <i class="fas fa-external-link-alt"></i>
+                <span>Load in Simulator</span>
+            </button>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let allAlphas = [];
+    let filteredAlphas = [];
+    let currentAlphasPage = 1;
+    let alphasPageSize = 15;
+    let activeAlpha = null;
+    let drawerChartInstance = null;
+    let activeAbortController = null;
+
+    // Element bindings
+    const alphasTableBody = document.getElementById('alphasTableBody');
+    const formulaSearchInput = document.getElementById('formulaSearchInput');
+    const universeFilter = document.getElementById('universeFilter');
+    const prevBtn = document.getElementById('alphasPrevBtn');
+    const nextBtn = document.getElementById('alphasNextBtn');
+    const pageIndicator = document.getElementById('alphasPageIndicator');
+    const pageSizeSelect = document.getElementById('alphasPageSize');
+    const historyCount = document.getElementById('historyCount');
+    
+    const alphaDrawer = document.getElementById('alphaDrawer');
+    const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+    const copyCodeBtn = document.getElementById('copyCodeBtn');
+    const loadInSimBtn = document.getElementById('loadInSimBtn');
+
+    // Page Load
+    document.addEventListener('DOMContentLoaded', loadAlphasHistory);
+
+    async function loadAlphasHistory() {
+        try {
+            const res = await fetch('/api/v1/backtest/history');
+            const data = await res.json();
+            allAlphas = data || [];
+            applyFilters();
+        } catch (e) {
+            alphasTableBody.innerHTML = '<tr><td colspan="10" class="py-12 text-center text-[#FF5252]">Failed to fetch alpha history from server.</td></tr>';
+        }
+    }
+
+    function applyFilters() {
+        const query = formulaSearchInput.value.toLowerCase().trim();
+        const universe = universeFilter.value;
+
+        filteredAlphas = allAlphas.filter(a => {
+            const matchQuery = a.formula.toLowerCase().includes(query);
+            const matchUniverse = !universe || a.universe === universe;
+            return matchQuery && matchUniverse;
+        });
+
+        historyCount.innerText = `${filteredAlphas.length} run${filteredAlphas.length !== 1 ? 's' : ''} shown`;
+        currentAlphasPage = 1;
+        renderAlphasTable();
+    }
+
+    // Input handlers
+    formulaSearchInput.addEventListener('input', applyFilters);
+    universeFilter.addEventListener('change', applyFilters);
+    pageSizeSelect.addEventListener('change', (e) => {
+        alphasPageSize = parseInt(e.target.value);
+        currentAlphasPage = 1;
+        renderAlphasTable();
+    });
+
+    prevBtn.addEventListener('click', () => {
+        if (currentAlphasPage > 1) {
+            currentAlphasPage--;
+            renderAlphasTable();
+        }
+    });
+
+    nextBtn.addEventListener('click', () => {
+        const totalPages = Math.ceil(filteredAlphas.length / alphasPageSize);
+        if (currentAlphasPage < totalPages) {
+            currentAlphasPage++;
+            renderAlphasTable();
+        }
+    });
+
+    function formatVal(val, suffix='') {
+        return (val === null || val === -999.99) ? '--' : `${val}${suffix}`;
+    }
+
+    function renderAlphasTable() {
+        if (filteredAlphas.length === 0) {
+            alphasTableBody.innerHTML = '<tr><td colspan="10" class="py-12 text-center text-[#4A6A70]">No simulation runs match filters</td></tr>';
+            prevBtn.disabled = true;
+            nextBtn.disabled = true;
+            pageIndicator.innerText = "Page 1 of 1";
+            return;
+        }
+
+        const totalPages = Math.ceil(filteredAlphas.length / alphasPageSize);
+        if (currentAlphasPage > totalPages) currentAlphasPage = totalPages;
+        if (currentAlphasPage < 1) currentAlphasPage = 1;
+
+        const startIndex = (currentAlphasPage - 1) * alphasPageSize;
+        const endIndex = startIndex + alphasPageSize;
+        const pageAlphas = filteredAlphas.slice(startIndex, endIndex);
+
+        alphasTableBody.innerHTML = pageAlphas.map((item, idx) => {
+            const actualIdx = startIndex + idx + 1;
+            const isSelected = activeAlpha && activeAlpha.id === item.id;
+            return `
+                <tr class="border-b border-[#1A2A30]/40 hover:bg-[#112228]/25 transition-colors cursor-pointer select-none group ${isSelected ? 'selected-row' : ''}"
+                    onclick="openAlphaDrawer(${item.id})">
+                    <td class="py-3 pl-3 text-[#4A6A70] text-[10px] font-bold">#${item.id}</td>
+                    <td class="py-3 font-bold text-[#00A6B2] max-w-[240px] truncate" title="${item.formula}">${item.formula}</td>
+                    <td class="py-3 capitalize">${item.universe}</td>
+                    <td class="py-3 capitalize font-mono text-[10px]">${item.style.replace('_', ' ')}</td>
+                    <td class="py-3 text-right font-bold text-[#00E5F2] font-mono">${formatVal(item.sharpe)}</td>
+                    <td class="py-3 text-right font-mono">${formatVal(item.annualized_return, '%')}</td>
+                    <td class="py-3 text-right text-[#FF5252] font-mono">${formatVal(item.max_drawdown, '%')}</td>
+                    <td class="py-3 text-right font-mono">${formatVal(item.turnover, '%')}</td>
+                    <td class="py-3 text-right text-[#00E5F2] font-mono">${formatVal(item.fitness)}</td>
+                    <td class="py-3 text-center text-[#4A6A70] text-[10px]">${item.created_at.split(' ')[0]}</td>
+                </tr>
+            `;
+        }).join('');
+
+        pageIndicator.innerText = `Page ${currentAlphasPage} of ${totalPages}`;
+        prevBtn.disabled = currentAlphasPage === 1;
+        nextBtn.disabled = currentAlphasPage === totalPages;
+    }
+
+    // Drawer Mechanics
+    function openAlphaDrawer(alphaId) {
+        activeAlpha = allAlphas.find(a => a.id === alphaId);
+        if (!activeAlpha) return;
+
+        // Highlight selected row
+        renderAlphasTable();
+
+        // Populate basic database fields instantly
+        document.getElementById('drawerTitle').innerText = `Alpha ID: #${activeAlpha.id}`;
+        document.getElementById('drawerFormula').innerText = activeAlpha.formula;
+        document.getElementById('settingUniverse').innerText = activeAlpha.universe;
+        document.getElementById('settingStyle').innerText = activeAlpha.style;
+        document.getElementById('settingDecay').innerText = activeAlpha.holding_period;
+        document.getElementById('settingSlippage').innerText = `${activeAlpha.slippage_bps} bps`;
+        document.getElementById('settingLimit').innerText = activeAlpha.portfolio_size !== null ? activeAlpha.portfolio_size : 'All';
+        document.getElementById('settingMarkets').innerText = activeAlpha.markets && activeAlpha.markets.length > 0 ? activeAlpha.markets.join(', ').toUpperCase() : 'ALL';
+        document.getElementById('settingRange').innerText = `${activeAlpha.start_date} / ${activeAlpha.end_date}`;
+
+        document.getElementById('drawerSharpe').innerText = formatVal(activeAlpha.sharpe);
+        document.getElementById('drawerReturn').innerText = formatVal(activeAlpha.annualized_return, '%');
+        document.getElementById('drawerDrawdown').innerText = formatVal(activeAlpha.max_drawdown, '%');
+        document.getElementById('drawerFitness').innerText = formatVal(activeAlpha.fitness);
+
+        // Slide out panel
+        alphaDrawer.classList.remove('translate-x-full');
+
+        // Fetch chart data on the fly (cancel pending ones)
+        if (activeAbortController) {
+            activeAbortController.abort();
+        }
+        activeAbortController = new AbortController();
+
+        const spinner = document.getElementById('drawerChartSpinner');
+        const errAlert = document.getElementById('drawerChartError');
+        const canvas = document.getElementById('drawerPerformanceChart');
+
+        spinner.classList.remove('hidden');
+        errAlert.classList.add('hidden');
+        canvas.classList.add('hidden');
+
+        fetch('/api/v1/backtest/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                formula: activeAlpha.formula,
+                start_date: activeAlpha.start_date,
+                end_date: activeAlpha.end_date,
+                holding_period: activeAlpha.holding_period,
+                slippage_bps: activeAlpha.slippage_bps,
+                universe: activeAlpha.universe,
+                style: activeAlpha.style,
+                portfolio_size: activeAlpha.portfolio_size,
+                markets: activeAlpha.markets
+            }),
+            signal: activeAbortController.signal
+        })
+        .then(res => {
+            if (!res.ok) throw new Error("Sim failure");
+            return res.json();
+        })
+        .then(data => {
+            spinner.classList.add('hidden');
+            canvas.classList.remove('hidden');
+            renderDrawerChart(data.chart);
+        })
+        .catch(err => {
+            if (err.name !== 'AbortError') {
+                spinner.classList.add('hidden');
+                errAlert.classList.remove('hidden');
+            }
+        });
+    }
+
+    function renderDrawerChart(chartPoints) {
+        const labels = chartPoints.map(p => p.date);
+        const strategyData = chartPoints.map(p => p.strategy);
+        const benchmarkData = chartPoints.map(p => p.benchmark);
+        const drawdownData = chartPoints.map(p => p.drawdown);
+
+        const ctx = document.getElementById('drawerPerformanceChart').getContext('2d');
+        if (drawerChartInstance) {
+            drawerChartInstance.destroy();
+        }
+
+        drawerChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Strategy',
+                        data: strategyData,
+                        borderColor: '#00A6B2',
+                        borderWidth: 1.5,
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 3
+                    },
+                    {
+                        label: 'SPY',
+                        data: benchmarkData,
+                        borderColor: '#4A6A70',
+                        borderWidth: 1,
+                        borderDash: [4, 4],
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 3
+                    },
+                    {
+                        label: 'Drawdown',
+                        data: drawdownData,
+                        borderColor: 'rgba(255, 82, 82, 0.3)',
+                        backgroundColor: 'rgba(255, 82, 82, 0.05)',
+                        borderWidth: 0.8,
+                        fill: true,
+                        pointRadius: 0,
+                        yAxisID: 'y_drawdown'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: true, mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(26, 42, 48, 0.15)' },
+                        ticks: { color: '#4A6A70', font: { family: 'JetBrains Mono', size: 8 }, maxTicksLimit: 6 }
+                    },
+                    y: {
+                        position: 'left',
+                        grid: { color: 'rgba(26, 42, 48, 0.15)' },
+                        ticks: { color: '#8BA4A8', font: { family: 'JetBrains Mono', size: 8 }, callback: v => v + '%' }
+                    },
+                    y_drawdown: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#FF5252', font: { family: 'JetBrains Mono', size: 8 }, callback: v => v + '%' },
+                        min: -100,
+                        max: 0
+                    }
+                }
+            }
+        });
+    }
+
+    function closeDrawer() {
+        alphaDrawer.classList.add('translate-x-full');
+        activeAlpha = null;
+        if (activeAbortController) {
+            activeAbortController.abort();
+            activeAbortController = null;
+        }
+        renderAlphasTable();
+    }
+
+    closeDrawerBtn.addEventListener('click', closeDrawer);
+
+    // Click outside drawer to close it
+    document.addEventListener('click', (e) => {
+        if (!alphaDrawer.contains(e.target) && !e.target.closest('tr.cursor-pointer')) {
+            closeDrawer();
+        }
+    });
+
+    // Copy formula
+    copyCodeBtn.addEventListener('click', () => {
+        if (!activeAlpha) return;
+        navigator.clipboard.writeText(activeAlpha.formula)
+            .then(() => {
+                copyCodeBtn.innerHTML = '<i class="fas fa-check text-green-400"></i> Copied!';
+                setTimeout(() => {
+                    copyCodeBtn.innerHTML = '<i class="far fa-copy mr-1"></i> Copy';
+                }, 1500);
+            });
+    });
+
+    // Load backtest in simulator
+    loadInSimBtn.addEventListener('click', () => {
+        if (!activeAlpha) return;
+        sessionStorage.setItem('loadedBacktest', JSON.stringify(activeAlpha));
+        window.location.href = '/backtest';
+    });
+
+</script>
+{% endblock %}

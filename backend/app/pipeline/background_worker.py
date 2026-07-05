@@ -177,7 +177,15 @@ def run_niche_scan():
         if pub_raw:
             try:
                 import dateutil.parser
-                pub_ts = dateutil.parser.parse(pub_raw)
+                tzinfos = {
+                    "EST": -18000, "EDT": -14400,
+                    "CST": -21600, "CDT": -18000,
+                    "MST": -25200, "MDT": -21600,
+                    "PST": -28800, "PDT": -25200,
+                    "UTC": 0, "GMT": 0, "BST": 3600,
+                    "CET": 3600, "CEST": 7200
+                }
+                pub_ts = dateutil.parser.parse(pub_raw, tzinfos=tzinfos)
                 if pub_ts.tzinfo is None:
                     pub_ts = pub_ts.replace(tzinfo=timezone.utc)
             except Exception:

@@ -205,6 +205,75 @@
 </div>
 
 <script>
+    // Parse social summary_text into an array of { title, link, content }
+    function parseSocialContent(summaryText) {
+        if (!summaryText) return [];
+        
+        // Split by the triple-dash separator used in scrape_social.py
+        const postBlocks = summaryText.split(/\n\s*---\s*\n/);
+        const parsedPosts = [];
+        
+        postBlocks.forEach(block => {
+            block = block.trim();
+            if (!block) return;
+            
+            let title = '';
+            let link = '';
+            let content = '';
+            
+            // Check if it's formatted as Title/Content/Link
+            if (block.startsWith('Title:')) {
+                // Find content position
+                let contentIndex = block.indexOf('\nContent:');
+                if (contentIndex === -1) {
+                    contentIndex = block.indexOf(' Content:');
+                }
+                
+                // Find link position
+                let linkIndex = block.indexOf('\nLink:');
+                if (linkIndex === -1) {
+                    linkIndex = block.indexOf(' Link:');
+                }
+                
+                // Extract Title
+                let titleEnd = block.length;
+                if (linkIndex !== -1) {
+                    titleEnd = Math.min(titleEnd, linkIndex);
+                }
+                if (contentIndex !== -1) {
+                    titleEnd = Math.min(titleEnd, contentIndex);
+                }
+                title = block.substring(6, titleEnd).trim();
+                
+                // Extract Link
+                if (linkIndex !== -1) {
+                    let linkEnd = block.length;
+                    if (contentIndex !== -1 && contentIndex > linkIndex) {
+                        linkEnd = contentIndex;
+                    }
+                    const labelStart = block.substring(linkIndex, linkEnd).indexOf('Link:');
+                    link = block.substring(linkIndex + labelStart + 5, linkEnd).trim();
+                }
+                
+                // Extract Content
+                if (contentIndex !== -1) {
+                    const labelStart = block.substring(contentIndex).indexOf('Content:');
+                    content = block.substring(contentIndex + labelStart + 8).trim();
+                } else {
+                    content = block.substring(titleEnd).trim();
+                }
+            } else {
+                content = block;
+            }
+            
+            if (title || content) {
+                parsedPosts.push({ title, link, content });
+            }
+        });
+        
+        return parsedPosts;
+    }
+
     let currentPage = 1;
     const limit = 15;
     let availableTickers = [];
@@ -319,9 +388,47 @@
                 ? '<i class="fa-brands fa-reddit platform-reddit text-lg"></i>' 
                 : '<i class="fa-brands fa-twitter platform-twitter text-lg"></i>';
                 
-            const platformName = item.platform === 'reddit' ? 'Reddit' : 'Twitter';
-            const progressPercent = Math.round(((score + 1.0) / 2.0) * 100);
+            let platformUrl = '#';
+            if (item.platform === 'reddit') {
+                platformUrl = `https://reddit.com/${item.channel}`;
+            } else if (item.platform === 'twitter') {
+                platformUrl = `https://twitter.com/${item.channel}`;
+            }
+
+            // Parse social contents (handles one or more posts)
+            const parsedPosts = parseSocialContent(item.summary_text);
             
+            let postsHtml = '';
+            if (parsedPosts.length > 0) {
+                postsHtml = parsedPosts.map((post, idx) => {
+                    const postLink = post.link || platformUrl;
+                    const displayTitle = post.title || 'Untitled Post';
+                    const displayContent = post.content || 'No content provided.';
+                    
+                    const borderClass = idx > 0 ? 'border-t border-[#1A2A30]/30 pt-3 mt-3' : '';
+                    const titleTag = post.title ? `
+                        <a href="${postLink}" target="_blank" class="block text-sm font-bold text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-snug line-clamp-2 mb-1.5" title="${displayTitle}">
+                            ${displayTitle}
+                        </a>
+                    ` : '';
+                    
+                    return `
+                        <div class="${borderClass}">
+                            ${titleTag}
+                            <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3 bg-[#060A0D]/50 border border-[#1A2A30]/30 rounded p-2.5 font-sans">
+                                ${displayContent}
+                            </p>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                postsHtml = `
+                    <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3 bg-[#060A0D]/50 border border-[#1A2A30]/30 rounded p-2.5 font-sans">
+                        No post summary content provided.
+                    </p>
+                `;
+            }
+
             // Build the card structure
             const card = document.createElement('article');
             card.className = 'social-card rounded-lg p-5 flex flex-col gap-3';
@@ -331,7 +438,7 @@
                     <div class="flex items-center gap-2.5">
                         ${platformIcon}
                         <div class="flex flex-col">
-                            <span class="text-xs font-mono text-[#D6E5E3] font-semibold">${item.channel}</span>
+                            <span class="text-xs font-mono text-[#D6E5E3] font-semibold cursor-pointer hover:text-[#00A6B2] transition-colors" onclick="window.open('${platformUrl}', '_blank')">${item.channel}</span>
                             <span class="text-[10px] text-[#4A6A70] font-mono">${platformName} • ${formatRelativeTime(item.bucket_ts)}</span>
                         </div>
                     </div>
@@ -365,8 +472,8 @@
                 </div>
 
                 <!-- Consolidated Post Preview Summary -->
-                <div class="bg-[#060A0D] border border-[#101E24] rounded p-3 text-xs text-[#8BA4A8] font-sans leading-relaxed whitespace-pre-line max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-[#1A2A30] scrollbar-track-transparent">
-                    ${item.summary_text || 'No post summary content provided.'}
+                <div class="space-y-3 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-[#1A2A30] scrollbar-track-transparent pr-1">
+                    ${postsHtml}
                 </div>
             `;
             socialFeedCards.appendChild(card);

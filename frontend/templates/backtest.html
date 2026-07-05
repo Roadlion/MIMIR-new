@@ -346,49 +346,42 @@
                             </tbody>
                         </table>
                     </div>
+
+                    <!-- Pagination Controls -->
+                    <div id="tradeLogPagination" class="flex justify-between items-center pt-3 border-t border-[#1A2A30]/60 text-[10px] font-mono text-[#8BA4A8]">
+                        <div class="flex items-center space-x-1.5">
+                            <span>Show</span>
+                            <select id="tradeLogPageSize" class="bg-[#091518]/80 border border-[#1A2A30] text-[#D6E5E3] rounded px-1.5 py-0.5 focus:outline-none focus:border-[#00A6B2] text-[10px]">
+                                <option value="10">10</option>
+                                <option value="20" selected>20</option>
+                                <option value="50">50</option>
+                            </select>
+                            <span>rows</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button id="tradeLogPrevBtn" class="bg-[#091518]/80 border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00E5F2] px-2 py-0.5 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center">
+                                <i class="fas fa-chevron-left mr-1"></i> Prev
+                            </button>
+                            <span id="tradeLogPageIndicator" class="text-xs text-[#D6E5E3] font-semibold">Page 1 of 1</span>
+                            <button id="tradeLogNextBtn" class="bg-[#091518]/80 border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00E5F2] px-2 py-0.5 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center">
+                                Next <i class="fas fa-chevron-right ml-1"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Bottom: Alpha History Section (Full Width) -->
-    <div class="glass-panel p-6 rounded-xl border border-[#1A2A30] space-y-4">
-        <h2 class="text-sm font-bold text-[#D6E5E3] uppercase tracking-wider font-mono border-b border-[#1A2A30] pb-2 flex justify-between items-center">
-            <span><i class="fas fa-history mr-1.5 text-[#00A6B2]"></i> Alpha Backtest History</span>
-            <span id="historyCount" class="text-[10px] text-[#8BA4A8] font-mono">0 runs saved</span>
-        </h2>
-        <div class="overflow-x-auto max-h-72 scrollbar-thin">
-            <table class="w-full text-left font-mono text-xs text-[#8BA4A8]">
-                <thead>
-                    <tr class="border-b border-[#1A2A30] text-[#4A6A70] uppercase">
-                        <th class="pb-2">Date run</th>
-                        <th class="pb-2">Formula</th>
-                        <th class="pb-2">Universe</th>
-                        <th class="pb-2">Style</th>
-                        <th class="pb-2">Range</th>
-                        <th class="pb-2 text-right">Sharpe</th>
-                        <th class="pb-2 text-right">Return</th>
-                        <th class="pb-2 text-right">Drawdown</th>
-                        <th class="pb-2 text-right">Turnover</th>
-                        <th class="pb-2 text-right">Fitness</th>
-                        <th class="pb-2 text-center">Action</th>
-                    </tr>
-                </thead>
-                <tbody id="historyTableBody">
-                    <!-- Loaded dynamically on load and on re-run -->
-                    <tr>
-                        <td colspan="11" class="py-4 text-center text-[#4A6A70]">Loading history...</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
     let myChart = null;
+    let allTrades = [];
+    let currentTradesPage = 1;
+    let tradesPageSize = 20;
 
     // Dropdown Checkboxes Toggle and Selection UI
     const marketDropdownBtn = document.getElementById('marketDropdownBtn');
@@ -456,56 +449,6 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    // Load History list from API
-    async function loadHistoryList() {
-        const tbody = document.getElementById('historyTableBody');
-        const historyCount = document.getElementById('historyCount');
-        try {
-            const res = await fetch('/api/v1/backtest/history');
-            const data = await res.json();
-            
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="11" class="py-4 text-center text-[#4A6A70]">No simulation runs saved yet</td></tr>';
-                historyCount.innerText = "0 runs saved";
-                return;
-            }
-
-            historyCount.innerText = `${data.length} run${data.length > 1 ? 's' : ''} saved`;
-            tbody.innerHTML = data.map(item => {
-                const marketsString = (item.markets && item.markets.length > 0) 
-                    ? item.markets.map(m => m.toUpperCase()).join(', ') 
-                    : 'ALL';
-
-                // Format values for displaying (avoid -999.99 database null placeholders)
-                const formatVal = (val, suffix='') => {
-                    return (val === null || val === -999.99) ? '--' : `${val}${suffix}`;
-                };
-
-                return `
-                    <tr class="border-b border-[#1A2A30]/40 hover:bg-[#112228]/25 transition-colors group">
-                        <td class="py-3 text-[#4A6A70]">${item.created_at}</td>
-                        <td class="py-3 font-bold text-[#00A6B2] max-w-[200px] truncate" title="${item.formula}">${item.formula}</td>
-                        <td class="py-3 capitalize">${item.universe}</td>
-                        <td class="py-3 font-mono capitalize">${item.style.replace('_', ' ')}</td>
-                        <td class="py-3 text-[10px] text-[#4A6A70]">${item.start_date} / ${item.end_date}</td>
-                        <td class="py-3 text-right font-bold text-[#00E5F2] font-mono">${formatVal(item.sharpe)}</td>
-                        <td class="py-3 text-right font-mono">${formatVal(item.annualized_return, '%')}</td>
-                        <td class="py-3 text-right text-[#FF5252] font-mono">${formatVal(item.max_drawdown, '%')}</td>
-                        <td class="py-3 text-right font-mono">${formatVal(item.turnover, '%')}</td>
-                        <td class="py-3 text-right text-[#00E5F2] font-mono">${formatVal(item.fitness)}</td>
-                        <td class="py-3 text-center">
-                            <button class="px-2 py-0.5 bg-[#112228] border border-[#1A3A40] rounded text-[10px] text-[#00A6B2] group-hover:border-[#00A6B2] group-hover:text-[#00E5F2] transition-colors"
-                                    onclick='loadHistoryItem(${JSON.stringify(item)})'>
-                                <i class="fas fa-folder-open mr-1"></i> Load
-                            </button>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-        } catch (e) {
-            tbody.innerHTML = '<tr><td colspan="11" class="py-4 text-center text-[#FF5252]">Failed to load backtest history</td></tr>';
-        }
-    }
 
     // Trigger simulation
     document.getElementById('runBtn').addEventListener('click', async () => {
@@ -587,27 +530,11 @@
             renderChart(data.chart);
 
             // Render Trades Table
-            const tbody = document.getElementById('tradeLogTableBody');
-            if (data.trades.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-[#4A6A70]">No recent trades generated</td></tr>';
-            } else {
-                tbody.innerHTML = data.trades.map(t => `
-                    <tr class="border-b border-[#1A2A30]/40 hover:bg-[#112228]/20 transition-colors">
-                        <td class="py-2.5">${t.date}</td>
-                        <td class="py-2.5 font-bold text-[#00A6B2]">${t.ticker}</td>
-                        <td class="py-2.5">
-                            <span class="${t.action.includes('Long') ? 'text-[#00E5F2]' : 'text-[#FF5252]'} bg-[#112228] px-2 py-0.5 rounded text-[10px]">
-                                ${t.action}
-                            </span>
-                        </td>
-                        <td class="py-2.5 text-right font-semibold">${t.weight}%</td>
-                        <td class="py-2.5 text-right text-[#4A6A70]">$${t.price}</td>
-                    </tr>
-                `).join('');
-            }
+            allTrades = data.trades || [];
+            currentTradesPage = 1;
+            renderTradesTable();
 
-            // Reload Saved History
-            loadHistoryList();
+
 
         } catch (error) {
             alert(`Network Error: ${error.message}`);
@@ -615,6 +542,72 @@
             runBtn.disabled = false;
             runBtn.innerHTML = '<i class="fas fa-play"></i> SIMULATE ALPHAS';
         }
+    });
+
+    function renderTradesTable() {
+        const tbody = document.getElementById('tradeLogTableBody');
+        const prevBtn = document.getElementById('tradeLogPrevBtn');
+        const nextBtn = document.getElementById('tradeLogNextBtn');
+        const pageIndicator = document.getElementById('tradeLogPageIndicator');
+        
+        if (allTrades.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-[#4A6A70]">No recent trades generated</td></tr>';
+            prevBtn.disabled = true;
+            nextBtn.disabled = true;
+            pageIndicator.innerText = "Page 1 of 1";
+            return;
+        }
+        
+        const totalPages = Math.ceil(allTrades.length / tradesPageSize);
+        if (currentTradesPage > totalPages) {
+            currentTradesPage = totalPages;
+        }
+        if (currentTradesPage < 1) {
+            currentTradesPage = 1;
+        }
+        
+        const startIndex = (currentTradesPage - 1) * tradesPageSize;
+        const endIndex = startIndex + tradesPageSize;
+        const pageTrades = allTrades.slice(startIndex, endIndex);
+        
+        tbody.innerHTML = pageTrades.map(t => `
+            <tr class="border-b border-[#1A2A30]/40 hover:bg-[#112228]/20 transition-colors">
+                <td class="py-2.5">${t.date}</td>
+                <td class="py-2.5 font-bold text-[#00A6B2]">${t.ticker}</td>
+                <td class="py-2.5">
+                    <span class="${t.action.includes('Long') ? 'text-[#00E5F2]' : 'text-[#FF5252]'} bg-[#112228] px-2 py-0.5 rounded text-[10px]">
+                        ${t.action}
+                    </span>
+                </td>
+                <td class="py-2.5 text-right font-semibold">${t.weight}%</td>
+                <td class="py-2.5 text-right text-[#4A6A70]">$${t.price}</td>
+            </tr>
+        `).join('');
+        
+        pageIndicator.innerText = `Page ${currentTradesPage} of ${totalPages}`;
+        prevBtn.disabled = currentTradesPage === 1;
+        nextBtn.disabled = currentTradesPage === totalPages;
+    }
+
+    document.getElementById('tradeLogPrevBtn').addEventListener('click', () => {
+        if (currentTradesPage > 1) {
+            currentTradesPage--;
+            renderTradesTable();
+        }
+    });
+
+    document.getElementById('tradeLogNextBtn').addEventListener('click', () => {
+        const totalPages = Math.ceil(allTrades.length / tradesPageSize);
+        if (currentTradesPage < totalPages) {
+            currentTradesPage++;
+            renderTradesTable();
+        }
+    });
+
+    document.getElementById('tradeLogPageSize').addEventListener('change', (e) => {
+        tradesPageSize = parseInt(e.target.value);
+        currentTradesPage = 1;
+        renderTradesTable();
     });
 
     function renderChart(chartPoints) {
@@ -721,7 +714,18 @@
         });
     }
 
-    // Load saved backtest history list on page load
-    document.addEventListener('DOMContentLoaded', loadHistoryList);
+    // Check for sessionStorage loaded backtests on load
+    document.addEventListener('DOMContentLoaded', () => {
+        const loaded = sessionStorage.getItem('loadedBacktest');
+        if (loaded) {
+            try {
+                const item = JSON.parse(loaded);
+                sessionStorage.removeItem('loadedBacktest');
+                loadHistoryItem(item);
+            } catch (e) {
+                console.error("Failed to load backtest from session storage:", e);
+            }
+        }
+    });
 </script>
 {% endblock %}

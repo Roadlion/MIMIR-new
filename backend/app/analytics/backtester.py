@@ -76,23 +76,193 @@ class BacktestEngine:
         cur.execute(price_sql, (tickers, self.start_date, self.end_date))
         price_rows = cur.fetchall()
         
-        # 3. Fetch direct daily sentiment
+        # 3. Fetch direct daily sentiment with lookahead bias prevention
         sentiment_sql = f"""
-            SELECT si.ticker, a.published_ts::date AS date, AVG(si.sentiment_score) AS sentiment_score
-            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
-            JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
-            WHERE si.ticker IN %s AND a.published_ts::date >= %s AND a.published_ts::date <= %s
-            GROUP BY si.ticker, a.published_ts::date
+            WITH adjusted_sentiment AS (
+                SELECT si.ticker, 
+                       CASE 
+                           -- Crypto (closes at 00:00 UTC)
+                           WHEN si.ticker LIKE '%%-USD' THEN 
+                               (a.published_ts AT TIME ZONE 'UTC')::date
+                           
+                           -- Forex / Commodity (settles at 17:00 NY)
+                           WHEN si.ticker LIKE '%%=X' OR si.ticker LIKE '%%=F' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'America/New_York')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'America/New_York')) >= 1020 THEN
+                                       ((a.published_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (a.published_ts AT TIME ZONE 'America/New_York')::date
+                               END
+
+                           -- China (closes at 15:00 Shanghai)
+                           WHEN si.ticker LIKE '%%.SS' OR si.ticker LIKE '%%.SZ' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Shanghai')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Shanghai')) >= 900 THEN
+                                       ((a.published_ts AT TIME ZONE 'Asia/Shanghai') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (a.published_ts AT TIME ZONE 'Asia/Shanghai')::date
+                               END
+
+                           -- Korea (closes at 15:30 Seoul)
+                           WHEN si.ticker LIKE '%%.KS' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Seoul')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Seoul')) >= 930 THEN
+                                       ((a.published_ts AT TIME ZONE 'Asia/Seoul') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (a.published_ts AT TIME ZONE 'Asia/Seoul')::date
+                               END
+
+                           -- Japan (closes at 15:00 Tokyo)
+                           WHEN si.ticker LIKE '%%.T' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Tokyo')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Tokyo')) >= 900 THEN
+                                       ((a.published_ts AT TIME ZONE 'Asia/Tokyo') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (a.published_ts AT TIME ZONE 'Asia/Tokyo')::date
+                               END
+
+                           -- Thailand (closes at 16:30 Bangkok)
+                           WHEN si.ticker LIKE '%%.BK' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Bangkok')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Bangkok')) >= 990 THEN
+                                       ((a.published_ts AT TIME ZONE 'Asia/Bangkok') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (a.published_ts AT TIME ZONE 'Asia/Bangkok')::date
+                               END
+
+                           -- Europe
+                           WHEN si.ticker LIKE '%%.MI' OR si.ticker LIKE '%%.DE' OR si.ticker LIKE '%%.PA' OR si.ticker LIKE '%%.L' OR 
+                                si.ticker LIKE '%%.F' OR si.ticker LIKE '%%.VI' OR si.ticker LIKE '%%.AS' OR si.ticker LIKE '%%.MC' THEN
+                               CASE 
+                                   WHEN si.ticker LIKE '%%.L' THEN
+                                       CASE 
+                                           WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Europe/London')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Europe/London')) >= 990 THEN
+                                               ((a.published_ts AT TIME ZONE 'Europe/London') + INTERVAL '1 day')::date
+                                           ELSE
+                                               (a.published_ts AT TIME ZONE 'Europe/London')::date
+                                       END
+                                   ELSE
+                                       CASE 
+                                           WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Europe/Paris')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Europe/Paris')) >= 1050 THEN
+                                               ((a.published_ts AT TIME ZONE 'Europe/Paris') + INTERVAL '1 day')::date
+                                           ELSE
+                                               (a.published_ts AT TIME ZONE 'Europe/Paris')::date
+                                       END
+                               END
+
+                           -- Default: US (closes at 16:00 Eastern)
+                           ELSE
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'America/New_York')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'America/New_York')) >= 960 THEN
+                                       ((a.published_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (a.published_ts AT TIME ZONE 'America/New_York')::date
+                               END
+                       END AS date,
+                       si.sentiment_score
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                WHERE si.ticker IN %s
+            )
+            SELECT ticker, date, AVG(sentiment_score) AS sentiment_score
+            FROM adjusted_sentiment
+            WHERE date >= %s AND date <= %s
+            GROUP BY ticker, date
         """
         cur.execute(sentiment_sql, (tickers, self.start_date, self.end_date))
         sentiment_rows = cur.fetchall()
-
-        # 4. Fetch daily social chatter
+ 
+        # 4. Fetch daily social chatter with lookahead bias prevention
         social_sql = f"""
-            SELECT ticker, bucket_ts::date AS date, AVG(sentiment_score) AS sentiment_score
-            FROM {settings.mimir_schema}.mimir_social_chatter
-            WHERE ticker IN %s AND bucket_ts::date >= %s AND bucket_ts::date <= %s
-            GROUP BY ticker, bucket_ts::date
+            WITH adjusted_social AS (
+                SELECT ticker, 
+                       CASE 
+                           -- Crypto (closes at 00:00 UTC)
+                           WHEN ticker LIKE '%%-USD' THEN 
+                               (bucket_ts AT TIME ZONE 'UTC')::date
+                           
+                           -- Forex / Commodity (settles at 17:00 NY)
+                           WHEN ticker LIKE '%%=X' OR ticker LIKE '%%=F' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'America/New_York')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'America/New_York')) >= 1020 THEN
+                                       ((bucket_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (bucket_ts AT TIME ZONE 'America/New_York')::date
+                               END
+
+                           -- China (closes at 15:00 Shanghai)
+                           WHEN ticker LIKE '%%.SS' OR ticker LIKE '%%.SZ' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'Asia/Shanghai')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'Asia/Shanghai')) >= 900 THEN
+                                       ((bucket_ts AT TIME ZONE 'Asia/Shanghai') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (bucket_ts AT TIME ZONE 'Asia/Shanghai')::date
+                               END
+
+                           -- Korea (closes at 15:30 Seoul)
+                           WHEN ticker LIKE '%%.KS' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'Asia/Seoul')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'Asia/Seoul')) >= 930 THEN
+                                       ((bucket_ts AT TIME ZONE 'Asia/Seoul') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (bucket_ts AT TIME ZONE 'Asia/Seoul')::date
+                               END
+
+                           -- Japan (closes at 15:00 Tokyo)
+                           WHEN ticker LIKE '%%.T' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'Asia/Tokyo')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'Asia/Tokyo')) >= 900 THEN
+                                       ((bucket_ts AT TIME ZONE 'Asia/Tokyo') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (bucket_ts AT TIME ZONE 'Asia/Tokyo')::date
+                               END
+
+                           -- Thailand (closes at 16:30 Bangkok)
+                           WHEN ticker LIKE '%%.BK' THEN
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'Asia/Bangkok')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'Asia/Bangkok')) >= 990 THEN
+                                       ((bucket_ts AT TIME ZONE 'Asia/Bangkok') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (bucket_ts AT TIME ZONE 'Asia/Bangkok')::date
+                               END
+
+                           -- Europe
+                           WHEN ticker LIKE '%%.MI' OR ticker LIKE '%%.DE' OR ticker LIKE '%%.PA' OR ticker LIKE '%%.L' OR 
+                                ticker LIKE '%%.F' OR ticker LIKE '%%.VI' OR ticker LIKE '%%.AS' OR ticker LIKE '%%.MC' THEN
+                                CASE 
+                                   WHEN ticker LIKE '%%.L' THEN
+                                       CASE 
+                                           WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'Europe/London')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'Europe/London')) >= 990 THEN
+                                               ((bucket_ts AT TIME ZONE 'Europe/London') + INTERVAL '1 day')::date
+                                           ELSE
+                                               (bucket_ts AT TIME ZONE 'Europe/London')::date
+                                       END
+                                   ELSE
+                                       CASE 
+                                           WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'Europe/Paris')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'Europe/Paris')) >= 1050 THEN
+                                               ((bucket_ts AT TIME ZONE 'Europe/Paris') + INTERVAL '1 day')::date
+                                           ELSE
+                                               (bucket_ts AT TIME ZONE 'Europe/Paris')::date
+                                       END
+                               END
+
+                           -- Default: US (closes at 16:00 Eastern)
+                           ELSE
+                               CASE 
+                                   WHEN EXTRACT(HOUR FROM (bucket_ts AT TIME ZONE 'America/New_York')) * 60 + EXTRACT(MINUTE FROM (bucket_ts AT TIME ZONE 'America/New_York')) >= 960 THEN
+                                       ((bucket_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
+                                   ELSE
+                                       (bucket_ts AT TIME ZONE 'America/New_York')::date
+                               END
+                       END AS date,
+                       sentiment_score
+                FROM {settings.mimir_schema}.mimir_social_chatter
+                WHERE ticker IN %s
+            )
+            SELECT ticker, date, AVG(sentiment_score) AS sentiment_score
+            FROM adjusted_social
+            WHERE date >= %s AND date <= %s
+            GROUP BY ticker, date
         """
         cur.execute(social_sql, (tickers, self.start_date, self.end_date))
         social_rows = cur.fetchall()
@@ -122,22 +292,34 @@ class BacktestEngine:
         all_dates = pd.to_datetime(df_prices['date'].unique()).sort_values()
         all_tickers = sorted(df_prices['ticker'].unique())
         
+        # Create active mask based on first and last available price records
+        active_mask = pd.DataFrame(False, index=all_dates, columns=all_tickers)
+        for ticker in all_tickers:
+            ticker_dates = df_prices.loc[df_prices['ticker'] == ticker, 'date']
+            if not ticker_dates.empty:
+                first_date = pd.to_datetime(ticker_dates.min())
+                last_date = pd.to_datetime(ticker_dates.max())
+                active_mask.loc[first_date:last_date, ticker] = True
+        self.active_mask = active_mask
+        
         # Pivot helpers
         def pivot_and_align(df, val_col, fill_method=None, fill_val=0.0):
             if df.empty:
-                return pd.DataFrame(fill_val, index=all_dates, columns=all_tickers)
+                return pd.DataFrame(np.nan, index=all_dates, columns=all_tickers).where(self.active_mask, np.nan)
             df['date'] = pd.to_datetime(df['date'])
             pivoted = df.pivot(index='date', columns='ticker', values=val_col)
             # Reindex to match all dates and tickers
             pivoted = pivoted.reindex(index=all_dates, columns=all_tickers)
             if fill_method == 'ffill':
-                # Use ffill and bfill to prevent 0.0 price points
-                pivoted = pivoted.ffill().bfill().fillna(fill_val)
+                # Use ffill and bfill to prevent 0.0 price points, but only within the active window
+                pivoted = pivoted.ffill().bfill()
+                pivoted = pivoted.where(self.active_mask, np.nan)
             elif fill_method == 'sentiment_decay':
                 # Sentiment decays over 3 days, then defaults to 0
-                pivoted = pivoted.ffill(limit=3).fillna(0.0)
+                pivoted = pivoted.ffill(limit=3)
+                pivoted = pivoted.where(self.active_mask, np.nan).fillna(0.0)
             else:
-                pivoted = pivoted.fillna(fill_val)
+                pivoted = pivoted.where(self.active_mask, np.nan).fillna(fill_val)
             return pivoted
 
         self.dfs['open'] = pivot_and_align(df_prices, 'open', 'ffill')
@@ -148,7 +330,7 @@ class BacktestEngine:
         
         # Precompute typical WorldQuant variables
         self.dfs['vwap'] = (self.dfs['high'] + self.dfs['low'] + self.dfs['close']) / 3.0
-        self.dfs['returns'] = self.dfs['close'].pct_change().fillna(0.0)
+        self.dfs['returns'] = self.dfs['close'].pct_change(fill_method=None).where(self.active_mask, np.nan).fillna(0.0)
         
         self.dfs['sentiment'] = pivot_and_align(df_sent, 'sentiment', 'sentiment_decay')
         self.dfs['social_chatter'] = pivot_and_align(df_social, 'social_chatter', 'sentiment_decay')
@@ -168,58 +350,82 @@ class BacktestEngine:
         
         # Align weights shape
         close_df = self.dfs['close']
-        raw_weights = raw_weights.reindex(index=close_df.index, columns=close_df.columns).fillna(0.0)
+        raw_weights = raw_weights.reindex(index=close_df.index, columns=close_df.columns)
+        # Apply active mask so that inactive assets are NaN
+        raw_weights = raw_weights.where(self.active_mask, np.nan)
         
         # 1. Apply portfolio size constraint (keep only top/bottom N weights on each date)
         if portfolio_size is not None and portfolio_size > 0:
             def filter_top_n(row):
-                # Separate long and short candidates
-                n = min(portfolio_size, len(row))
-                non_zero = row[row != 0]
-                if len(non_zero) == 0:
-                    return row
+                valid_row = row.dropna()
+                new_row = pd.Series(np.nan, index=row.index)  # Keep inactive as NaN
+                if len(valid_row) == 0:
+                    return new_row
                 
-                # Find cuts
-                sorted_vals = np.sort(row.values)
-                bottom_cut = sorted_vals[n - 1] if len(sorted_vals) >= n else sorted_vals[-1]
-                top_cut = sorted_vals[-n] if len(sorted_vals) >= n else sorted_vals[0]
+                # Active assets are initialized to 0.0
+                new_row[valid_row.index] = 0.0
                 
-                new_row = pd.Series(0.0, index=row.index)
                 if style == 'long_only':
-                    new_row[row >= top_cut] = row[row >= top_cut]
-                else:
-                    new_row[row >= top_cut] = row[row >= top_cut]
-                    new_row[row <= bottom_cut] = row[row <= bottom_cut]
+                    pos_row = valid_row[valid_row > 0]
+                    if len(pos_row) > 0:
+                        n_pos = min(portfolio_size, len(pos_row))
+                        pos_rank = pos_row.rank(method='first')
+                        selected_idx = pos_rank[pos_rank > len(pos_row) - n_pos].index
+                        new_row[selected_idx] = pos_row[selected_idx]
+                else: # long_short
+                    pos_row = valid_row[valid_row > 0]
+                    neg_row = valid_row[valid_row < 0]
+                    
+                    if len(pos_row) > 0:
+                        n_pos = min(portfolio_size, len(pos_row))
+                        pos_rank = pos_row.rank(method='first')
+                        selected_idx = pos_rank[pos_rank > len(pos_row) - n_pos].index
+                        new_row[selected_idx] = pos_row[selected_idx]
+                        
+                    if len(neg_row) > 0:
+                        n_neg = min(portfolio_size, len(neg_row))
+                        neg_rank = neg_row.rank(method='first')
+                        selected_idx = neg_rank[neg_rank <= n_neg].index
+                        new_row[selected_idx] = neg_row[selected_idx]
                 return new_row
 
             raw_weights = raw_weights.apply(filter_top_n, axis=1)
 
-        # 2. Enforce holding style rules
+        # 2. Enforce holding style rules (ignoring NaN)
         if style == 'long_only':
-            # Zero out negative weights
+            # Zero out negative weights, keeping NaNs
             raw_weights = raw_weights.clip(lower=0.0)
-            # Scale so sum of weights equals 1.0
-            daily_sum = raw_weights.sum(axis=1)
+            daily_sum = raw_weights.sum(axis=1, skipna=True)
             weights = raw_weights.div(daily_sum.replace(0, 1e-15), axis=0)
         else: # long_short
-            # Neutralize (de-mean weights so net sum is 0.0)
-            daily_mean = raw_weights.mean(axis=1)
+            daily_mean = raw_weights.mean(axis=1, skipna=True)
             neutral_weights = raw_weights.sub(daily_mean, axis=0)
-            # Scale so absolute sum equals 1.0 (leverage = 1.0)
-            abs_sum = neutral_weights.abs().sum(axis=1)
+            abs_sum = neutral_weights.abs().sum(axis=1, skipna=True)
             weights = neutral_weights.div(abs_sum.replace(0, 1e-15), axis=0)
+
+        # Fill NaNs with 0.0 for rolling calculation, but we will re-mask afterwards
+        weights = weights.fillna(0.0)
 
         # 3. Holding Period Smoothing (Decay)
         if holding_period > 1:
             weights = weights.rolling(window=holding_period, min_periods=1).mean()
+            # Re-apply active mask to prevent active weights from rolling over into inactive days
+            weights = weights.where(self.active_mask, np.nan)
             # Re-scale weights to 1.0 leverage after smoothing
             if style == 'long_only':
-                weights = weights.div(weights.sum(axis=1).replace(0, 1e-15), axis=0)
+                daily_sum = weights.sum(axis=1, skipna=True)
+                weights = weights.div(daily_sum.replace(0, 1e-15), axis=0)
             else:
-                weights = weights.div(weights.abs().sum(axis=1).replace(0, 1e-15), axis=0)
+                daily_mean = weights.mean(axis=1, skipna=True)
+                neutral_weights = weights.sub(daily_mean, axis=0)
+                abs_sum = neutral_weights.abs().sum(axis=1, skipna=True)
+                weights = neutral_weights.div(abs_sum.replace(0, 1e-15), axis=0)
+
+        # Final fillna to ensure no NaNs in weights
+        weights = weights.fillna(0.0)
 
         # 4. Calculate Returns and Slippage
-        asset_returns = close_df.pct_change().fillna(0.0)
+        asset_returns = close_df.pct_change(fill_method=None).fillna(0.0)
         # Clean infinite returns caused by division by zero/tiny numbers
         asset_returns = asset_returns.replace([np.inf, -np.inf], 0.0).fillna(0.0)
         

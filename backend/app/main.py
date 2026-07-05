@@ -1,7 +1,7 @@
 # backend/app/main.py
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 import os
 
@@ -49,9 +49,9 @@ async def index(request: Request):
 async def articles_page(request: Request):
     return templates.TemplateResponse(request, "articles.html")
 
-@app.get("/social", response_class=HTMLResponse)
+@app.get("/social")
 async def social_page(request: Request):
-    return templates.TemplateResponse(request, "social.html")
+    return RedirectResponse(url="/articles")
 
 @app.get("/asset/{ticker}", response_class=HTMLResponse)
 async def finance_page(request: Request, ticker: str):
@@ -78,8 +78,12 @@ async def map_page(request: Request):
     return templates.TemplateResponse(request, "map.html")
 
 @app.get("/backtest", response_class=HTMLResponse)
-async def map_page(request: Request):
+async def backtest_page(request: Request):
     return templates.TemplateResponse(request, "backtest.html")
+
+@app.get("/alphas", response_class=HTMLResponse)
+async def alphas_page(request: Request):
+    return templates.TemplateResponse(request, "alphas.html")
 
 @app.get("/health")
 async def health():

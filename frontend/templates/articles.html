@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}MIMIR — Articles{% endblock %}
+{% block title %}MIMIR - Intelligence Feed{% endblock %}
 
 {% block head_extra %}
 <style>
+    /* Styling for glassmorphic cards and badges */
     .badge-bullish {
         background-color: rgba(0, 230, 118, 0.04);
         color: #00E676;
@@ -12,7 +13,6 @@
     .badge-bullish:hover {
         background-color: rgba(0, 230, 118, 0.08);
         border-color: #00E676;
-        box-shadow: 0 0 8px rgba(0, 230, 118, 0.15);
     }
     .badge-bearish {
         background-color: rgba(255, 82, 82, 0.04);
@@ -22,7 +22,6 @@
     .badge-bearish:hover {
         background-color: rgba(255, 82, 82, 0.08);
         border-color: #FF5252;
-        box-shadow: 0 0 8px rgba(255, 82, 82, 0.15);
     }
     .badge-neutral {
         background-color: rgba(255, 215, 64, 0.04);
@@ -32,18 +31,28 @@
     .badge-neutral:hover {
         background-color: rgba(255, 215, 64, 0.08);
         border-color: #FFD740;
-        box-shadow: 0 0 8px rgba(255, 215, 64, 0.15);
     }
-    .article-card {
+    .feed-card {
         background: #0B1317;
         border: 1px solid #1A2A30;
         transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .article-card:hover {
+    .feed-card:hover {
         transform: translateY(-2.5px);
         border-color: #00A6B2;
         box-shadow: 0 6px 20px rgba(0, 166, 178, 0.12);
     }
+    /* Sentiment meter bars */
+    .sentiment-fill-bullish {
+        background: linear-gradient(90deg, #00A6B2, #00E676);
+    }
+    .sentiment-fill-bearish {
+        background: linear-gradient(90deg, #FF5252, #FF7A00);
+    }
+    .sentiment-fill-neutral {
+        background: #2A4A50;
+    }
+    /* Shimmer loading placeholders */
     .skeleton-box {
         background: linear-gradient(90deg, #0B1317 25%, #16242C 50%, #0B1317 75%);
         background-size: 200% 100%;
@@ -53,36 +62,73 @@
         0% { background-position: 200% 0; }
         100% { background-position: -200% 0; }
     }
+    /* Platform icons branding */
+    .platform-reddit { color: #FF4500; }
+    .platform-twitter { color: #1DA1F2; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="max-w-7xl mx-auto space-y-6">
     <!-- Header Section -->
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-            <h1 class="text-3xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']"><i class="fas fa-newspaper mr-2"></i>Intelligence Feed</h1>
-            <p class="text-sm text-[#4A6A70] mt-1">Explore parsed macroeconomic intelligence, raw articles, and model-derived sentiment impacts.</p>
+            <h1 class="text-3xl font-bold text-[#D6E5E3] font-['JetBrains_Mono']"><i class="fa-solid fa-square-rss text-[#00A6B2] mr-2"></i>Unified Intelligence Feed</h1>
+            <p class="text-sm text-[#4A6A70] mt-1">Unified macroeconomic news feed, retail social discussions, and model-derived sentiment indicators.</p>
         </div>
-    </div>
+    </header>
+
+    <!-- Unified Stat Dashboard Panels -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4" id="stats-dashboard">
+        <!-- Most Active Ticker -->
+        <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col justify-between h-28 font-mono">
+            <span class="text-[10px] text-[#4A6A70] uppercase tracking-wider">Most Discussed Tickers</span>
+            <div id="stat-most-active" class="text-xl font-bold text-[#D6E5E3] mt-2 flex items-center gap-2">
+                <span class="text-[#00A6B2]">--</span>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">-- mentions</span>
+            </div>
+            <div class="text-[11px] text-[#4A6A70] mt-1">Chatter volume leader over the last 24h</div>
+        </div>
+
+        <!-- Highest Bullish Sentiment -->
+        <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col justify-between h-28 font-mono">
+            <span class="text-[10px] text-[#4A6A70] uppercase tracking-wider">Top Bullish Asset</span>
+            <div id="stat-top-bullish" class="text-xl font-bold text-[#00E676] mt-2 flex items-center gap-2">
+                <span>--</span>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: --</span>
+            </div>
+            <div class="text-[11px] text-[#4A6A70] mt-1">Strongest positive momentum on social & news</div>
+        </div>
+
+        <!-- Highest Bearish Sentiment -->
+        <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col justify-between h-28 font-mono">
+            <span class="text-[10px] text-[#4A6A70] uppercase tracking-wider">Top Bearish Asset</span>
+            <div id="stat-top-bearish" class="text-xl font-bold text-[#FF5252] mt-2 flex items-center gap-2">
+                <span>--</span>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: --</span>
+            </div>
+            <div class="text-[11px] text-[#4A6A70] mt-1">Strongest negative market pressure</div>
+        </div>
+    </section>
 
     <!-- Filters and Toolbar -->
     <div class="bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg flex flex-col gap-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <!-- Search Title/Summary -->
             <div class="relative flex flex-col gap-1.5 col-span-1 lg:col-span-2">
-                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Search Keywords</label>
+                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Search Keywords / Tickers</label>
                 <div class="relative">
-                    <input type="text" id="filterSearch" placeholder="Search by title or summary..." class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
-                    <button id="clearSearchBtn" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4A6A70] hover:text-[#D6E5E3] font-bold text-sm">×</button>
+                    <input type="text" id="filterSearch" placeholder="Search by title, summary, or ticker..." class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
                 </div>
             </div>
 
-            <!-- News Source Dropdown -->
+            <!-- Feed Source Type -->
             <div class="flex flex-col gap-1.5">
-                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">News Source</label>
-                <select id="filterSource" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
-                    <option value="">All Sources</option>
+                <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Feed Type</label>
+                <select id="filterType" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
+                    <option value="all">All Sources</option>
+                    <option value="news">News Articles Only</option>
+                    <option value="social">Social Feed Only</option>
                 </select>
             </div>
 
@@ -99,16 +145,16 @@
                 <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Sentiment Direction</label>
                 <select id="filterSentiment" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
                     <option value="">All Sentiments</option>
-                    <option value="bullish">Bullish (Positive)</option>
+                    <option value="bullish">Bullish</option>
                     <option value="neutral">Neutral</option>
-                    <option value="bearish">Bearish (Negative)</option>
+                    <option value="bearish">Bearish</option>
                 </select>
             </div>
         </div>
 
         <div class="flex items-center justify-between border-t border-[#142228] pt-3 text-xs font-mono">
             <div id="resultsCount" class="text-[#4A6A70]">
-                Scanning intelligence archives...
+                Scanning feed archives...
             </div>
             <button id="resetFiltersBtn" class="px-3 py-1 bg-[#16242C] text-[#D6E5E3] border border-[#2A4A50] hover:border-[#00A6B2] hover:text-[#00A6B2] rounded transition-all">
                 Reset Filters
@@ -116,11 +162,11 @@
         </div>
     </div>
 
-    <!-- Article Cards Grid -->
-    <div id="articlesGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <!-- Feed Grid -->
+    <div id="feedGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <!-- Initial Loading Skeletons -->
         {% for i in range(6) %}
-        <div class="article-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem]">
+        <div class="feed-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem] border border-[#1A2A30]">
             <div class="space-y-3">
                 <div class="flex justify-between items-center">
                     <div class="w-24 h-4 skeleton-box rounded"></div>
@@ -140,20 +186,20 @@
     <!-- Empty State Placeholder (hidden by default) -->
     <div id="emptyState" class="hidden py-20 text-center bg-[#070D10] border border-dashed border-[#1A2A30] rounded-lg">
         <span class="text-4xl text-[#4A6A70]"><i class="fas fa-search"></i></span>
-        <h3 class="text-lg font-bold text-[#D6E5E3] mt-4 font-mono">No Matching Intel Found</h3>
-        <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">Try refining your search text or filters. We couldn't find any articles matching this query.</p>
-        <button onclick="resetAllFilters()" class="mt-6 px-4 py-2 bg-[#00A6B2] text-black font-semibold rounded hover:bg-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">
+        <h3 class="text-lg font-bold text-[#D6E5E3] mt-4 font-mono">No Matching Feed Items Found</h3>
+        <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">Try refining your search text or filters. We couldn't find any articles or social posts matching this query.</p>
+        <button id="emptyClearFiltersBtn" class="mt-6 px-4 py-2 bg-[#00A6B2] text-black font-semibold rounded hover:bg-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">
             Clear Filters
         </button>
     </div>
 
     <!-- Pagination -->
-    <div id="paginationPanel" class="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#0A1216] border border-[#1A2A30] p-4 rounded-lg text-xs font-mono">
-        <div id="paginationDetails" class="text-[#4A6A70]">
-            Showing 0–0 of 0 articles
+    <div class="flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-xs text-[#4A6A70]">
+        <div id="paginationDetails">
+            Showing 0–0 of 0 items
         </div>
-        <div class="flex items-center gap-1.5" id="paginationControls">
-            <!-- Paginated buttons will render here -->
+        <div id="paginationControls" class="flex gap-2">
+            <!-- Populated dynamically -->
         </div>
     </div>
 </div>
@@ -161,259 +207,591 @@
 
 {% block scripts %}
 <script>
-    // State Manager
+    // Parse social summary_text into an array of { title, link, content }
+    function parseSocialContent(summaryText) {
+        if (!summaryText) return [];
+        
+        // Split by the triple-dash separator used in scrape_social.py
+        const postBlocks = summaryText.split(/\n\s*---\s*\n/);
+        const parsedPosts = [];
+        
+        postBlocks.forEach(block => {
+            block = block.trim();
+            if (!block) return;
+            
+            let title = '';
+            let link = '';
+            let content = '';
+            
+            // Check if it's formatted as Title/Content/Link
+            if (block.startsWith('Title:')) {
+                // Find content position
+                let contentIndex = block.indexOf('\nContent:');
+                if (contentIndex === -1) {
+                    contentIndex = block.indexOf(' Content:');
+                }
+                
+                // Find link position
+                let linkIndex = block.indexOf('\nLink:');
+                if (linkIndex === -1) {
+                    linkIndex = block.indexOf(' Link:');
+                }
+                
+                // Extract Title
+                let titleEnd = block.length;
+                if (linkIndex !== -1) {
+                    titleEnd = Math.min(titleEnd, linkIndex);
+                }
+                if (contentIndex !== -1) {
+                    titleEnd = Math.min(titleEnd, contentIndex);
+                }
+                title = block.substring(6, titleEnd).trim();
+                
+                // Extract Link
+                if (linkIndex !== -1) {
+                    let linkEnd = block.length;
+                    if (contentIndex !== -1 && contentIndex > linkIndex) {
+                        linkEnd = contentIndex;
+                    }
+                    const labelStart = block.substring(linkIndex, linkEnd).indexOf('Link:');
+                    link = block.substring(linkIndex + labelStart + 5, linkEnd).trim();
+                }
+                
+                // Extract Content
+                if (contentIndex !== -1) {
+                    const labelStart = block.substring(contentIndex).indexOf('Content:');
+                    content = block.substring(contentIndex + labelStart + 8).trim();
+                } else {
+                    content = block.substring(titleEnd).trim();
+                }
+            } else {
+                content = block;
+            }
+            
+            if (title || content) {
+                parsedPosts.push({ title, link, content });
+            }
+        });
+        
+        return parsedPosts;
+    }
+
+    // State management
     const state = {
         page: 1,
         limit: 12,
         search: '',
-        source: '',
+        sourceType: 'all',
         asset: '',
         sentiment: '',
         total: 0,
         pages: 1
     };
 
-    // Load state from URL parameters on initialization
-    function loadStateFromUrl() {
-        const params = new URLSearchParams(window.location.search);
-        state.page = parseInt(params.get('page')) || 1;
-        state.search = params.get('search') || '';
-        state.source = params.get('source') || '';
-        state.asset = params.get('asset') || '';
-        state.sentiment = params.get('sentiment') || '';
-        
-        // Sync to DOM inputs
-        document.getElementById('filterSearch').value = state.search;
-        document.getElementById('filterSource').value = state.source;
-        document.getElementById('filterAsset').value = state.asset;
-        document.getElementById('filterSentiment').value = state.sentiment;
-        
-        toggleClearSearchButton();
-    }
+    let allCombinedItems = [];
 
-    // Save state to URL parameters
-    function saveStateToUrl() {
-        const params = new URLSearchParams();
-        if (state.page > 1) params.set('page', state.page);
-        if (state.search) params.set('search', state.search);
-        if (state.source) params.set('source', state.source);
-        if (state.asset) params.set('asset', state.asset);
-        if (state.sentiment) params.set('sentiment', state.sentiment);
+    // Element references
+    const feedGrid = document.getElementById('feedGrid');
+    const emptyState = document.getElementById('emptyState');
+    const resultsCount = document.getElementById('resultsCount');
+    const paginationControls = document.getElementById('paginationControls');
+    const paginationDetails = document.getElementById('paginationDetails');
+    const filterSearch = document.getElementById('filterSearch');
+    const filterType = document.getElementById('filterType');
+    const filterAsset = document.getElementById('filterAsset');
+    const filterSentiment = document.getElementById('filterSentiment');
+    const resetFiltersBtn = document.getElementById('resetFiltersBtn');
+    const emptyClearFiltersBtn = document.getElementById('emptyClearFiltersBtn');
+
+    // Page Load
+    document.addEventListener('DOMContentLoaded', async () => {
+        readStateFromUrl();
+        await loadAssetsFilter();
+        await fetchUnifiedFeed();
         
-        const path = params.toString() ? `${window.location.pathname}?${params.toString()}` : window.location.pathname;
-        window.history.pushState(state, '', path);
-    }
+        // Listeners
+        filterSearch.addEventListener('input', debounce(() => {
+            state.search = filterSearch.value.trim();
+            state.page = 1;
+            fetchUnifiedFeed();
+        }, 300));
+        
+        filterType.addEventListener('change', () => {
+            state.sourceType = filterType.value;
+            state.page = 1;
+            fetchUnifiedFeed();
+        });
+        
+        filterAsset.addEventListener('change', () => {
+            state.asset = filterAsset.value;
+            state.page = 1;
+            fetchUnifiedFeed();
+        });
+        
+        filterSentiment.addEventListener('change', () => {
+            state.sentiment = filterSentiment.value;
+            state.page = 1;
+            fetchUnifiedFeed();
+        });
+        
+        resetFiltersBtn.addEventListener('click', resetAllFilters);
+        emptyClearFiltersBtn.addEventListener('click', resetAllFilters);
+    });
 
-    // Toggle clear search button visibility
-    function toggleClearSearchButton() {
-        const clearBtn = document.getElementById('clearSearchBtn');
-        if (state.search) {
-            clearBtn.classList.remove('hidden');
-        } else {
-            clearBtn.classList.add('hidden');
-        }
-    }
-
-    // Load filter options
-    async function loadFilterDropdowns() {
+    // Populate active assets dropdown
+    async function loadAssetsFilter() {
         try {
-            // 1. Fetch sources
-            const sourcesRes = await fetch('/api/v1/articles/sources');
-            if (sourcesRes.ok) {
-                const sources = await sourcesRes.json();
-                const sourceSelect = document.getElementById('filterSource');
-                sources.forEach(src => {
-                    const opt = document.createElement('option');
-                    opt.value = src;
-                    opt.textContent = src;
-                    if (src === state.source) opt.selected = true;
-                    sourceSelect.appendChild(opt);
-                });
-            }
-
-            // 2. Fetch assets from taxonomy
-            const assetsRes = await fetch('/api/v1/taxonomy/assets');
-            if (assetsRes.ok) {
-                const data = await assetsRes.json();
-                const assetSelect = document.getElementById('filterAsset');
-                (data.assets || []).forEach(ast => {
-                    const opt = document.createElement('option');
-                    opt.value = ast.asset_name;
-                    opt.textContent = ast.ticker ? `${ast.asset_name} (${ast.ticker})` : ast.asset_name;
-                    if (ast.asset_name === state.asset) opt.selected = true;
-                    assetSelect.appendChild(opt);
-                });
+            const res = await fetch('/api/v1/taxonomy/assets');
+            const data = await res.json();
+            
+            const dropdown = document.getElementById('filterAsset');
+            const tickers = data.assets || [];
+            tickers.forEach(asset => {
+                const opt = document.createElement('option');
+                opt.value = asset.ticker;
+                opt.textContent = `${asset.ticker} - ${asset.name}`;
+                dropdown.appendChild(opt);
+            });
+            
+            // Re-apply loaded state
+            if (state.asset) {
+                dropdown.value = state.asset;
             }
         } catch (e) {
-            console.error("Error loading dropdown filter assets/sources:", e);
+            console.error('Failed to load assets filter list:', e);
         }
     }
 
-    // Fetch and render articles
-    async function fetchArticles() {
+    // Debounce input searches
+    function debounce(func, wait) {
+        let timeout;
+        return function(...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(this, args), wait);
+        };
+    }
+
+    // Unified fetch logic
+    async function fetchUnifiedFeed() {
         showLoadingState();
         saveStateToUrl();
         
         try {
-            const queryParams = new URLSearchParams({
-                page: state.page,
-                limit: state.limit
-            });
-            if (state.search) queryParams.set('search', state.search);
-            if (state.source) queryParams.set('source', state.source);
-            if (state.asset) queryParams.set('asset', state.asset);
-            if (state.sentiment) queryParams.set('sentiment', state.sentiment);
-            
-            const res = await fetch(`/api/v1/articles?${queryParams.toString()}`);
-            if (!res.ok) throw new Error('API request failed');
-            
-            const data = await res.json();
-            
-            state.total = data.total;
-            state.pages = data.pages;
-            
-            renderArticlesGrid(data.articles);
+            // Build query params
+            const artParams = new URLSearchParams({ limit: 100 });
+            if (state.search) artParams.set('search', state.search);
+            if (state.asset) artParams.set('asset', state.asset);
+            if (state.sentiment) artParams.set('sentiment', state.sentiment);
+
+            const socParams = new URLSearchParams({ limit: 100 });
+            if (state.search) socParams.set('search', state.search);
+            if (state.asset) socParams.set('ticker', state.asset);
+            if (state.sentiment) socParams.set('sentiment', state.sentiment);
+
+            // Concurrently fetch news and social
+            const [artRes, socRes] = await Promise.all([
+                fetch(`/api/v1/articles?${artParams.toString()}`),
+                fetch(`/api/v1/social/feed?${socParams.toString()}`)
+            ]);
+
+            let articles = [];
+            let social = [];
+
+            if (artRes.ok) {
+                const artData = await artRes.json();
+                articles = artData.articles || [];
+            }
+            if (socRes.ok) {
+                const socData = await socRes.json();
+                social = socData.data || [];
+            }
+
+            // Calculate unified stats on initial unfiltered loads
+            if (!state.search && !state.asset && !state.sentiment) {
+                calculateUnifiedStats(articles, social);
+            }
+
+            // Merge items based on Feed Type selection
+            let combined = [];
+
+            if (state.sourceType === 'all' || state.sourceType === 'news') {
+                articles.forEach(art => {
+                    combined.push({
+                        ...art,
+                        feedType: 'news',
+                        timestamp: new Date(art.published_ts)
+                    });
+                });
+            }
+
+            if (state.sourceType === 'all' || state.sourceType === 'social') {
+                social.forEach(soc => {
+                    combined.push({
+                        ...soc,
+                        feedType: 'social',
+                        timestamp: new Date(soc.bucket_ts)
+                    });
+                });
+            }
+
+            // Chronological sort DESC
+            combined.sort((a, b) => b.timestamp - a.timestamp);
+            allCombinedItems = combined;
+
+            state.total = combined.length;
+            state.pages = Math.ceil(combined.length / state.limit) || 1;
+
+            renderFeedGrid();
             renderPagination();
         } catch (e) {
-            console.error('Error fetching articles:', e);
+            console.error('Error fetching unified feed:', e);
             renderErrorState();
         }
     }
 
-    // Render cards
-    function renderArticlesGrid(articles) {
-        const grid = document.getElementById('articlesGrid');
-        const emptyState = document.getElementById('emptyState');
-        const resultsCount = document.getElementById('resultsCount');
-        
-        grid.innerHTML = '';
-        
-        if (!articles || articles.length === 0) {
-            grid.classList.add('hidden');
-            emptyState.classList.remove('hidden');
-            resultsCount.textContent = 'Found 0 matching articles';
-            return;
-        }
-        
-        grid.classList.remove('hidden');
-        emptyState.classList.add('hidden');
-        resultsCount.textContent = `Found ${state.total.toLocaleString()} matching article${state.total !== 1 ? 's' : ''}`;
-        
+    // Unified Stats Calculation
+    function calculateUnifiedStats(articles, social) {
+        // 1. Ticker counts
+        const tickerCounts = {};
+        const tickerNames = {};
+
+        // Process news impacts
         articles.forEach(art => {
-            const card = document.createElement('div');
-            card.className = 'article-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem] border border-[#1A2A30]';
-            
-            // Format publish date
-            const dateStr = art.published_ts 
-                ? new Date(art.published_ts).toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: false
-                  })
-                : 'Unknown Date';
-                
-            // News source label
-            const sourceText = art.source_name ? art.source_name : 'unknown source';
-            
-            // Aggregated impacts
-            let impactsHtml = '';
             if (art.impacts && art.impacts.length > 0) {
-                impactsHtml = art.impacts.map(imp => {
-                    let badgeClass = 'badge-neutral';
-                    let arrowSymbol = '•';
-                    let valColor = 'text-[#FFD740]';
-                    let plusSign = '';
-                    
-                    if (imp.direction === 'bullish' || imp.sentiment_score > 0.05) {
-                        badgeClass = 'badge-bullish';
-                        arrowSymbol = '<i class="fas fa-caret-up text-[#00E676]"></i>';
-                        valColor = 'text-[#00E676]';
-                        plusSign = '+';
-                    } else if (imp.direction === 'bearish' || imp.sentiment_score < -0.05) {
-                        badgeClass = 'badge-bearish';
-                        arrowSymbol = '<i class="fas fa-caret-down text-[#FF5252]"></i>';
-                        valColor = 'text-[#FF5252]';
+                art.impacts.forEach(imp => {
+                    if (imp.ticker) {
+                        tickerCounts[imp.ticker] = (tickerCounts[imp.ticker] || 0) + 1;
+                        tickerNames[imp.ticker] = imp.asset_name;
                     }
-                    
-                    const scoreFormatted = imp.sentiment_score !== null 
-                        ? `${plusSign}${Number(imp.sentiment_score).toFixed(2)}` 
-                        : '';
-                    const tickerLabel = imp.ticker ? ` (${imp.ticker})` : '';
-                    
-                    return `
-                        <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono ${badgeClass} mr-1 mb-1" title="${imp.asset_name}">
-                            <span>${arrowSymbol} ${imp.asset_name}${tickerLabel}</span>
-                            ${scoreFormatted ? `<span class="${valColor} font-bold ml-1">${scoreFormatted}</span>` : ''}
-                        </div>
-                    `;
-                }).join('');
-            } else {
-                impactsHtml = `<span class="text-[11px] text-[#4A6A70] font-mono italic">No mapped impact indicators</span>`;
+                });
             }
-            
-            // Summary truncate (falls back to reasoning if empty)
-            let summaryText = art.summary ? art.summary.trim() : '';
-            if (!summaryText && art.impacts && art.impacts.length > 0) {
-                const impactWithReasoning = art.impacts.find(imp => imp.reasoning);
-                if (impactWithReasoning && impactWithReasoning.reasoning) {
-                    summaryText = impactWithReasoning.reasoning;
+        });
+
+        // Process social mentions
+        social.forEach(soc => {
+            if (soc.ticker) {
+                tickerCounts[soc.ticker] = (tickerCounts[soc.ticker] || 0) + (soc.post_count || 1);
+                tickerNames[soc.ticker] = soc.asset_name;
+            }
+        });
+
+        let activeTicker = null;
+        let maxMentions = 0;
+        for (const t in tickerCounts) {
+            if (tickerCounts[t] > maxMentions) {
+                maxMentions = tickerCounts[t];
+                activeTicker = t;
+            }
+        }
+
+        if (activeTicker) {
+            document.getElementById('stat-most-active').innerHTML = `
+                <a href="/asset/${activeTicker}" class="text-[#00A6B2] hover:underline font-bold font-mono">$${activeTicker}</a>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">${maxMentions} mentions</span>
+            `;
+        } else {
+            document.getElementById('stat-most-active').innerHTML = `<span class="text-[#4A6A70] font-bold">--</span>`;
+        }
+
+        // 2. Find extreme sentiment movers across both feeds
+        let topBullishTicker = null;
+        let topBullishScore = -1.1;
+        let topBearishTicker = null;
+        let topBearishScore = 1.1;
+
+        articles.forEach(art => {
+            if (art.impacts && art.impacts.length > 0) {
+                art.impacts.forEach(imp => {
+                    if (imp.ticker && imp.sentiment_score !== null) {
+                        const score = parseFloat(imp.sentiment_score);
+                        if (score > topBullishScore) {
+                            topBullishScore = score;
+                            topBullishTicker = imp.ticker;
+                        }
+                        if (score < topBearishScore) {
+                            topBearishScore = score;
+                            topBearishTicker = imp.ticker;
+                        }
+                    }
+                });
+            }
+        });
+
+        social.forEach(soc => {
+            if (soc.ticker && soc.sentiment_score !== null) {
+                const score = parseFloat(soc.sentiment_score);
+                if (score > topBullishScore) {
+                    topBullishScore = score;
+                    topBullishTicker = soc.ticker;
+                }
+                if (score < topBearishScore) {
+                    topBearishScore = score;
+                    topBearishTicker = soc.ticker;
                 }
             }
-            if (!summaryText) {
-                summaryText = 'No article content summary available.';
-            }
-            const summaryTruncated = summaryText.length > 130 
-                ? summaryText.substring(0, 130) + '...' 
-                : summaryText;
-                
-            card.innerHTML = `
-                <div class="space-y-3.5 min-w-0">
-                    <div class="flex justify-between items-center text-[11px] font-mono text-[#4A6A70]">
-                        <span class="bg-[#101A20] text-[#00A6B2] px-2 py-0.5 border border-[#1A2A30] rounded uppercase tracking-wider font-semibold">${sourceText}</span>
-                        <span><i class="far fa-clock mr-1"></i>${dateStr}</span>
-                    </div>
-                    <div>
-                        <h3 class="text-sm font-bold text-[#D6E5E3] font-['Inter'] leading-snug line-clamp-2 hover:text-[#00A6B2] transition-colors cursor-pointer" title="${art.title}" onclick="window.open('${art.link}', '_blank')">
-                            ${art.title}
-                        </h3>
-                    </div>
-                    <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3">
-                        ${summaryTruncated}
-                    </p>
-                </div>
-                <div class="mt-4 pt-3 border-t border-[#142228]/50 flex flex-col gap-2">
-                    <div class="flex flex-wrap items-center">
-                        ${impactsHtml}
-                    </div>
-                    <div class="flex justify-end mt-1">
-                        <a href="${art.link}" target="_blank" class="flex items-center gap-1 text-[11px] font-mono text-[#00A6B2] hover:text-[#00E5F2] hover:underline bg-[#0C171D] border border-[#2A4A50]/40 hover:border-[#00A6B2]/80 px-2 py-1 rounded transition-all">
-                            Read Original ↗
-                        </a>
-                    </div>
-                </div>
+        });
+
+        if (topBullishTicker && topBullishScore > 0.1) {
+            document.getElementById('stat-top-bullish').innerHTML = `
+                <a href="/asset/${topBullishTicker}" class="text-[#00E676] hover:underline font-bold font-mono">$${topBullishTicker}</a>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: +${topBullishScore.toFixed(2)}</span>
             `;
-            
-            grid.appendChild(card);
+        } else {
+            document.getElementById('stat-top-bullish').innerHTML = `<span class="text-[#4A6A70] font-bold">--</span>`;
+        }
+
+        if (topBearishTicker && topBearishScore < -0.1) {
+            document.getElementById('stat-top-bearish').innerHTML = `
+                <a href="/asset/${topBearishTicker}" class="text-[#FF5252] hover:underline font-bold font-mono">$${topBearishTicker}</a>
+                <span class="text-xs text-[#4A6A70] font-normal font-sans">Score: ${topBearishScore.toFixed(2)}</span>
+            `;
+        } else {
+            document.getElementById('stat-top-bearish').innerHTML = `<span class="text-[#4A6A70] font-bold">--</span>`;
+        }
+    }
+
+    // Relative date formatter
+    function formatRelativeTime(dateStr) {
+        const d = new Date(dateStr);
+        const now = new Date();
+        const diffMs = now - d;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Render Feed Grid
+    function renderFeedGrid() {
+        feedGrid.innerHTML = '';
+        
+        if (allCombinedItems.length === 0) {
+            feedGrid.classList.add('hidden');
+            emptyState.classList.remove('hidden');
+            resultsCount.textContent = 'Found 0 matching items';
+            return;
+        }
+
+        feedGrid.classList.remove('hidden');
+        emptyState.classList.add('hidden');
+        resultsCount.textContent = `Found ${state.total.toLocaleString()} matching item${state.total !== 1 ? 's' : ''}`;
+
+        const startIndex = (state.page - 1) * state.limit;
+        const endIndex = startIndex + state.limit;
+        const pageItems = allCombinedItems.slice(startIndex, endIndex);
+
+        pageItems.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'feed-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[19rem]';
+
+            if (item.feedType === 'news') {
+                // NEWS LAYOUT
+                const dateStr = item.published_ts 
+                    ? new Date(item.published_ts).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+                      })
+                    : 'Unknown Date';
+
+                let impactsHtml = '';
+                if (item.impacts && item.impacts.length > 0) {
+                    impactsHtml = item.impacts.map(imp => {
+                        let badgeClass = 'badge-neutral';
+                        let arrowSymbol = '•';
+                        let valColor = 'text-[#FFD740]';
+                        let plusSign = '';
+                        
+                        if (imp.direction === 'bullish' || imp.sentiment_score > 0.05) {
+                            badgeClass = 'badge-bullish';
+                            arrowSymbol = '<i class="fas fa-caret-up text-[#00E676]"></i>';
+                            valColor = 'text-[#00E676]';
+                            plusSign = '+';
+                        } else if (imp.direction === 'bearish' || imp.sentiment_score < -0.05) {
+                            badgeClass = 'badge-bearish';
+                            arrowSymbol = '<i class="fas fa-caret-down text-[#FF5252]"></i>';
+                            valColor = 'text-[#FF5252]';
+                        }
+                        
+                        const scoreFormatted = imp.sentiment_score !== null 
+                            ? `${plusSign}${Number(imp.sentiment_score).toFixed(2)}` 
+                            : '';
+                        const tickerLabel = imp.ticker ? ` (${imp.ticker})` : '';
+                        
+                        return `
+                            <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono ${badgeClass} mr-1 mb-1" title="${imp.asset_name}">
+                                <span>${arrowSymbol} ${imp.asset_name}${tickerLabel}</span>
+                                ${scoreFormatted ? `<span class="${valColor} font-bold ml-1">${scoreFormatted}</span>` : ''}
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    impactsHtml = `<span class="text-[11px] text-[#4A6A70] font-mono italic">No mapped impact indicators</span>`;
+                }
+
+                let summaryText = item.summary ? item.summary.trim() : '';
+                if (!summaryText && item.impacts && item.impacts.length > 0) {
+                    const impactWithReasoning = item.impacts.find(imp => imp.reasoning);
+                    if (impactWithReasoning && impactWithReasoning.reasoning) {
+                        summaryText = impactWithReasoning.reasoning;
+                    }
+                }
+                if (!summaryText) {
+                    summaryText = 'No article content summary available.';
+                }
+                const summaryTruncated = summaryText.length > 130 
+                    ? summaryText.substring(0, 130) + '...' 
+                    : summaryText;
+
+                card.innerHTML = `
+                    <div class="space-y-3 min-w-0">
+                        <div class="flex justify-between items-center text-[10px] font-mono text-[#4A6A70]">
+                            <span class="bg-[#101A20] text-[#00A6B2] px-2 py-0.5 border border-[#1A2A30] rounded uppercase tracking-wider font-semibold flex items-center gap-1">
+                                <i class="fas fa-newspaper"></i> ${item.source_name || 'News'}
+                            </span>
+                            <span><i class="far fa-clock mr-1"></i>${dateStr}</span>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-bold text-[#D6E5E3] leading-snug line-clamp-2 hover:text-[#00A6B2] transition-colors cursor-pointer" title="${item.title}" onclick="window.open('${item.link}', '_blank')">
+                                ${item.title}
+                            </h3>
+                        </div>
+                        <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3">
+                            ${summaryTruncated}
+                        </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-[#142228]/50 flex flex-col gap-2">
+                        <div class="flex flex-wrap items-center">
+                            ${impactsHtml}
+                        </div>
+                        <div class="flex justify-end mt-1">
+                            <a href="${item.link}" target="_blank" class="flex items-center gap-1 text-[10px] font-mono text-[#00A6B2] hover:text-[#00E5F2] hover:underline bg-[#0C171D] border border-[#2A4A50]/40 hover:border-[#00A6B2]/80 px-2 py-1 rounded transition-all">
+                                Read Original ↗
+                            </a>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // SOCIAL LAYOUT
+                const score = parseFloat(item.sentiment_score);
+                let sentimentLabel = 'Neutral';
+                let sentimentClass = 'badge-neutral';
+                let fillClass = 'sentiment-fill-neutral';
+                
+                if (score > 0.15) {
+                    sentimentLabel = 'Bullish';
+                    sentimentClass = 'badge-bullish';
+                    fillClass = 'sentiment-fill-bullish';
+                } else if (score < -0.15) {
+                    sentimentLabel = 'Bearish';
+                    sentimentClass = 'badge-bearish';
+                    fillClass = 'sentiment-fill-bearish';
+                }
+
+                const platformIcon = item.platform === 'reddit' 
+                    ? '<i class="fa-brands fa-reddit platform-reddit text-base"></i>' 
+                    : '<i class="fa-brands fa-twitter platform-twitter text-base"></i>';
+                    
+                const platformName = item.platform === 'reddit' ? 'Reddit' : 'Twitter';
+                const progressPercent = Math.round(((score + 1.0) / 2.0) * 100);
+
+                // Build platform link
+                let platformUrl = '#';
+                if (item.platform === 'reddit') {
+                    platformUrl = `https://reddit.com/${item.channel}`;
+                } else if (item.platform === 'twitter') {
+                    platformUrl = `https://twitter.com/${item.channel}`;
+                }
+
+                // Parse social contents (handles one or more posts)
+                const parsedPosts = parseSocialContent(item.summary_text);
+                
+                let postsHtml = '';
+                if (parsedPosts.length > 0) {
+                    postsHtml = parsedPosts.map((post, idx) => {
+                        const postLink = post.link || platformUrl;
+                        const displayTitle = post.title || 'Untitled Post';
+                        const displayContent = post.content || 'No content provided.';
+                        
+                        const borderClass = idx > 0 ? 'border-t border-[#1A2A30]/30 pt-3 mt-3' : '';
+                        const titleTag = post.title ? `
+                            <a href="${postLink}" target="_blank" class="block text-sm font-bold text-[#D6E5E3] hover:text-[#00A6B2] transition-colors leading-snug line-clamp-2" title="${displayTitle}">
+                                ${displayTitle}
+                            </a>
+                        ` : '';
+                        
+                        return `
+                            <div class="${borderClass} space-y-1.5">
+                                ${titleTag}
+                                <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3 bg-[#060A0D]/50 border border-[#1A2A30]/30 rounded p-2.5 font-sans">
+                                    ${displayContent}
+                                </p>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    postsHtml = `
+                        <p class="text-xs text-[#8BA4A8] leading-relaxed line-clamp-3 bg-[#060A0D]/50 border border-[#1A2A30]/30 rounded p-2.5 font-sans">
+                            No post summary content provided.
+                        </p>
+                    `;
+                }
+
+                card.innerHTML = `
+                    <div class="space-y-3 min-w-0">
+                        <div class="flex justify-between items-center text-[10px] font-mono text-[#4A6A70]">
+                            <span class="bg-[#101A20] text-[#D6E5E3] px-2 py-0.5 border border-[#1A2A30] rounded uppercase tracking-wider font-semibold flex items-center gap-1.5 cursor-pointer hover:border-[#00A6B2]/80" onclick="window.open('${platformUrl}', '_blank')">
+                                ${platformIcon} ${item.channel}
+                            </span>
+                            <span><i class="far fa-clock mr-1"></i>${formatRelativeTime(item.bucket_ts)}</span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                            <a href="/asset/${item.ticker}" class="px-2 py-0.5 bg-[#112229] border border-[#1C363F] text-[#00A6B2] rounded font-mono font-bold hover:bg-[#00A6B2] hover:text-[#0B1317] transition-all">
+                                $${item.ticker}
+                            </a>
+                            <span class="text-[#8BA4A8] font-sans text-xs">${item.asset_name}</span>
+                        </div>
+                        <!-- Sentiment Meter -->
+                        <div class="flex items-center gap-2 my-1">
+                            <span class="text-[9px] font-mono text-[#4A6A70] w-6 text-right">-1.0</span>
+                            <div class="flex-grow bg-[#111A20] rounded-full h-1.5 border border-[#1A2A30] overflow-hidden relative">
+                                <div class="absolute top-0 bottom-0 left-1/2 w-0.5 bg-[#2A4A50] z-10"></div>
+                                <div class="${fillClass} h-full transition-all duration-500 rounded-full" style="width: ${progressPercent}%;"></div>
+                            </div>
+                            <span class="text-[9px] font-mono text-[#D6E5E3] w-12 text-left">+${score.toFixed(2)}</span>
+                        </div>
+                        <div class="space-y-3 mt-2">
+                            ${postsHtml}
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-[#1A2A30]/40 flex justify-between items-center text-[10px] font-mono text-[#4A6A70]">
+                        <span><i class="fa-solid fa-message mr-1"></i>${item.post_count} posts</span>
+                        <span class="border rounded px-2 py-0.5 font-semibold uppercase ${sentimentClass}">
+                            ${sentimentLabel}
+                        </span>
+                    </div>
+                `;
+            }
+
+            feedGrid.appendChild(card);
         });
     }
 
     // Render pagination controls
     function renderPagination() {
-        const container = document.getElementById('paginationControls');
-        const details = document.getElementById('paginationDetails');
-        
-        container.innerHTML = '';
+        paginationControls.innerHTML = '';
         
         if (state.total === 0) {
-            details.textContent = 'Showing 0–0 of 0 articles';
+            paginationDetails.textContent = 'Showing 0–0 of 0 items';
             return;
         }
         
         const startIdx = (state.page - 1) * state.limit + 1;
         const endIdx = Math.min(state.page * state.limit, state.total);
-        details.textContent = `Showing ${startIdx.toLocaleString()}–${endIdx.toLocaleString()} of ${state.total.toLocaleString()} article${state.total !== 1 ? 's' : ''}`;
+        paginationDetails.textContent = `Showing ${startIdx.toLocaleString()}–${endIdx.toLocaleString()} of ${state.total.toLocaleString()} item${state.total !== 1 ? 's' : ''}`;
         
         if (state.pages <= 1) return;
         
@@ -422,9 +800,9 @@
         prevBtn.className = `px-2.5 py-1.5 rounded border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00A6B2] transition-all ${state.page === 1 ? 'opacity-30 cursor-not-allowed pointer-events-none' : ''}`;
         prevBtn.textContent = '← Prev';
         prevBtn.addEventListener('click', () => changePage(state.page - 1));
-        container.appendChild(prevBtn);
+        paginationControls.appendChild(prevBtn);
         
-        // 2. Page number chips
+        // 2. Page chips
         const delta = 1;
         for (let i = 1; i <= state.pages; i++) {
             if (i === 1 || i === state.pages || (i >= state.page - delta && i <= state.page + delta)) {
@@ -432,12 +810,12 @@
                 btn.className = `px-2.5 py-1.5 rounded border transition-all ${i === state.page ? 'bg-[#00A6B2]/10 border-[#00A6B2] text-[#00A6B2] font-bold' : 'border-[#1A2A30] hover:border-[#2A4A50]'}`;
                 btn.textContent = i;
                 btn.addEventListener('click', () => changePage(i));
-                container.appendChild(btn);
+                paginationControls.appendChild(btn);
             } else if (i === 2 || i === state.pages - 1) {
                 const dots = document.createElement('span');
                 dots.className = 'px-1.5 text-[#4A6A70] select-none';
                 dots.textContent = '...';
-                container.appendChild(dots);
+                paginationControls.appendChild(dots);
             }
         }
         
@@ -446,132 +824,85 @@
         nextBtn.className = `px-2.5 py-1.5 rounded border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00A6B2] transition-all ${state.page === state.pages ? 'opacity-30 cursor-not-allowed pointer-events-none' : ''}`;
         nextBtn.textContent = 'Next →';
         nextBtn.addEventListener('click', () => changePage(state.page + 1));
-        container.appendChild(nextBtn);
+        paginationControls.appendChild(nextBtn);
     }
 
-    // Change current page
-    function changePage(newPage) {
-        if (newPage < 1 || newPage > state.pages) return;
-        state.page = newPage;
-        fetchArticles();
+    function changePage(pageNum) {
+        state.page = pageNum;
+        renderFeedGrid();
+        renderPagination();
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    // Show skeletons
     function showLoadingState() {
-        const grid = document.getElementById('articlesGrid');
-        const emptyState = document.getElementById('emptyState');
-        grid.classList.remove('hidden');
-        emptyState.classList.add('hidden');
-        
-        grid.innerHTML = Array(state.limit).fill(0).map(() => `
-            <div class="article-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem] border border-[#1A2A30]">
-                <div class="space-y-3.5">
+        feedGrid.innerHTML = Array(6).fill(0).map(() => `
+            <div class="feed-card rounded-lg p-5 flex flex-col justify-between h-full min-h-[18rem] border border-[#1A2A30]">
+                <div class="space-y-3">
                     <div class="flex justify-between items-center">
-                        <div class="w-20 h-4 skeleton-box rounded"></div>
                         <div class="w-24 h-4 skeleton-box rounded"></div>
+                        <div class="w-16 h-4 skeleton-box rounded"></div>
                     </div>
-                    <div class="w-full h-8 skeleton-box rounded"></div>
+                    <div class="w-full h-12 skeleton-box rounded"></div>
                     <div class="w-full h-16 skeleton-box rounded"></div>
                 </div>
-                <div class="mt-4 pt-3 border-t border-[#142228]/50 flex gap-2">
-                    <div class="w-16 h-6 skeleton-box rounded"></div>
-                    <div class="w-16 h-6 skeleton-box rounded"></div>
+                <div class="flex gap-2 mt-4">
+                    <div class="w-16 h-6 skeleton-box rounded-full"></div>
+                    <div class="w-16 h-6 skeleton-box rounded-full"></div>
                 </div>
             </div>
         `).join('');
+        emptyState.classList.add('hidden');
+        resultsCount.textContent = 'Scanning feed archives...';
+        paginationControls.innerHTML = '';
     }
 
-    // Render loading error state
     function renderErrorState() {
-        const grid = document.getElementById('articlesGrid');
-        const emptyState = document.getElementById('emptyState');
-        const resultsCount = document.getElementById('resultsCount');
-        
-        grid.innerHTML = '';
-        grid.classList.add('hidden');
-        emptyState.classList.remove('hidden');
-        resultsCount.textContent = 'Pipeline feed connection interrupted';
-        
-        emptyState.innerHTML = `
-            <span class="text-4xl text-[#FF5252]"><i class="fas fa-exclamation-triangle"></i></span>
-            <h3 class="text-lg font-bold text-red-500 mt-4 font-mono">Archive Fetch Failure</h3>
-            <p class="text-sm text-[#4A6A70] mt-2 max-w-md mx-auto">MIMIR backend server could not fulfill the database query. Make sure uvicorn and postgres services are active.</p>
-            <button onclick="fetchArticles()" class="mt-6 px-4 py-2 bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/30 font-semibold rounded hover:border-[#00E5F2] hover:text-[#00E5F2] font-mono text-xs uppercase tracking-wider transition-all">
-                Retry Query
-            </button>
-        `;
+        feedGrid.innerHTML = '<tr><td class="py-12 text-center text-[#FF5252]">Failed to fetch feed updates.</td></tr>';
     }
 
-    // Reset all filters in UI
     function resetAllFilters() {
+        state.page = 1;
         state.search = '';
-        state.source = '';
+        state.sourceType = 'all';
         state.asset = '';
         state.sentiment = '';
-        state.page = 1;
         
-        document.getElementById('filterSearch').value = '';
-        document.getElementById('filterSource').value = '';
-        document.getElementById('filterAsset').value = '';
-        document.getElementById('filterSentiment').value = '';
+        filterSearch.value = '';
+        filterType.value = 'all';
+        filterAsset.value = '';
+        filterSentiment.value = '';
         
-        toggleClearSearchButton();
-        fetchArticles();
+        fetchUnifiedFeed();
     }
 
-    // Set up inputs listeners with debouncing
-    let searchDebounceTimer;
-    document.getElementById('filterSearch').addEventListener('input', (e) => {
-        state.search = e.target.value.trim();
-        toggleClearSearchButton();
+    // URL States
+    function saveStateToUrl() {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', state.page);
+        if (state.search) url.searchParams.set('search', state.search);
+        else url.searchParams.delete('search');
+        if (state.sourceType !== 'all') url.searchParams.set('sourceType', state.sourceType);
+        else url.searchParams.delete('sourceType');
+        if (state.asset) url.searchParams.set('asset', state.asset);
+        else url.searchParams.delete('asset');
+        if (state.sentiment) url.searchParams.set('sentiment', state.sentiment);
+        else url.searchParams.delete('sentiment');
         
-        clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(() => {
-            state.page = 1;
-            fetchArticles();
-        }, 300);
-    });
+        window.history.replaceState({}, '', url.toString());
+    }
 
-    document.getElementById('clearSearchBtn').addEventListener('click', () => {
-        document.getElementById('filterSearch').value = '';
-        state.search = '';
-        toggleClearSearchButton();
-        state.page = 1;
-        fetchArticles();
-    });
-
-    document.getElementById('filterSource').addEventListener('change', (e) => {
-        state.source = e.target.value;
-        state.page = 1;
-        fetchArticles();
-    });
-
-    document.getElementById('filterAsset').addEventListener('change', (e) => {
-        state.asset = e.target.value;
-        state.page = 1;
-        fetchArticles();
-    });
-
-    document.getElementById('filterSentiment').addEventListener('change', (e) => {
-        state.sentiment = e.target.value;
-        state.page = 1;
-        fetchArticles();
-    });
-
-    document.getElementById('resetFiltersBtn').addEventListener('click', resetAllFilters);
-
-    // Initial sequence
-    window.addEventListener('DOMContentLoaded', async () => {
-        loadStateFromUrl();
-        await loadFilterDropdowns();
-        fetchArticles();
-    });
-
-    // Handle browser back/forward buttons
-    window.addEventListener('popstate', () => {
-        loadStateFromUrl();
-        fetchArticles();
-    });
+    function readStateFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        state.page = parseInt(urlParams.get('page')) || 1;
+        state.search = urlParams.get('search') || '';
+        state.sourceType = urlParams.get('sourceType') || 'all';
+        state.asset = urlParams.get('asset') || '';
+        state.sentiment = urlParams.get('sentiment') || '';
+        
+        filterSearch.value = state.search;
+        filterType.value = state.sourceType;
+        filterAsset.value = state.asset;
+        filterSentiment.value = state.sentiment;
+    }
 </script>
 {% endblock %}

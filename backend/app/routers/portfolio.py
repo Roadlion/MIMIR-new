@@ -350,6 +350,50 @@ def fetch_macro_indicators() -> Dict[str, Dict]:
             pass
     return results
 
+def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
+    if not tickers:
+        return {}
+    trends = {}
+    
+    from curl_cffi.requests import Session
+    session = Session(impersonate="chrome")
+    session.verify = False
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9"
+    })
+
+    def fetch_single(t_symbol):
+        try:
+            clean_symbol = t_symbol.strip().lstrip('$').upper()
+            t = yf.Ticker(clean_symbol, session=session)
+            hist = t.history(period="5d")
+            if not hist.empty:
+                current_price = float(hist["Close"].iloc[-1])
+                price_5d_ago = float(hist["Close"].iloc[0])
+                change_5d_pct = ((current_price - price_5d_ago) / price_5d_ago * 100) if price_5d_ago > 0 else 0.0
+                return t_symbol, {
+                    "current_price": current_price,
+                    "change_5d_pct": change_5d_pct
+                }
+        except Exception:
+            pass
+        return t_symbol, None
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(fetch_single, tickers)
+        for t_symbol, data in results:
+            if data is not None:
+                trends[t_symbol] = data
+            else:
+                trends[t_symbol] = {
+                    "current_price": 0.0,
+                    "change_5d_pct": 0.0
+                }
+                
+    return trends
+
 @router.get("/portfolio/advice")
 def get_portfolio_advice():
     # 1. Fetch current portfolio
@@ -357,7 +401,7 @@ def get_portfolio_advice():
     cur = conn.cursor()
     
     cur.execute(f"""
-        SELECT ticker, buy_price, quantity
+        SELECT ticker, buy_price, quantity, transaction_type, order_date
         FROM {settings.mimir_schema}.mimir_portfolio
     """)
     txs = cur.fetchall()
@@ -369,22 +413,47 @@ def get_portfolio_advice():
             "advice": "Add some transactions to your portfolio first, and MIMIR will analyze them against market sentiment!"
         }
         
-    # Group and aggregate
-    portfolio_summary = {}
+    # Group transactions by ticker
+    raw_holdings = {}
     for tx in txs:
-        t = tx["ticker"].upper()
-        if t not in portfolio_summary:
-            portfolio_summary[t] = {"qty": 0.0, "cost": 0.0}
-        portfolio_summary[t]["qty"] += float(tx["quantity"])
-        portfolio_summary[t]["cost"] += float(tx["buy_price"]) * float(tx["quantity"])
+        ticker = tx["ticker"].upper()
+        if ticker not in raw_holdings:
+            raw_holdings[ticker] = []
+        raw_holdings[ticker].append(tx)
         
     portfolio_list = []
-    for t, info in portfolio_summary.items():
-        if info["qty"] > 0:
+    for ticker, txs_list in raw_holdings.items():
+        # Sort chronologically to compute weighted average cost basis and realized P&L
+        txs_sorted = sorted(txs_list, key=lambda x: x["order_date"])
+        
+        qty_sum = 0.0
+        avg_buy = 0.0
+        realized_pl = 0.0
+        
+        for tx in txs_sorted:
+            tx_qty = float(tx["quantity"])
+            tx_price = float(tx["buy_price"])
+            tx_type = tx.get("transaction_type", "BUY").upper()
+            
+            if tx_type == "BUY":
+                if qty_sum + tx_qty > 0:
+                    avg_buy = (qty_sum * avg_buy + tx_qty * tx_price) / (qty_sum + tx_qty)
+                else:
+                    avg_buy = 0.0
+                qty_sum += tx_qty
+            elif tx_type == "SELL":
+                realized_pl += tx_qty * (tx_price - avg_buy)
+                qty_sum -= tx_qty
+                if qty_sum <= 0:
+                    qty_sum = 0.0
+                    avg_buy = 0.0
+                    
+        if qty_sum > 0:
             portfolio_list.append({
-                "ticker": t,
-                "quantity": info["qty"],
-                "avg_price": info["cost"] / info["qty"]
+                "ticker": ticker,
+                "quantity": qty_sum,
+                "avg_price": avg_buy,
+                "realized_pl": realized_pl
             })
             
     tickers_list = [p["ticker"] for p in portfolio_list]
@@ -434,13 +503,47 @@ def get_portfolio_advice():
     cur.close()
     conn.close()
     
-    # 4. Look online for real-time news headlines and macro trend data
+    # 4. Look online for real-time news headlines, macro trend data, and recent price trends
     online_news = fetch_online_stock_data(tickers_list)
     macro_trends = fetch_macro_indicators()
+    price_trends = fetch_portfolio_price_trends(tickers_list)
     
+    # Enrich portfolio_list with profit and price movement metrics
+    enriched_portfolio = []
+    for p in portfolio_list:
+        ticker = p["ticker"]
+        qty = p["quantity"]
+        avg_price = p["avg_price"]
+        realized_pl = p["realized_pl"]
+        
+        trend = price_trends.get(ticker, {"current_price": 0.0, "change_5d_pct": 0.0})
+        current_price = trend["current_price"]
+        if current_price == 0.0:
+            current_price = avg_price
+            
+        cost_basis = qty * avg_price
+        current_val = qty * current_price
+        unrealized_pl = current_val - cost_basis
+        unrealized_pl_pct = (unrealized_pl / cost_basis * 100) if cost_basis > 0 else 0.0
+        
+        enriched_portfolio.append({
+            "ticker": ticker,
+            "quantity": qty,
+            "avg_buy_price": avg_price,
+            "current_price": current_price,
+            "unrealized_profit_loss": unrealized_pl,
+            "unrealized_profit_loss_pct": unrealized_pl_pct,
+            "realized_profit_loss": realized_pl,
+            "total_profit_loss": unrealized_pl + realized_pl,
+            "recent_price_movement": {
+                "current_price": current_price,
+                "change_5d_pct": trend["change_5d_pct"]
+            }
+        })
+        
     # 5. Formulate Prompt for DeepSeek
     prompt_context = {
-        "portfolio": portfolio_list,
+        "portfolio": enriched_portfolio,
         "portfolio_sentiment": [
             {
                 "ticker": s["ticker"],

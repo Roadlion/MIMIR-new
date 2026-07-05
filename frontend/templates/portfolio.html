@@ -41,36 +41,47 @@
         </div>
     </div>
 
-    <!-- Main Content Workspace Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Left: Holdings, Forms, Ledgers (2/3 columns) -->
-        <div class="lg:col-span-2 space-y-6">
-            
+    <!-- Tabs Navigation -->
+    <div class="flex border-b border-[#1A2A30] mb-6 font-mono text-sm">
+        <button id="tabPositions" class="px-6 py-3 text-[#00A6B2] border-b-2 border-[#00A6B2] font-bold flex items-center gap-2 transition-colors focus:outline-none">
+            <i class="fas fa-chart-pie"></i> Positions & Ledger
+        </button>
+        <button id="tabAI" class="px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none">
+            <i class="fas fa-wand-sparkles text-[#ffd700]"></i> AI Strategic Advisor
+        </button>
+    </div>
+
+    <!-- Tab Contents -->
+    <div>
+        <!-- Tab 1: Positions & Ledger -->
+        <div id="contentPositions" class="space-y-6">
             <!-- Current Positions Table -->
             <div class="card p-0 overflow-hidden">
                 <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
                     <h2 class="text-sm font-mono text-[#E8F1F0] uppercase tracking-wider">Current Positions</h2>
                     <span class="text-xs text-[#00A6B2] font-mono">Live Price Aggregation</span>
                 </div>
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
-                            <th class="px-5 py-3">Asset Ticker</th>
-                            <th class="px-5 py-3">Quantity</th>
-                            <th class="px-5 py-3">Avg Buy Price</th>
-                            <th class="px-5 py-3">Current Price</th>
-                            <th class="px-5 py-3">Total Cost</th>
-                            <th class="px-5 py-3">Current Value</th>
-                            <th class="px-5 py-3">Unrealized P&L</th>
-                            <th class="px-5 py-3">Realized P&L</th>
-                        </tr>
-                    </thead>
-                    <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
-                        <tr>
-                            <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
-                        </tr>
-                    </tbody>
-                </table>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                            <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                                <th class="px-5 py-3">Asset Ticker</th>
+                                <th class="px-5 py-3">Quantity</th>
+                                <th class="px-5 py-3">Avg Buy Price</th>
+                                <th class="px-5 py-3">Current Price</th>
+                                <th class="px-5 py-3">Total Cost</th>
+                                <th class="px-5 py-3">Current Value</th>
+                                <th class="px-5 py-3">Unrealized P&L</th>
+                                <th class="px-5 py-3">Realized P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
+                            <tr>
+                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- Log Order / Transaction Form -->
@@ -113,32 +124,51 @@
                 <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30]">
                     <h2 class="text-sm font-mono text-[#E8F1F0] uppercase tracking-wider"><i class="fas fa-scroll mr-1"></i> Detailed Transaction Ledger</h2>
                 </div>
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
-                            <th class="px-5 py-3">Ticker</th>
-                            <th class="px-5 py-3">Type</th>
-                            <th class="px-5 py-3">Price</th>
-                            <th class="px-5 py-3">Quantity</th>
-                            <th class="px-5 py-3">Order Date</th>
-                            <th class="px-5 py-3 text-right">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ledgerTableBody" class="text-sm font-mono text-[#D6E5E3]">
-                    </tbody>
-                </table>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[700px]">
+                        <thead>
+                            <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                                <th class="px-5 py-3">Ticker</th>
+                                <th class="px-5 py-3">Type</th>
+                                <th class="px-5 py-3">Price</th>
+                                <th class="px-5 py-3">Quantity</th>
+                                <th class="px-5 py-3">Order Date</th>
+                                <th class="px-5 py-3 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ledgerTableBody" class="text-sm font-mono text-[#D6E5E3]">
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Pagination Controls -->
+                <div class="flex flex-col sm:flex-row items-center justify-between gap-4 px-5 py-3 border-t border-[#1A2A30] bg-[#0c1417]/30 font-mono text-xs text-[#4A6A70]">
+                    <div>
+                        Showing <span id="paginationStart" class="text-[#D6E5E3]">0</span> to <span id="paginationEnd" class="text-[#D6E5E3]">0</span> of <span id="paginationTotal" class="text-[#D6E5E3]">0</span> transactions
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="prevPageBtn" class="px-2.5 py-1 bg-[#111C21] hover:bg-[#1A2A30] text-[#D6E5E3] border border-[#1A2A30] rounded disabled:opacity-30 disabled:pointer-events-none transition-colors">
+                            <i class="fas fa-chevron-left mr-1"></i> Prev
+                        </button>
+                        <span id="pageIndicator" class="text-[#D6E5E3]">Page 1 of 1</span>
+                        <button id="nextPageBtn" class="px-2.5 py-1 bg-[#111C21] hover:bg-[#1A2A30] text-[#D6E5E3] border border-[#1A2A30] rounded disabled:opacity-30 disabled:pointer-events-none transition-colors">
+                            Next <i class="fas fa-chevron-right ml-1"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
-
         </div>
 
-        <!-- Right Column: AI Sentinel Advisor Insights -->
-        <div class="space-y-6">
+        <!-- Tab 2: AI Strategic Advisor -->
+        <div id="contentAI" class="hidden space-y-6">
             <div class="card p-0 overflow-hidden flex flex-col min-h-[500px]">
                 <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
                     <h2 class="text-sm font-mono text-[#ffd700] uppercase tracking-wider"><i class="fas fa-lightbulb mr-1"></i> AI Sentinel Insights</h2>
+                    <button id="refreshAdviceBtn" class="text-xs text-[#ffd700] hover:text-[#cca300] border border-[#ffd700]/20 hover:border-[#ffd700]/60 px-2.5 py-1 rounded transition-all font-mono">
+                        <i class="fas fa-sync-alt mr-1"></i> Re-generate
+                    </button>
                 </div>
                 
-                <div class="p-5 flex-grow flex flex-col">
+                <div class="p-6 flex-grow flex flex-col">
                     <!-- Loading State -->
                     <div id="aiLoading" class="hidden flex-grow flex flex-col items-center justify-center py-12 text-center">
                         <div class="w-8 h-8 border-3 border-[#ffd700] border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -149,7 +179,7 @@
                     <!-- Empty State -->
                     <div id="aiEmpty" class="flex-grow flex flex-col items-center justify-center py-12 text-center text-[#4A6A70] font-mono">
                         <span class="text-2xl mb-2 text-[#4A6A70]"><i class="fas fa-eye"></i></span>
-                        <p class="text-xs">Trigger AI Advisor sequence via the header button.</p>
+                        <p class="text-xs">Trigger AI Advisor sequence via the header button or tab activation.</p>
                     </div>
 
                     <!-- Content Render -->
@@ -164,6 +194,11 @@
 
 {% block scripts %}
 <script>
+    let currentLedgerPage = 1;
+    const ledgerPageSize = 10;
+    let cachedHoldings = {};
+    let cachedAdvice = localStorage.getItem("mimir_portfolio_advice");
+
     document.addEventListener("DOMContentLoaded", () => {
         // Set default order date to now
         const now = new Date();
@@ -195,7 +230,7 @@
             const buy_price = parseFloat(document.getElementById("txPrice").value);
             const quantity = parseFloat(document.getElementById("txQty").value);
             const transaction_type = document.getElementById("txType").value;
-            const order_date = document.getElementById("txDate").value; // Raw string (e.g. "YYYY-MM-DDTHH:MM")
+            const order_date = document.getElementById("txDate").value; 
             
             try {
                 const res = await fetch("/api/v1/portfolio", {
@@ -209,20 +244,65 @@
                     throw new Error(errData.detail || "Failed to add transaction");
                 }
                 
-                // Clear fields
                 document.getElementById("txTicker").value = "";
                 document.getElementById("txPrice").value = "";
                 document.getElementById("txQty").value = "";
                 
+                invalidateAdviceCache();
                 loadPortfolio();
             } catch (err) {
                 alert(err.message);
             }
         });
         
-        // Advice Button click
-        document.getElementById("getAdviceBtn").addEventListener("click", generateAdvice);
+        // Advice Button click (forces generation/refresh)
+        document.getElementById("getAdviceBtn").addEventListener("click", () => generateAdvice(true));
+
+        // Card Re-generate Button click
+        document.getElementById("refreshAdviceBtn").addEventListener("click", () => generateAdvice(true));
+
+        // Tabs Interactivity
+        const tabPositions = document.getElementById("tabPositions");
+        const tabAI = document.getElementById("tabAI");
+        
+        tabPositions.addEventListener("click", () => switchTab("positions"));
+        tabAI.addEventListener("click", () => switchTab("ai"));
+
+        // Pagination Buttons Interactivity
+        document.getElementById("prevPageBtn").addEventListener("click", () => {
+            if (currentLedgerPage > 1) {
+                currentLedgerPage--;
+                renderLedger();
+            }
+        });
+        
+        document.getElementById("nextPageBtn").addEventListener("click", () => {
+            currentLedgerPage++;
+            renderLedger();
+        });
     });
+
+    function switchTab(activeTab) {
+        const tabPositions = document.getElementById("tabPositions");
+        const tabAI = document.getElementById("tabAI");
+        const contentPositions = document.getElementById("contentPositions");
+        const contentAI = document.getElementById("contentAI");
+
+        if (activeTab === "positions") {
+            tabPositions.className = "px-6 py-3 text-[#00A6B2] border-b-2 border-[#00A6B2] font-bold flex items-center gap-2 transition-colors focus:outline-none";
+            tabAI.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none";
+            contentPositions.classList.remove("hidden");
+            contentAI.classList.add("hidden");
+        } else {
+            tabAI.className = "px-6 py-3 text-[#ffd700] border-b-2 border-[#ffd700] font-bold flex items-center gap-2 transition-colors focus:outline-none";
+            tabPositions.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
+            contentPositions.classList.add("hidden");
+            contentAI.classList.remove("hidden");
+            
+            // Switch to AI tab and display advice (loads from cache if present)
+            generateAdvice(false);
+        }
+    }
 
     async function loadPortfolio() {
         try {
@@ -230,11 +310,73 @@
             if (!res.ok) throw new Error("Could not load portfolio");
             const data = await res.json();
             
+            cachedHoldings = data.holdings;
             updateKPIs(data);
             renderHoldingsTable(data.holdings);
-            renderLedger(data.holdings);
+            renderLedger();
         } catch (err) {
             console.error(err);
+        }
+    }
+
+    async function deleteTx(id) {
+        if (!confirm("Are you sure you want to delete this transaction?")) return;
+        try {
+            const res = await fetch(`/api/v1/portfolio/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Failed to delete transaction");
+            invalidateAdviceCache();
+            loadPortfolio();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    function invalidateAdviceCache() {
+        localStorage.removeItem("mimir_portfolio_advice");
+        cachedAdvice = null;
+        const content = document.getElementById("aiContent");
+        const empty = document.getElementById("aiEmpty");
+        if (content) content.classList.add("hidden");
+        if (empty) empty.classList.remove("hidden");
+    }
+
+    async function generateAdvice(force = false) {
+        // Toggle tab display if hidden
+        const contentAI = document.getElementById("contentAI");
+        if (contentAI.classList.contains("hidden")) {
+            switchTab("ai");
+        }
+        
+        const loading = document.getElementById("aiLoading");
+        const empty = document.getElementById("aiEmpty");
+        const content = document.getElementById("aiContent");
+        
+        if (!force && cachedAdvice) {
+            content.innerHTML = cachedAdvice;
+            loading.classList.add("hidden");
+            empty.classList.add("hidden");
+            content.classList.remove("hidden");
+            return;
+        }
+        
+        loading.classList.remove("hidden");
+        empty.classList.add("hidden");
+        content.classList.add("hidden");
+        
+        try {
+            const res = await fetch("/api/v1/portfolio/advice");
+            if (!res.ok) throw new Error("Advice generation failed");
+            const data = await res.json();
+            
+            cachedAdvice = data.advice;
+            localStorage.setItem("mimir_portfolio_advice", cachedAdvice);
+            content.innerHTML = cachedAdvice;
+            loading.classList.add("hidden");
+            content.classList.remove("hidden");
+        } catch (err) {
+            content.innerHTML = `<p class="text-[#FF5252]">Error: ${err.message}</p>`;
+            loading.classList.add("hidden");
+            content.classList.remove("hidden");
         }
     }
 
@@ -276,7 +418,6 @@
         tbody.innerHTML = "";
         
         const holdingsKeys = Object.keys(holdings);
-        // Only show tickers with active remaining shares, or if there's any active holdings
         const activeHoldingsKeys = holdingsKeys.filter(t => holdings[t].quantity > 0);
         
         if (activeHoldingsKeys.length === 0) {
@@ -309,14 +450,14 @@
         });
     }
 
-    function renderLedger(holdings) {
+    function renderLedger() {
         const ledgerSection = document.getElementById("ledgerSection");
         const tbody = document.getElementById("ledgerTableBody");
         tbody.innerHTML = "";
         
         const allTx = [];
-        Object.keys(holdings).forEach(ticker => {
-            const h = holdings[ticker];
+        Object.keys(cachedHoldings).forEach(ticker => {
+            const h = cachedHoldings[ticker];
             h.transactions.forEach(tx => {
                 allTx.push({
                     ticker,
@@ -335,7 +476,22 @@
         // Sort by order date descending
         allTx.sort((a, b) => new Date(b.order_date) - new Date(a.order_date));
         
-        allTx.forEach(tx => {
+        const totalItems = allTx.length;
+        const totalPages = Math.ceil(totalItems / ledgerPageSize);
+        
+        // Clamp current page
+        if (currentLedgerPage > totalPages) {
+            currentLedgerPage = totalPages;
+        }
+        if (currentLedgerPage < 1) {
+            currentLedgerPage = 1;
+        }
+        
+        const startIndex = (currentLedgerPage - 1) * ledgerPageSize;
+        const endIndex = Math.min(startIndex + ledgerPageSize, totalItems);
+        const paginatedTx = allTx.slice(startIndex, endIndex);
+        
+        paginatedTx.forEach(tx => {
             const dateStr = new Date(tx.order_date).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }) + ' (GMT+7)';
             const typeStr = (tx.transaction_type || "BUY").toUpperCase();
             const typeColor = typeStr === "BUY" ? "text-[#00E676] bg-[#00E676]/10" : "text-[#FF5252] bg-[#FF5252]/10";
@@ -358,41 +514,16 @@
             `;
             tbody.appendChild(tr);
         });
-    }
 
-    async function deleteTx(id) {
-        if (!confirm("Are you sure you want to delete this transaction?")) return;
-        try {
-            const res = await fetch(`/api/v1/portfolio/${id}`, { method: "DELETE" });
-            if (!res.ok) throw new Error("Failed to delete transaction");
-            loadPortfolio();
-        } catch (err) {
-            alert(err.message);
-        }
-    }
-
-    async function generateAdvice() {
-        const loading = document.getElementById("aiLoading");
-        const empty = document.getElementById("aiEmpty");
-        const content = document.getElementById("aiContent");
+        // Update pagination details
+        document.getElementById("paginationStart").innerText = totalItems > 0 ? startIndex + 1 : 0;
+        document.getElementById("paginationEnd").innerText = endIndex;
+        document.getElementById("paginationTotal").innerText = totalItems;
+        document.getElementById("pageIndicator").innerText = `Page ${currentLedgerPage} of ${totalPages || 1}`;
         
-        loading.classList.remove("hidden");
-        empty.classList.add("hidden");
-        content.classList.add("hidden");
-        
-        try {
-            const res = await fetch("/api/v1/portfolio/advice");
-            if (!res.ok) throw new Error("Advice generation failed");
-            const data = await res.json();
-            
-            content.innerHTML = data.advice;
-            loading.classList.add("hidden");
-            content.classList.remove("hidden");
-        } catch (err) {
-            content.innerHTML = `<p class="text-[#FF5252]">Error: ${err.message}</p>`;
-            loading.classList.add("hidden");
-            content.classList.remove("hidden");
-        }
+        // Enable/Disable buttons
+        document.getElementById("prevPageBtn").disabled = currentLedgerPage <= 1;
+        document.getElementById("nextPageBtn").disabled = currentLedgerPage >= totalPages;
     }
 
     function formatCurrency(val) {
