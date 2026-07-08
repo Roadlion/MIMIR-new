@@ -6,6 +6,43 @@ This document serves as a comprehensive developer guide and system documentation
 
 ---
 
+## ⚡ Recent Key Updates (July 2026)
+
+MIMIR has recently undergone a major update to enhance the backtesting engine, improve performance, extend operator capabilities in the formula parser, harden scraper reliability, and introduce dedicated UI panels:
+
+### 1. Vectorized Backtesting Engine Enhancements
+* **Lookahead Bias Mitigation**: Implemented timezone-aware local market close date alignment (using custom per-market cutoffs for US and Crypto assets).
+* **Survivorship & Masking**: Added `active_mask` functionality to guard against inactive/delisted asset bias.
+* **Data Resilience**: Improved DataFrame pivoting, backfilling, and cleanups for return metrics and transaction slippage fees.
+
+### 2. Expanded Mathematical Operator Suite
+* **Element-wise Functions**: Added `ceil`, `floor`, `round`, `sigmoid`, `tanh`, `s_log_1p`, `min`, `max`, `power`, and `clamp`.
+* **Time-Series Operators**: Added `ts_decay_exp`, `ts_argmax`, `ts_argmin`, `ts_skewness`, `ts_kurtosis`, `ts_product`, `ts_min_max_scale`, and `ts_av_diff`.
+* **Rolling Regressions**: Introduced linear regression helpers: `ts_regression_beta`, `ts_regression_alpha`, and `ts_regression_residual`.
+* **Conditional Logic**: Added the `trade_when` operator to structure state-conditioned execution rules.
+* **Ranking Stability**: Enhanced `rank` and `ts_rank` calculations for higher numerical precision and stability.
+
+### 3. Portfolio & Advice Engine Updates
+* **Advanced Ledger Handling**: Enhanced Shadow Portfolio aggregation to compute realized and unrealized P&L dynamically.
+* **Dynamic Price Fetching**: Integrated a fast online price trend retriever using `curl_cffi` combined with `yfinance` to obtain up-to-date valuations.
+* **Enriched LLM Context**: Upgraded the AI investment advisor's prompting pipeline with richer portfolio position states for more contextually accurate advice.
+
+### 4. Robust Ingestion & Scraping Pipelines
+* **Hardened Social Scraper**: Reddit scraping now uses resilient `curl_cffi` HTTP client sessions, randomized backoffs/retries, and collects deep post links.
+* **Timezone Parsing**: Improved background worker datetime parsing with robust `dateutil` timezone offset handling.
+
+### 5. UI/UX & Routing Enhancements
+* **Alphas Workspace**: Added a dedicated Alphas frontend view `/alphas` listing pre-built strategy formulas.
+* **Interactive Simulation Controls**: Integrated session-backed strategy load-to-simulator capabilities, enabling quick backtesting from saved formulas.
+* **Enhanced Visualizations**: Better pagination across articles/social records, detailed trade log paging, and structured sentiment block extraction on social dashboards.
+* **Clean Routing**: Integrated `/social` views cleanly, redirecting endpoint flows directly to unified dashboard components.
+
+### 6. Expanded Test Suites
+* Added comprehensive unit tests in `scripts/test_wq_operators.py`, `scripts/test_portfolio_advice.py`, and expanded `scripts/test_backtest.py` to ensure robustness.
+
+---
+
+
 ## 🗺️ System Architecture
 
 The diagram below illustrates how raw news, social chatter, and market prices are ingested, processed through AI and statistical modules, cached in PostgreSQL, and served via the FastAPI web interface.
