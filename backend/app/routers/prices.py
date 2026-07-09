@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import yfinance as yf
 from yfinance import cache as yf_cache
 import pandas as pd
+import numpy as np
 
 # Disable yfinance sqlite disk cookie cache to avoid persistent 401 crumb errors
 try:
@@ -525,7 +526,9 @@ def get_candles(
             cur.execute(f"""
                 SELECT 
                     COALESCE(a.published_ts, a.scraped_at) AS time,
-                    si.sentiment_score
+                    si.sentiment_score,
+                    si.confidence,
+                    1.0 AS engagement_weight
                 FROM {settings.mimir_schema}.mimir_raw_articles a
                 JOIN {settings.mimir_schema}.mimir_sentiment_impacts si ON a.id = si.article_id
                 WHERE si.ticker = %s AND COALESCE(a.published_ts, a.scraped_at) >= %s
@@ -534,7 +537,9 @@ def get_candles(
                 
                 SELECT 
                     bucket_ts AS time,
-                    sentiment_score
+                    sentiment_score,
+                    confidence,
+                    (engagement_score / 10.0) AS engagement_weight
                 FROM {settings.mimir_schema}.mimir_social_chatter
                 WHERE ticker = %s AND bucket_ts >= %s
                 
@@ -559,7 +564,7 @@ def get_candles(
         if dt.tzinfo is not None:
             return dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt
-
+ 
     # Aggregate rolling sentiment for each candle
     candles_list = []
     current_sentiment = 0.0
@@ -571,7 +576,9 @@ def get_candles(
         if s_time and s["sentiment_score"] is not None:
             parsed_sent.append({
                 "time": s_time,
-                "score": float(s["sentiment_score"])
+                "score": float(s["sentiment_score"]),
+                "confidence": float(s["confidence"]) if s["confidence"] is not None else 0.8,
+                "engagement_weight": float(s["engagement_weight"]) if s["engagement_weight"] is not None else 1.0
             })
             
     for c in candles:
@@ -593,15 +600,25 @@ def get_candles(
                 for s in recent_sent:
                     dt_hours = (c_time - s["time"]).total_seconds() / 3600.0
                     weight = 2 ** (-dt_hours / half_life_hours)
-                    weighted_sum += s["score"] * weight
-                    weight_total += weight
-                    if weight > max_weight:
-                        max_weight = weight
+                    
+                    combined_weight = weight * s["confidence"] * s["engagement_weight"]
+                    weighted_sum += s["score"] * combined_weight
+                    weight_total += combined_weight
+                    if combined_weight > max_weight:
+                        max_weight = combined_weight
                 
                 if weight_total > 0:
                     weighted_avg = weighted_sum / weight_total
-                    # Scale by max_weight so that the sentiment decays to 0 if the latest news gets old
-                    current_sentiment = weighted_avg * max_weight
+                    decayed_sentiment = weighted_avg * max_weight
+                    
+                    # Sentiment Density Factor: count active items in the last 24h
+                    recent_24h_count = len([s for s in recent_sent if (c_time - s["time"]) <= timedelta(hours=24)])
+                    density_multiplier = 1.0
+                    if recent_24h_count > 1:
+                        # Log-scale multiplier up to a cap of 2.0
+                        density_multiplier = min(2.0, 1.0 + np.log1p(recent_24h_count - 1) * 0.25)
+                        
+                    current_sentiment = decayed_sentiment * density_multiplier
                 else:
                     current_sentiment = 0.0
             else:
@@ -620,7 +637,6 @@ def get_candles(
         })
 
     # Calculate Technical Analysis indicators on the candles list
-    import numpy as np
     import pandas as pd
     df_ta = pd.DataFrame(candles_list)
     if not df_ta.empty:

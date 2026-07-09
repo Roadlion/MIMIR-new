@@ -6,7 +6,9 @@ Welcome to **MIMIR** (Market Intelligence & Macroeconomic Indicator Reactor), a 
 MIMIR is designed to provide retail traders with a structural edge over the broader public by identifying:
 1. **Niche Sentiment Arbitrage**: Spotting discrepancies between news/social sentiment momentum and price action before retail channels react.
 2. **Capacity-Constrained Opportunities**: Capitalizing on smaller, low-liquidity, or specialized assets (e.g., small-cap equities, localized commodity spreads, niche crypto tokens) where large hedge funds cannot trade because their large capital size would cause excessive market impact and erase their profits.
-3. **MIMIR is NOT designed for High-Frequency Trading (HFT)**; rather, it aims to exploit medium-term market inefficiencies (spanning hours to days) using combined sentiment catalysts and technical indicators.
+3. **Multi-Factor Signal Fusion**: Combining real-time sentiment catalyst indicators, technical analysis setups (RSI, Support/Resistance bands), and **Corporate Fundamentals** (P/E, Earnings Growth, Cash Flow) to filter out false breakouts and back high-probability setups.
+4. **Self-Funding / Operational Efficiency**: Generating enough reliable alpha yields to fully offset operational API expenses (such as DeepSeek token consumption and premium data feeds like NewsAPI).
+5. **MIMIR is NOT designed for High-Frequency Trading (HFT)**; rather, it aims to exploit medium-term market inefficiencies (spanning hours to days) where retail interest is slow to adjust.
 
 This document serves as a comprehensive developer guide and system documentation. It explains how the codebase is structured, how data flows, how the database schema works, how to use the APIs, and how future developers can seamlessly maintain, run, and expand MIMIR.
 
