@@ -110,6 +110,16 @@ def send_chat_completion(
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
             
+            # Log token usage and cost
+            try:
+                usage = data.get("usage", {})
+                prompt_t = usage.get("prompt_tokens", 0)
+                completion_t = usage.get("completion_tokens", 0)
+                if prompt_t > 0 or completion_t > 0:
+                    log_api_cost(provider["name"], prompt_t, completion_t)
+            except Exception as ex:
+                logger.warning(f"Failed to log API cost details: {ex}")
+                
             # Log successful provider and exit fallback loop
             logger.info(f"[SUCCESS] Completion received from {provider['name']}.")
             return content
@@ -120,3 +130,31 @@ def send_chat_completion(
             # Continue to next provider in loop
 
     raise RuntimeError(f"All configured LLM providers failed. Last error: {str(last_error)}")
+
+def log_api_cost(service_name: str, prompt_tokens: int, completion_tokens: int):
+    try:
+        from ..database import get_db_connection
+        # Rates per token in USD
+        # Deepseek V3 rates: $0.14/1M input, $0.28/1M output
+        # Others fallback rates: $0.50/1M input, $1.50/1M output
+        name_lower = service_name.lower()
+        if "deepseek" in name_lower:
+            cost_usd = (prompt_tokens * 0.14 / 1000000.0) + (completion_tokens * 0.28 / 1000000.0)
+        elif "groq" in name_lower:
+            cost_usd = (prompt_tokens * 0.59 / 1000000.0) + (completion_tokens * 0.79 / 1000000.0)
+        else:
+            cost_usd = (prompt_tokens * 0.50 / 1000000.0) + (completion_tokens * 1.50 / 1000000.0)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_api_cost_ledger (
+                service_name, tokens_prompt, tokens_completion, cost_usd, item_count
+            ) VALUES (%s, %s, %s, %s, 1)
+        """, (service_name, prompt_tokens, completion_tokens, cost_usd))
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"[COST_LEDGER] Logged {service_name} call: prompt={prompt_tokens}, comp={completion_tokens}, cost=${cost_usd:.6f}")
+    except Exception as e:
+        logger.warning(f"Failed to write API cost log: {e}")

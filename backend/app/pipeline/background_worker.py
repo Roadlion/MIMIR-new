@@ -50,6 +50,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(o
 PUSH_TO_DB_PATH = os.path.join(PROJECT_ROOT, "scripts", "push_to_db.py")
 PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline copy.py")
 SCRAPE_SOCIAL_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_social.py")
+SCRAPE_TWITTER_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_twitter.py")
+FETCH_FUNDAMENTALS_PATH = os.path.join(PROJECT_ROOT, "scripts", "fetch_fundamentals.py")
 
 PRICE_FETCH_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_price_fetch.py")
 
@@ -66,6 +68,20 @@ def run_price_fetch_cycle():
             print("[BG_WORKER] Price fetch subprocess completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error spawning price fetch subprocess: {e}")
+
+def run_fundamentals_cycle():
+    """Runs the fundamentals fetcher as a separate subprocess to avoid GIL contention."""
+    print(f"[BG_WORKER] Spawning fundamentals fetcher subprocess at {datetime.now()}")
+    env = _subprocess_env()
+    try:
+        res = subprocess.run([sys.executable, FETCH_FUNDAMENTALS_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            print(f"[BG_WORKER] Fundamentals fetcher failed: {res.stderr}")
+        else:
+            print("[BG_WORKER] Fundamentals fetcher completed successfully.")
+    except Exception as e:
+        print(f"[BG_WORKER] Error spawning fundamentals fetcher: {e}")
 
 def _subprocess_env():
     env = os.environ.copy()
@@ -102,6 +118,18 @@ def run_scrape_cycle():
             print("[BG_WORKER] Social scraping completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running social scraper: {e}")
+
+    # 3. Twitter sentiment scraper (FinTwit syndication + DeepSeek)
+    try:
+        print("[BG_WORKER] Executing Twitter sentiment scraper (scrape_twitter.py)...")
+        res = subprocess.run([sys.executable, SCRAPE_TWITTER_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            print(f"[BG_WORKER] Twitter scraper failed: {res.stderr}")
+        else:
+            print("[BG_WORKER] Twitter scraping completed successfully.")
+    except Exception as e:
+        print(f"[BG_WORKER] Error running Twitter scraper: {e}")
 
     print(f"[BG_WORKER] Scrape cycle completed.")
 
@@ -327,6 +355,16 @@ async def start_signal_fusion_loop():
         await asyncio.sleep(600)  # every 10 minutes
 
 
+async def start_fundamentals_loop():
+    """12-hour async loop for fetching ticker fundamentals."""
+    while True:
+        try:
+            await asyncio.to_thread(run_fundamentals_cycle)
+        except Exception as e:
+            print(f"[BG_WORKER] Error in fundamentals loop: {e}")
+        await asyncio.sleep(43200)  # every 12 hours
+
+
 # ponytail: kept for backward compat
 async def start_news_loop():
     """DEPRECATED: use start_scrape_loop() + start_sentiment_loop() instead."""
@@ -351,9 +389,11 @@ def start_background_worker():
     t_scrape = threading.Thread(target=_thread_target, args=(start_scrape_loop,), daemon=True)
     t_sentiment = threading.Thread(target=_thread_target, args=(start_sentiment_loop,), daemon=True)
     t_fusion = threading.Thread(target=_thread_target, args=(start_signal_fusion_loop,), daemon=True)
+    t_fundamentals = threading.Thread(target=_thread_target, args=(start_fundamentals_loop,), daemon=True)
 
     t_price.start()
     t_scrape.start()
     t_sentiment.start()
     t_fusion.start()
-    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m).")
+    t_fundamentals.start()
+    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m, fundamentals=12h).")

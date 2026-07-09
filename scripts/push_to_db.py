@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS yggdrasil.mimir_raw_articles (
     url_hash TEXT UNIQUE,
     title_hash VARCHAR(32) UNIQUE,   -- <-- NEW column for dedupe
     scraped_at TIMESTAMPTZ DEFAULT NOW(),
-    scoring_status VARCHAR(20) DEFAULT 'pending'
+    scoring_status VARCHAR(20) DEFAULT 'triage_pending'
 );
 
 -- Indexes for performance

@@ -370,6 +370,8 @@
         
         data.forEach(item => {
             const score = parseFloat(item.sentiment_score);
+            const progressPercent = ((score + 1.0) / 2.0) * 100;
+            const platformName = item.platform === 'reddit' ? 'Reddit' : 'Twitter';
             let sentimentLabel = 'Neutral';
             let sentimentClass = 'badge-neutral';
             let fillClass = 'sentiment-fill-neutral';

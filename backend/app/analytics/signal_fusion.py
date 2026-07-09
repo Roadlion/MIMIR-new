@@ -108,6 +108,30 @@ def insert_trade_signal(ticker: str, signal_type: str, price: float, rsi: float,
         cur.close()
         conn.close()
 
+def get_cached_fundamentals(ticker: str) -> Optional[Dict[str, float]]:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            SELECT pe_ratio, debt_to_equity, eps_growth, operating_margin 
+            FROM {settings.mimir_schema}.mimir_asset_fundamentals 
+            WHERE ticker = %s
+        """, (ticker,))
+        row = cur.fetchone()
+        if row:
+            return {
+                "pe_ratio": float(row[0]) if row[0] is not None else None,
+                "debt_to_equity": float(row[1]) if row[1] is not None else None,
+                "eps_growth": float(row[2]) if row[2] is not None else None,
+                "operating_margin": float(row[3]) if row[3] is not None else None
+            }
+        return None
+    except Exception:
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
 def scan_ticker_for_signals(ticker: str) -> Optional[Dict[str, Any]]:
     """Scans a single ticker and returns a signal dict if triggered and inserted."""
     ticker = ticker.strip().upper()
@@ -132,21 +156,59 @@ def scan_ticker_for_signals(ticker: str) -> Optional[Dict[str, Any]]:
     
     # 1. Bullish Signals (BUY)
     if sentiment >= 0.2:
-        if rsi <= 40:
-            signal_type = 'BUY'
-            reason.append(f"Bullish sentiment ({sentiment:.2f}) aligned with oversold RSI ({rsi:.1f}).")
-        elif current_price <= support * 1.02:
-            signal_type = 'BUY'
-            reason.append(f"Bullish sentiment ({sentiment:.2f}) with price ({current_price:.2f}) bouncing off support ({support:.2f}).")
+        fundamentals = get_cached_fundamentals(ticker)
+        passes_fundamentals = True
+        fund_fail_reason = ""
+        
+        if fundamentals:
+            pe = fundamentals.get("pe_ratio")
+            de = fundamentals.get("debt_to_equity")
+            eps = fundamentals.get("eps_growth")
+            
+            if pe is not None and (pe < 0 or pe > 35):
+                passes_fundamentals = False
+                fund_fail_reason = f"PE ratio ({pe:.1f}) is out of bounds (0-35)"
+            if de is not None and de > 250:
+                passes_fundamentals = False
+                fund_fail_reason = f"Debt-to-Equity ({de:.1f}%) exceeds threshold (250%)"
+            if eps is not None and eps < -0.2:
+                passes_fundamentals = False
+                fund_fail_reason = f"EPS growth ({eps * 100:.1f}%) is worse than -20%"
+                
+        if not passes_fundamentals:
+            print(f"[SIGNAL_FUSION] {ticker} rejected by fundamentals overlay: {fund_fail_reason}")
+        else:
+            volume_ratio = float(analysis.get("volume_ratio", 1.0))
+            if volume_ratio >= 1.3:
+                vol_suffix = f" confirmed by anomalous volume of {volume_ratio:.2f}x average"
+                if volume_ratio >= 2.0:
+                    vol_suffix += " [HIGH VOLUME BREAKOUT]"
+                
+                if rsi <= 40:
+                    signal_type = 'BUY'
+                    reason.append(f"Bullish sentiment ({sentiment:.2f}) aligned with oversold RSI ({rsi:.1f}){vol_suffix}.")
+                elif current_price <= support * 1.02:
+                    signal_type = 'BUY'
+                    reason.append(f"Bullish sentiment ({sentiment:.2f}) bouncing off support ({support:.2f}){vol_suffix}.")
+            else:
+                print(f"[SIGNAL_FUSION] {ticker} rejected: volume ratio ({volume_ratio:.2f}) lacks breakout expansion (<1.3)")
             
     # 2. Bearish Signals (SELL)
     elif sentiment <= -0.2:
-        if rsi >= 65:
-            signal_type = 'SELL'
-            reason.append(f"Bearish sentiment ({sentiment:.2f}) aligned with overbought RSI ({rsi:.1f}).")
-        elif current_price >= resistance * 0.98:
-            signal_type = 'SELL'
-            reason.append(f"Bearish sentiment ({sentiment:.2f}) with price ({current_price:.2f}) hitting resistance ({resistance:.2f}).")
+        volume_ratio = float(analysis.get("volume_ratio", 1.0))
+        if volume_ratio >= 1.3:
+            vol_suffix = f" with volume expansion of {volume_ratio:.2f}x average"
+            if volume_ratio >= 2.0:
+                vol_suffix += " [HIGH VOLUME BREAKOUT]"
+                
+            if rsi >= 65:
+                signal_type = 'SELL'
+                reason.append(f"Bearish sentiment ({sentiment:.2f}) aligned with overbought RSI ({rsi:.1f}){vol_suffix}.")
+            elif current_price >= resistance * 0.98:
+                signal_type = 'SELL'
+                reason.append(f"Bearish sentiment ({sentiment:.2f}) hitting resistance ({resistance:.2f}){vol_suffix}.")
+        else:
+            print(f"[SIGNAL_FUSION] {ticker} rejected: sell volume ratio ({volume_ratio:.2f}) lacks expansion (<1.3)")
             
     if signal_type:
         reason_str = " | ".join(reason)

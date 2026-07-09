@@ -18,7 +18,7 @@
     </div>
 
     <!-- Stats Row -->
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+    <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
             <span class="text-xs font-mono text-[#4A6A70] uppercase">Portfolio Value</span>
             <span id="kpiValue" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
@@ -38,6 +38,10 @@
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24 border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)] flex flex-col justify-between h-24">
             <span class="text-xs font-mono text-[#4A6A70] uppercase">Grand Total P&L</span>
             <span id="kpiGrandPL" class="text-2xl font-bold text-[#00A6B2] font-mono mt-1">$0.00</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24 border border-[#FF5252]/20 flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">API Costs (Ledger)</span>
+            <span id="kpiCosts" class="text-2xl font-bold text-[#FF5252] font-mono mt-1">$0.00</span>
         </div>
     </div>
 
@@ -411,6 +415,9 @@
         } else {
             grandEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
         }
+
+        const costs = data.total_api_costs || 0.0;
+        document.getElementById("kpiCosts").innerText = formatCurrency(costs);
     }
 
     function renderHoldingsTable(holdings) {

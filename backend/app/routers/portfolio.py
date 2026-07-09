@@ -51,6 +51,7 @@ class PortfolioSummary(BaseModel):
     total_profit_loss_pct: float
     total_realized_pl: float
     grand_total_pl: float
+    total_api_costs: float = 0.0
 
 # Helper to fetch current prices using yfinance
 def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
@@ -95,6 +96,21 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
 
 @router.get("/portfolio", response_model=PortfolioSummary)
 def get_portfolio():
+    # Fetch total API costs
+    total_api_costs = 0.0
+    conn_cost = get_db_connection_dict()
+    cur_cost = conn_cost.cursor()
+    try:
+        cur_cost.execute(f"SELECT SUM(cost_usd) as sum_cost FROM {settings.mimir_schema}.mimir_api_cost_ledger")
+        row = cur_cost.fetchone()
+        if row and row["sum_cost"] is not None:
+            total_api_costs = float(row["sum_cost"])
+    except Exception:
+        pass
+    finally:
+        cur_cost.close()
+        conn_cost.close()
+
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
@@ -116,7 +132,8 @@ def get_portfolio():
             "total_profit_loss": 0.0,
             "total_profit_loss_pct": 0.0,
             "total_realized_pl": 0.0,
-            "grand_total_pl": 0.0
+            "grand_total_pl": 0.0,
+            "total_api_costs": total_api_costs
         }
         
     # Group transactions by ticker
@@ -215,7 +232,8 @@ def get_portfolio():
         "total_profit_loss": total_pl,
         "total_profit_loss_pct": total_pl_pct,
         "total_realized_pl": total_realized_pl,
-        "grand_total_pl": grand_total
+        "grand_total_pl": grand_total,
+        "total_api_costs": total_api_costs
     }
 
 @router.post("/portfolio", response_model=TransactionResponse)

@@ -56,7 +56,7 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 WHERE id = %s
             """, (article_id,))
             conn.commit()
-            print(f"  [Thread] Article {article_id}: No assets → marked empty")
+            print(f"  [Thread] Article {article_id}: No assets -> marked empty")
             return 0
 
         # --- Build impacts list ---
@@ -154,7 +154,7 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 spillover_inserted = cur.rowcount
         except Exception as spill_err:
             # Non-fatal: log and continue
-            print(f"  [Thread] ⚠ Spillover skipped for article {article_id}: {spill_err}")
+            print(f"  [Thread] [Warning] Spillover skipped for article {article_id}: {spill_err}")
 
         # --- Mark article as 'scored' ---
         cur.execute("""
@@ -164,11 +164,11 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
         """, (article_id,))
         conn.commit()
 
-        print(f"  [Thread] Article {article_id}: {inserted} direct + {spillover_inserted} spillover → scored")
+        print(f"  [Thread] Article {article_id}: {inserted} direct + {spillover_inserted} spillover -> scored")
         return inserted + spillover_inserted
 
     except Exception as e:
-        print(f"  [Thread] ❌ Error on article {article_id}: {e}")
+        print(f"  [Thread] [Error] Error on article {article_id}: {e}")
         # Mark as 'pending' so it can be retried later
         if conn and cur:
             try:
@@ -316,3 +316,134 @@ def get_status_counts() -> dict:
     cur.close()
     conn.close()
     return results
+
+def run_triage_batch(articles: List[tuple]) -> List[dict]:
+    """
+    Sends a batch of articles (id, title, summary) to DeepSeek for relevance pre-filtering.
+    Returns a list of dicts: {"id": article_id, "relevant": true/false}
+    """
+    import json
+    from backend.app.sentiment.llm_client import send_chat_completion
+    
+    # Format the headlines list for the LLM
+    headlines_text = []
+    for aid, title, summary in articles:
+        headlines_text.append(f"Article ID: {aid}\nTitle: {title}\nSummary: {summary or ''}\n---")
+        
+    prompt = f"""You are the MIMIR Triage Gatekeeper.
+Your job is to read a list of news headlines/summaries and determine if they contain market-moving news or specific asset-relevant details for equities, commodities, or cryptocurrencies.
+Do NOT include generic updates, lifestyle, general opinion pieces, sport news, or pure advertising.
+Only select articles that are highly relevant to financial markets, specific corporate stocks, global macroeconomic indicators, or commodity prices.
+
+For each article, determine if it is relevant.
+Return your output STRICTLY as a JSON array of objects with the structure:
+[
+  {{"id": <article_id>, "relevant": true}}
+]
+
+Here is the list of articles to evaluate:
+{"\n".join(headlines_text)}
+"""
+
+    messages = [{"role": "user", "content": prompt}]
+    
+    try:
+        response_str = send_chat_completion(
+            messages=messages,
+            temperature=0.0,
+            response_format={"type": "json_object"}
+        )
+        
+        # Clean JSON markdown fences if present
+        cleaned = response_str.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        # Parse JSON
+        result = json.loads(cleaned)
+        if isinstance(result, dict) and "articles" in result:
+            return result["articles"]
+        elif isinstance(result, list):
+            return result
+        elif isinstance(result, dict):
+            # Check if it has a list inside a key
+            for val in result.values():
+                if isinstance(val, list):
+                    return val
+        return []
+    except Exception as e:
+        print(f"[TRIAGE] Error parsing triage response: {e}")
+        return []
+
+def triage_pending_articles(batch_size: int = 50) -> int:
+    """
+    Fetches articles in 'triage_pending' status, triages them in a batch,
+    and updates their status to 'pending' (if relevant) or 'ignored' (if not).
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Fetch triage_pending articles
+    cur.execute("""
+        SELECT id, title, summary 
+        FROM yggdrasil.mimir_raw_articles 
+        WHERE scoring_status = 'triage_pending'
+        ORDER BY published_ts DESC NULLS LAST
+        LIMIT %s
+    """, (batch_size,))
+    articles = cur.fetchall()
+    
+    if not articles:
+        cur.close()
+        conn.close()
+        return 0
+        
+    print(f"[TRIAGE] Triaging {len(articles)} articles in a single batch...")
+    
+    triage_results = run_triage_batch(articles)
+    
+    # Map results by article ID
+    relevance_map = {}
+    for res in triage_results:
+        try:
+            aid = int(res.get("id"))
+            rel = bool(res.get("relevant", False))
+            relevance_map[aid] = rel
+        except Exception:
+            pass
+            
+    # Update statuses in database
+    relevant_ids = []
+    ignored_ids = []
+    
+    for aid, title, summary in articles:
+        # Fallback to True (relevant) if LLM missed it or failed
+        is_relevant = relevance_map.get(aid, True)
+        if is_relevant:
+            relevant_ids.append(aid)
+        else:
+            ignored_ids.append(aid)
+            
+    if relevant_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'pending' 
+            WHERE id = ANY(%s)
+        """, (relevant_ids,))
+        print(f" [TRIAGE] {len(relevant_ids)} articles marked as PENDING (relevant)")
+        
+    if ignored_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'ignored' 
+            WHERE id = ANY(%s)
+        """, (ignored_ids,))
+        print(f" [TRIAGE] {len(ignored_ids)} articles marked as IGNORED (not relevant)")
+        
+    conn.commit()
+    cur.close()
+    conn.close()
+    return len(articles)

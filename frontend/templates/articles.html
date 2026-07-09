@@ -127,8 +127,13 @@
                 <label class="text-[10px] font-mono text-[#4A6A70] uppercase tracking-wider">Feed Type</label>
                 <select id="filterType" class="w-full bg-[#111A20] border border-[#1A2A30] hover:border-[#2A4A50] focus:border-[#00A6B2] rounded px-3 py-2 text-xs text-[#D6E5E3] focus:outline-none transition-all font-mono">
                     <option value="all">All Sources</option>
-                    <option value="news">News Articles Only</option>
-                    <option value="social">Social Feed Only</option>
+                    <option value="news">News Articles (All)</option>
+                    <option value="news:google">&nbsp;&nbsp;— Google News</option>
+                    <option value="news:newsapi">&nbsp;&nbsp;— NewsAPI</option>
+                    <option value="news:rss">&nbsp;&nbsp;— RSS News Feeds</option>
+                    <option value="social">Social Feed (All)</option>
+                    <option value="social:reddit">&nbsp;&nbsp;— Reddit Chatter</option>
+                    <option value="social:twitter">&nbsp;&nbsp;— Twitter / X</option>
                 </select>
             </div>
 
@@ -414,25 +419,38 @@
             // Merge items based on Feed Type selection
             let combined = [];
 
-            if (state.sourceType === 'all' || state.sourceType === 'news') {
-                articles.forEach(art => {
+            articles.forEach(art => {
+                const src = (art.source_name || '').toLowerCase();
+                let subType = 'rss';
+                if (src.includes('google')) subType = 'google';
+                else if (src.includes('newsapi')) subType = 'newsapi';
+
+                const matchAllNews = state.sourceType === 'all' || state.sourceType === 'news';
+                const matchSubNews = state.sourceType === `news:${subType}`;
+
+                if (matchAllNews || matchSubNews) {
                     combined.push({
                         ...art,
                         feedType: 'news',
                         timestamp: new Date(art.published_ts)
                     });
-                });
-            }
+                }
+            });
 
-            if (state.sourceType === 'all' || state.sourceType === 'social') {
-                social.forEach(soc => {
+            social.forEach(soc => {
+                const plat = (soc.platform || '').toLowerCase(); // 'reddit' or 'twitter'
+                
+                const matchAllSocial = state.sourceType === 'all' || state.sourceType === 'social';
+                const matchSubSocial = state.sourceType === `social:${plat}`;
+
+                if (matchAllSocial || matchSubSocial) {
                     combined.push({
                         ...soc,
                         feedType: 'social',
                         timestamp: new Date(soc.bucket_ts)
                     });
-                });
-            }
+                }
+            });
 
             // Chronological sort DESC
             combined.sort((a, b) => b.timestamp - a.timestamp);
