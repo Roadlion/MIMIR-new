@@ -277,7 +277,7 @@ class BacktestEngine:
 
         # Cast decimals/numeric values to float for compatibility with numpy calculations
         if not df_prices.empty:
-            for col in ['open', 'high', 'low', 'close']:
+            for col in ['open', 'high', 'low', 'close', 'volume']:
                 df_prices[col] = df_prices[col].astype(float)
         if not df_sent.empty:
             df_sent['sentiment'] = df_sent['sentiment'].astype(float)

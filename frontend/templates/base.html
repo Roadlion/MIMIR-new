@@ -26,17 +26,45 @@
                 <span class="text-[#00A6B2] font-bold text-xl font-['JetBrains_Mono']">MIMIR</span>
                 <span class="text-xs text-[#4A6A70] font-mono">v1.0</span>
             </div>
-            <div class="flex gap-6 text-sm">
-                <a href="/" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Dashboard</a>
-                <a href="/portfolio" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Portfolio</a>
-                <a href="/alerts" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Trade Alerts</a>
-                <a href="/articles" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Intelligence Feed</a>
-                <a href="/watchlist" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Watchlist</a>
-                <a href="/taxonomy" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Taxonomy</a>
-                <a href="/map" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Map</a>
-                <a href="/guerilla" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Guerilla Quant</a>
-                <a href="/backtest" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Simulate</a>
-                <a href="/alphas" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Alphas</a>
+            <div class="flex gap-1 text-sm">
+                <a href="/" class="nav-link">Dashboard</a>
+
+                <!-- Portfolio dropdown -->
+                <div class="nav-dropdown">
+                    <button class="nav-dropdown-trigger">Portfolio <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/portfolio">Overview</a>
+                        <a href="/watchlist">Watchlist</a>
+                        <a href="/alerts">Trade Alerts</a>
+                    </div>
+                </div>
+
+                <!-- Markets dropdown -->
+                <div class="nav-dropdown">
+                    <button class="nav-dropdown-trigger">Markets <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/map">Heat Map</a>
+                        <a href="/taxonomy">Taxonomy</a>
+                    </div>
+                </div>
+
+                <!-- Research dropdown -->
+                <div class="nav-dropdown">
+                    <button class="nav-dropdown-trigger">Research <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/articles">Intelligence Feed</a>
+                        <a href="/guerilla">Guerilla Quant</a>
+                    </div>
+                </div>
+
+                <!-- Tools dropdown -->
+                <div class="nav-dropdown">
+                    <button class="nav-dropdown-trigger">Tools <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/backtest">Simulate</a>
+                        <a href="/alphas">Alphas</a>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="flex items-center gap-4">

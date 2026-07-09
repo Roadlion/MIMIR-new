@@ -36,6 +36,118 @@
         border: 1px solid #1A2A30;
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     }
+
+    /* Tab navigation */
+    .tab-btn {
+        padding: 0.5rem 1.25rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #4A6A70;
+        background: transparent;
+        border: 1px solid transparent;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .tab-btn:hover {
+        color: #8BA4A8;
+    }
+    .tab-btn.active {
+        color: #00A6B2;
+        border-bottom-color: #00A6B2;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Reference doc styles */
+    .ref-section {
+        margin-bottom: 1.5rem;
+    }
+    .ref-section h3 {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #00A6B2;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.75rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #1A2A30;
+    }
+    .ref-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.7rem;
+    }
+    .ref-table th {
+        text-align: left;
+        padding: 0.45rem 0.75rem;
+        color: #4A6A70;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.62rem;
+        border-bottom: 1px solid #1A2A30;
+        background: #0A1418;
+    }
+    .ref-table td {
+        padding: 0.45rem 0.75rem;
+        color: #8BA4A8;
+        border-bottom: 1px solid rgba(26, 42, 48, 0.4);
+        vertical-align: top;
+    }
+    .ref-table tr:hover td {
+        background: rgba(0, 166, 178, 0.03);
+    }
+    .ref-table .sig {
+        color: #00E5F2;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .ref-table .ret {
+        color: #D6E5E3;
+        font-size: 0.65rem;
+    }
+    .ref-table .desc {
+        color: #8BA4A8;
+        font-size: 0.7rem;
+        line-height: 1.5;
+    }
+    .ref-badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+        font-size: 0.58rem;
+        font-weight: 600;
+        margin-right: 0.25rem;
+    }
+    .badge-xs { background: rgba(0, 166, 178, 0.15); color: #00A6B2; }
+    .badge-ts { background: rgba(0, 229, 242, 0.1); color: #00E5F2; }
+    .badge-math { background: rgba(255, 215, 64, 0.1); color: #FFD740; }
+    .badge-special { background: rgba(0, 230, 118, 0.1); color: #00E676; }
+    .badge-var { background: rgba(138, 158, 155, 0.1); color: #8A9E9B; }
+    .ref-search {
+        width: 100%;
+        background: #0A161C;
+        border: 1px solid #1A2A30;
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        color: #D6E5E3;
+        margin-bottom: 1rem;
+    }
+    .ref-search:focus {
+        border-color: #00A6B2;
+        outline: none;
+    }
+    .ref-search::placeholder {
+        color: #4A6A70;
+    }
 </style>
 {% endblock %}
 
@@ -49,12 +161,19 @@
             </h1>
             <p class="text-[#4A6A70] text-sm mt-1">Vectorized strategy simulator modeled on the WorldQuant Brain alpha research ecosystem.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-4">
+            <div class="flex gap-0 border-b border-transparent">
+                <button class="tab-btn active" data-tab="builder">Alpha Builder</button>
+                <button class="tab-btn" data-tab="reference">Reference</button>
+            </div>
             <span class="px-2.5 py-1 bg-[#112228] border border-[#1A3A40] rounded text-xs text-[#00A6B2] font-mono">
                 <i class="fas fa-database mr-1"></i> yggdrasil.v_mimir_daily_ohlcv
             </span>
         </div>
     </div>
+
+    <!-- ===== TAB: Alpha Builder ===== -->
+    <div id="tab-builder" class="tab-panel active">
 
     <!-- Main Workspace Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -179,96 +298,6 @@
                 </button>
             </div>
 
-            <!-- Formula Helper Quick Sheets -->
-            <div class="glass-panel p-5 rounded-xl border border-[#1A2A30] space-y-3">
-                <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono">Formula Cheat Sheet</h3>
-                <div class="text-[11px] font-mono text-[#8BA4A8] space-y-2 h-48 overflow-y-auto pr-1">
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('sentiment')">sentiment</span>
-                        <p class="text-[#4A6A70]">Raw news sentiment scores.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('social_chatter')">social_chatter</span>
-                        <p class="text-[#4A6A70]">Raw social chatter sentiment scores.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('returns(5)')">returns(d)</span>
-                        <p class="text-[#4A6A70]">Asset percentage returns over d days.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('neutralize(scale(sentiment))')">neutralize(x)</span>
-                        <p class="text-[#4A6A70]">De-means weights to make the portfolio dollar-neutral.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('scale(sentiment)')">scale(x)</span>
-                        <p class="text-[#4A6A70]">Scales absolute sum of weights to 1.0 (leverage factor).</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('rank(sentiment)')">rank(x)</span>
-                        <p class="text-[#4A6A70]">Cross-sectional percentile rank (0.0 to 1.0) of values.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('zscore(sentiment)')">zscore(x)</span>
-                        <p class="text-[#4A6A70]">Cross-sectional z-score of x: (x - mean) / std.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_delay(close, 2)')">ts_delay(x, d)</span>
-                        <p class="text-[#4A6A70]">Shifts the data stream back by d days (Alias: delay).</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_delta(close, 1)')">ts_delta(x, d)</span>
-                        <p class="text-[#4A6A70]">Time-series difference: x - ts_delay(x, d).</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_mean(close, 10)')">ts_mean(x, d)</span>
-                        <p class="text-[#4A6A70]">Time-series rolling average of x over d days.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_std_dev(close, 10)')">ts_std_dev(x, d)</span>
-                        <p class="text-[#4A6A70]">Time-series rolling standard deviation (Alias: ts_std).</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_decay_linear(sentiment, 5)')">ts_decay_linear(x, d)</span>
-                        <p class="text-[#4A6A70]">Linear weighted decay rolling sum of weights over d days.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_zscore(sentiment, 20)')">ts_zscore(x, d)</span>
-                        <p class="text-[#4A6A70]">Rolling time-series z-score over d days.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_corr(close, sentiment, 10)')">ts_corr(x, y, d)</span>
-                        <p class="text-[#4A6A70]">Rolling correlation of x and y over d days (Alias: correlation).</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('ts_covariance(close, sentiment, 10)')">ts_covariance(x, y, d)</span>
-                        <p class="text-[#4A6A70]">Rolling covariance of x and y over d days.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('if_else(close > open, sentiment, -sentiment)')">if_else(cond, x, y)</span>
-                        <p class="text-[#4A6A70]">Ternary selection: returns x where cond is true, else y.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('abs(sentiment)')">abs(x)</span>
-                        <p class="text-[#4A6A70]">Absolute value of x.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('log(close)')">log(x)</span>
-                        <p class="text-[#4A6A70]">Natural logarithm of x.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('exp(sentiment)')">exp(x)</span>
-                        <p class="text-[#4A6A70]">Exponential (e^x) of x.</p>
-                    </div>
-                    <div class="border-b border-[#1A2A30]/50 pb-1.5">
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('sqrt(abs(sentiment))')">sqrt(x)</span>
-                        <p class="text-[#4A6A70]">Square root of x.</p>
-                    </div>
-                    <div>
-                        <span class="text-[#00A6B2] font-semibold cursor-pointer hover:underline" onclick="insertTemplate('sign(returns(5))')">sign(x)</span>
-                        <p class="text-[#4A6A70]">Returns sign indicator: 1.0, -1.0, or 0.0.</p>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Right: Diagnostic Performance Output (7 cols) -->
@@ -373,11 +402,306 @@
         </div>
     </div>
 
+</div><!-- /#tab-builder -->
+
+<!-- ===== TAB: Reference ===== -->
+<div id="tab-reference" class="tab-panel">
+<div class="max-w-7xl mx-auto">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- Left: Variables -->
+    <div class="lg:col-span-4 space-y-6">
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-database mr-1.5"></i> Data Variables</h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Available as identifiers in any expression. Case-insensitive.</p>
+                <table class="ref-table">
+                    <thead><tr><th>Variable</th><th>Type</th><th>Source</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="sig">open</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily open price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">high</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily high price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">low</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily low price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">close</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily close price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">volume</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily traded volume, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">vwap</td>
+                            <td><span class="ref-badge badge-var">Derived</span></td>
+                            <td class="desc">(high + low + close) / 3.0</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">returns</td>
+                            <td><span class="ref-badge badge-var">Derived</span></td>
+                            <td class="desc">Daily close-to-close % change</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">sentiment</td>
+                            <td><span class="ref-badge badge-var">News</span></td>
+                            <td class="desc">Average daily news sentiment, 3-day decay</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">social_chatter</td>
+                            <td><span class="ref-badge badge-var">Social</span></td>
+                            <td class="desc">Average daily social media sentiment, 3-day decay</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">sentiment_spillover</td>
+                            <td><span class="ref-badge badge-var">Graph</span></td>
+                            <td class="desc">Inter-asset sentiment propagation (defaults to sentiment)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Expression operators -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-code mr-1.5"></i> Python Expression Ops</h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Standard arithmetic & comparison operators usable inline.</p>
+                <table class="ref-table">
+                    <thead><tr><th>Op</th><th>Example</th><th>Result</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">+</td><td class="desc"><code>sentiment + social_chatter</code></td><td class="ret">Element-wise sum</td></tr>
+                        <tr><td class="sig">-</td><td class="desc"><code>close - open</code></td><td class="ret">Element-wise difference</td></tr>
+                        <tr><td class="sig">*</td><td class="desc"><code>sentiment * 2.0</code></td><td class="ret">Scalar multiply</td></tr>
+                        <tr><td class="sig">/</td><td class="desc"><code>close / open</code></td><td class="ret">Element-wise ratio (+1e-15 guard)</td></tr>
+                        <tr><td class="sig">&gt;</td><td class="desc"><code>close > open</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">&lt;</td><td class="desc"><code>volume < 1000000</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">&gt;=</td><td class="desc"><code>returns >= 0.02</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">&lt;=</td><td class="desc"><code>sentiment <= 0</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">==</td><td class="desc"><code>sign(returns) == 1</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">!=</td><td class="desc"><code>volume != 0</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">-x</td><td class="desc"><code>-sentiment</code></td><td class="ret">Unary negation</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Operator Reference -->
+    <div class="lg:col-span-8 space-y-6">
+
+        <!-- Cross-sectional -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-layer-group mr-1.5"></i> Cross-Sectional Operators <span class="ref-badge badge-xs">1 arg</span></h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Operate across all tickers on each date independently.</p>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="sig">rank(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Cross-sectional percentile rank (0.0–1.0). Non-zero elements only; zeros remain 0.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">scale(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Divides each row by its absolute sum → weights sum to 1.0 across tickers.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">neutralize(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Subtracts the cross-sectional mean → dollar-neutral portfolio weights.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">zscore(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Cross-sectional z-score: (x − μ) / σ. Standardizes across tickers per day.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Math / Unary -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-square-root-alt mr-1.5"></i> Math / Unary Operators <span class="ref-badge badge-math">1 arg</span></h3>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">abs(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Absolute value.</td></tr>
+                        <tr><td class="sig">log(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Natural logarithm. Clamped at 1e-15 to avoid −∞.</td></tr>
+                        <tr><td class="sig">exp(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Exponential <i>e<sup>x</sup></i>.</td></tr>
+                        <tr><td class="sig">sqrt(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Square root. Clamped ≥ 0 to avoid NaN.</td></tr>
+                        <tr><td class="sig">sign(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Sign indicator: 1.0, −1.0, or 0.0.</td></tr>
+                        <tr><td class="sig">ceil(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Round up to nearest integer.</td></tr>
+                        <tr><td class="sig">floor(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Round down to nearest integer.</td></tr>
+                        <tr><td class="sig">round(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Round to nearest integer.</td></tr>
+                        <tr><td class="sig">sigmoid(x)</td><td class="ret">DataFrame</td><td class="desc">Logistic: 1 / (1 + <i>e</i><sup>−x</sup>). Squashes to (0, 1).</td></tr>
+                        <tr><td class="sig">tanh(x)</td><td class="ret">DataFrame</td><td class="desc">Hyperbolic tangent. Squashes to (−1, 1).</td></tr>
+                        <tr><td class="sig">s_log_1p(x)</td><td class="ret">DataFrame</td><td class="desc">Signed log1p: sign(x) · log(1 + |x|). Compresses magnitude, preserves sign.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Binary -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-divide mr-1.5"></i> Binary / Pairwise Operators <span class="ref-badge badge-math">2 args</span></h3>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">min(x, y)</td><td class="ret">DataFrame / scalar</td><td class="desc">Element-wise minimum. Works DataFrame↔scalar.</td></tr>
+                        <tr><td class="sig">max(x, y)</td><td class="ret">DataFrame / scalar</td><td class="desc">Element-wise maximum. Works DataFrame↔scalar.</td></tr>
+                        <tr><td class="sig">power(x, y)</td><td class="ret">DataFrame / scalar</td><td class="desc">Element-wise <i>x<sup>y</sup></i>. Works DataFrame↔scalar.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Time-series -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-chart-line mr-1.5"></i> Time-Series Operators <span class="ref-badge badge-ts">2 args</span></h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Rolling window functions: <code>func(dataframe, window_days)</code>. d must be a positive integer (except <code>ts_decay_exp</code>: float halflife).</p>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Alias</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">ts_delay(x, d)</td><td class="ret">delay</td><td class="desc">Shift x backward by d days (NaN pad at start).</td></tr>
+                        <tr><td class="sig">ts_delta(x, d)</td><td class="ret">—</td><td class="desc">Difference: x − ts_delay(x, d).</td></tr>
+                        <tr><td class="sig">ts_mean(x, d)</td><td class="ret">—</td><td class="desc">Simple moving average over d days.</td></tr>
+                        <tr><td class="sig">ts_std(x, d)</td><td class="ret">ts_std_dev</td><td class="desc">Rolling standard deviation over d days.</td></tr>
+                        <tr><td class="sig">ts_sum(x, d)</td><td class="ret">—</td><td class="desc">Rolling sum over d days.</td></tr>
+                        <tr><td class="sig">ts_max(x, d)</td><td class="ret">—</td><td class="desc">Rolling maximum over d days.</td></tr>
+                        <tr><td class="sig">ts_min(x, d)</td><td class="ret">—</td><td class="desc">Rolling minimum over d days.</td></tr>
+                        <tr><td class="sig">ts_rank(x, d)</td><td class="ret">—</td><td class="desc">Rolling percentile rank of latest value within window.</td></tr>
+                        <tr><td class="sig">ts_zscore(x, d)</td><td class="ret">—</td><td class="desc">Rolling z-score: (x − rolling_mean) / rolling_std.</td></tr>
+                        <tr><td class="sig">ts_decay_linear(x, d)</td><td class="ret">—</td><td class="desc">Linearly-weighted decay (recent → higher weight).</td></tr>
+                        <tr><td class="sig">ts_decay_exp(x, d)</td><td class="ret">—</td><td class="desc">Exponential weighted moving average. d = halflife (float).</td></tr>
+                        <tr><td class="sig">ts_argmax(x, d)</td><td class="ret">—</td><td class="desc">Days since maximum value in window (0 = today).</td></tr>
+                        <tr><td class="sig">ts_argmin(x, d)</td><td class="ret">—</td><td class="desc">Days since minimum value in window (0 = today).</td></tr>
+                        <tr><td class="sig">ts_skewness(x, d)</td><td class="ret">—</td><td class="desc">Rolling skewness of distribution in window.</td></tr>
+                        <tr><td class="sig">ts_kurtosis(x, d)</td><td class="ret">—</td><td class="desc">Rolling excess kurtosis in window.</td></tr>
+                        <tr><td class="sig">ts_product(x, d)</td><td class="ret">—</td><td class="desc">Rolling product (∏) over d days.</td></tr>
+                        <tr><td class="sig">ts_min_max_scale(x, d)</td><td class="ret">—</td><td class="desc">Scale to [0, 1]: (x − min) / (max − min) over window.</td></tr>
+                        <tr><td class="sig">ts_av_diff(x, d)</td><td class="ret">—</td><td class="desc">Deviation from rolling mean: x − ts_mean(x, d).</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Multi-arg / Special -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-star mr-1.5"></i> Multi-Arg & Special Operators <span class="ref-badge badge-special">2–3 args</span></h3>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Args</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="sig">returns(d)</td>
+                            <td class="ret">1</td>
+                            <td class="desc">Close % change over d days. Shorthand for <code>close.pct_change(d)</code>. Also callable as <code>returns(x, d)</code> on any DataFrame.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">if_else(cond, x, y)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Ternary: where <code>cond</code> is True use <code>x</code>, else <code>y</code>. Element-wise.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">clamp(x, lo, hi)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Clip x to [lo, hi]. Equivalent to <code>max(lo, min(x, hi))</code>.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">trade_when(t, a, e)</td>
+                            <td class="ret">3</td>
+                            <td class="desc"><b>Stateful entry/exit.</b> Enter position <code>a</code> when trigger <code>t</code> is True. Hold until exit <code>e</code> is True (→ NaN).</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_corr(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling Pearson correlation of y and x over d days. Alias: <code>correlation</code>.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_covariance(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling covariance of y and x over d days.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_regression_beta(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling β: Cov(y, x) / Var(x) over d days.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_regression_alpha(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling α: mean(y) − β · mean(x) over d days.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_regression_residual(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling residual: y − (β·x + α) over d days.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Example recipes -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-flask mr-1.5"></i> Example Recipes</h3>
+                <table class="ref-table">
+                    <thead><tr><th>Pattern</th><th>Formula</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">Momentum</td><td class="desc"><code>neutralize(scale(returns(5)))</code></td></tr>
+                        <tr><td class="sig">Mean Reversion</td><td class="desc"><code>neutralize(scale(-ts_delta(close, 3)))</code></td></tr>
+                        <tr><td class="sig">Sentiment Momentum</td><td class="desc"><code>neutralize(scale(ts_decay_linear(sentiment, 5)))</code></td></tr>
+                        <tr><td class="sig">Sentiment + Social Blend</td><td class="desc"><code>neutralize(scale(sentiment * 0.7 + social_chatter * 0.3))</code></td></tr>
+                        <tr><td class="sig">Z-Score Breakout</td><td class="desc"><code>neutralize(scale(if_else(ts_zscore(close, 20) > 2, -1, if_else(ts_zscore(close, 20) < -2, 1, 0))))</code></td></tr>
+                        <tr><td class="sig">Volatility-Weighted</td><td class="desc"><code>neutralize(scale(sentiment / ts_std(returns, 20)))</code></td></tr>
+                        <tr><td class="sig">Correlation Hedge</td><td class="desc"><code>if_else(ts_corr(close, sentiment, 20) > 0.5, 0, neutralize(scale(sentiment)))</code></td></tr>
+                        <tr><td class="sig">Trend + Sentiment</td><td class="desc"><code>neutralize(scale(sign(ts_mean(returns, 10)) * abs(sentiment)))</code></td></tr>
+                        <tr><td class="sig">Clamped Signal</td><td class="desc"><code>neutralize(scale(clamp(sentiment, -0.5, 0.5)))</code></td></tr>
+                        <tr><td class="sig">Guerilla Trigger</td><td class="desc"><code>trade_when(abs(sentiment) > 0.7, sign(sentiment), abs(sentiment) < 0.2)</code></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div><!-- /right col -->
+</div>
+</div>
+</div><!-- /#tab-reference -->
+
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+        });
+    });
+
     let myChart = null;
     let allTrades = [];
     let currentTradesPage = 1;
