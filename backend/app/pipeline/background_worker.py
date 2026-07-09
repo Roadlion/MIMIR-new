@@ -315,6 +315,18 @@ async def start_sentiment_loop():
         await asyncio.sleep(900)  # every 15 minutes
 
 
+async def start_signal_fusion_loop():
+    """10-minute async loop scanning price and sentiment for trade signals."""
+    from ..analytics.signal_fusion import scan_all_tickers
+    while True:
+        try:
+            print("[BG_WORKER] Starting Signal Fusion scan...")
+            await asyncio.to_thread(scan_all_tickers)
+        except Exception as e:
+            print(f"[BG_WORKER] Error in Signal Fusion loop: {e}")
+        await asyncio.sleep(600)  # every 10 minutes
+
+
 # ponytail: kept for backward compat
 async def start_news_loop():
     """DEPRECATED: use start_scrape_loop() + start_sentiment_loop() instead."""
@@ -338,8 +350,10 @@ def start_background_worker():
     t_price = threading.Thread(target=_thread_target, args=(start_price_loop,), daemon=True)
     t_scrape = threading.Thread(target=_thread_target, args=(start_scrape_loop,), daemon=True)
     t_sentiment = threading.Thread(target=_thread_target, args=(start_sentiment_loop,), daemon=True)
+    t_fusion = threading.Thread(target=_thread_target, args=(start_signal_fusion_loop,), daemon=True)
 
     t_price.start()
     t_scrape.start()
     t_sentiment.start()
-    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m).")
+    t_fusion.start()
+    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m).")

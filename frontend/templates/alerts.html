@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}MIMIR - Trade Alerts Queue{% endblock %}
+
+{% block head_extra %}
+<style>
+    .glass-card {
+        background: rgba(10, 22, 28, 0.7);
+        backdrop-filter: blur(12px);
+        border: 1px border rgba(26, 42, 48, 0.5);
+    }
+    .neon-pulse {
+        animation: pulse-glow 2s infinite;
+    }
+    @keyframes pulse-glow {
+        0%, 100% {
+            box-shadow: 0 0 4px rgba(0, 166, 178, 0.4);
+            border-color: rgba(0, 166, 178, 0.4);
+        }
+        50% {
+            box-shadow: 0 0 12px rgba(0, 166, 178, 0.8);
+            border-color: rgba(0, 166, 178, 0.8);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <!-- Header Panel -->
+    <div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
+        <div>
+            <h1 class="text-3xl font-extrabold text-[#D6E5E3] tracking-tight">
+                ⚡ <span class="bg-clip-text text-transparent bg-gradient-to-r from-[#00A6B2] to-[#00E5F2]">Trade Alerts Queue</span>
+            </h1>
+            <p class="text-[#8BA4A8] text-sm mt-1">Human-in-the-loop signal fusion engine combining Technical Indicators (RSI, Support/Resistance) with Sentiment Catalysts.</p>
+        </div>
+        <div class="flex gap-3">
+            <button id="triggerScanBtn" class="px-4 py-2 bg-[#0A161C] border border-[#1A2A30] hover:border-[#00E5F2] hover:text-[#00E5F2] text-[#D6E5E3] rounded text-sm font-mono transition-all flex items-center gap-2">
+                <i class="fas fa-search-dollar"></i> Scan Now
+            </button>
+            <button id="refreshAlertsBtn" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#00C5D2] text-[#060A0D] font-bold rounded text-sm font-mono transition-all flex items-center gap-2">
+                <i class="fas fa-sync-alt"></i> Refresh Queue
+            </button>
+        </div>
+    </div>
+
+    <!-- Alert List Container -->
+    <div id="alertsContainer" class="space-y-6">
+        <!-- Loading State -->
+        <div id="alertsLoading" class="glass-card rounded-lg border border-[#1A2A30] p-12 text-center">
+            <i class="fas fa-circle-notch fa-spin text-3xl text-[#00A6B2] mb-4"></i>
+            <p class="text-[#8BA4A8] font-mono text-sm">Scanning Valhalla for trading opportunities...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div id="alertsEmpty" class="hidden glass-card rounded-lg border border-[#1A2A30] p-12 text-center">
+            <div class="w-16 h-16 bg-[#0E1E24] rounded-full flex items-center justify-center mx-auto mb-4 border border-[#1A2A30]">
+                <i class="fas fa-check-double text-2xl text-[#00E676]"></i>
+            </div>
+            <h3 class="text-lg font-bold text-[#D6E5E3] mb-1">Queue is Clear</h3>
+            <p class="text-[#8BA4A8] text-sm max-w-md mx-auto">No pending trade signals detected. MIMIR is scanning in the background, or you can trigger a manual scan above.</p>
+        </div>
+
+        <!-- Alert Items list -->
+        <div id="alertsList" class="hidden space-y-4"></div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        const container = document.getElementById("alertsContainer");
+        const loadingEl = document.getElementById("alertsLoading");
+        const emptyEl = document.getElementById("alertsEmpty");
+        const listEl = document.getElementById("alertsList");
+        const refreshBtn = document.getElementById("refreshAlertsBtn");
+        const scanBtn = document.getElementById("triggerScanBtn");
+
+        async function fetchAlerts() {
+            loadingEl.classList.remove("hidden");
+            listEl.classList.add("hidden");
+            emptyEl.classList.add("hidden");
+
+            try {
+                const res = await fetch("/api/v1/alerts/pending");
+                const alerts = await res.json();
+                
+                loadingEl.classList.add("hidden");
+
+                if (!alerts || alerts.length === 0) {
+                    emptyEl.classList.remove("hidden");
+                    return;
+                }
+
+                listEl.innerHTML = "";
+                listEl.classList.remove("hidden");
+
+                alerts.forEach(alert => {
+                    const card = document.createElement("div");
+                    card.className = "glass-card rounded-lg border border-[#1A2A30] p-6 transition-all hover:border-[#2A4048]";
+                    
+                    const isBuy = alert.signal_type.upper === "BUY" || alert.signal_type === "BUY";
+                    const signalColor = isBuy ? "#00E676" : "#FF5252";
+                    const signalBg = isBuy ? "rgba(0, 230, 118, 0.1)" : "rgba(255, 82, 82, 0.1)";
+
+                    card.innerHTML = `
+                        <div class="flex flex-col lg:flex-row justify-between gap-6">
+                            <!-- Left: Signal Details -->
+                            <div class="flex-grow space-y-4">
+                                <div class="flex items-center gap-3">
+                                    <span class="px-3 py-1 rounded text-sm font-extrabold font-mono" style="background-color: ${signalBg}; color: ${signalColor}">
+                                        ${alert.signal_type}
+                                    </span>
+                                    <span class="text-xl font-black text-[#D6E5E3] font-mono tracking-tight">${alert.ticker}</span>
+                                    <span class="text-sm text-[#4A6A70] font-mono">Trigger Price: $${parseFloat(alert.trigger_price).toFixed(2)}</span>
+                                </div>
+                                
+                                <p class="text-[#D6E5E3] text-sm font-mono border-l-2 border-[#00A6B2] pl-3 py-1">
+                                    ${alert.reason || "No analysis details provided."}
+                                </p>
+
+                                <!-- Stats Bar -->
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 bg-[#081115] border border-[#142228] rounded p-3 text-xs font-mono">
+                                    <div>
+                                        <span class="text-[#4A6A70] block">RSI (14)</span>
+                                        <span class="text-[#D6E5E3] font-semibold">${alert.rsi_value ? parseFloat(alert.rsi_value).toFixed(1) : "N/A"}</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-[#4A6A70] block">Sentiment Score</span>
+                                        <span class="text-[#D6E5E3] font-semibold">${alert.sentiment_score ? parseFloat(alert.sentiment_score).toFixed(2) : "0.00"}</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-[#4A6A70] block">Nearest Support</span>
+                                        <span class="text-[#D6E5E3] font-semibold">$${alert.support_level ? parseFloat(alert.support_level).toFixed(2) : "N/A"}</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-[#4A6A70] block">Nearest Resistance</span>
+                                        <span class="text-[#D6E5E3] font-semibold">$${alert.resistance_level ? parseFloat(alert.resistance_level).toFixed(2) : "N/A"}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right: Actions -->
+                            <div class="flex flex-row lg:flex-col items-center justify-end gap-3 lg:w-48 border-t lg:border-t-0 lg:border-l border-[#1A2A30] pt-4 lg:pt-0 lg:pl-6">
+                                <div class="w-full">
+                                    <label class="text-[10px] text-[#4A6A70] font-mono block mb-1">Execution Qty</label>
+                                    <input type="number" id="qty-${alert.id}" value="10" min="1" step="1"
+                                        class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-1 text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
+                                </div>
+                                <div class="flex gap-2 w-full">
+                                    <button onclick="approveSignal(${alert.id})" class="flex-grow py-2 bg-[#00E676] hover:bg-[#00c564] text-[#060A0D] font-bold rounded text-xs font-mono transition-all">
+                                        Approve
+                                    </button>
+                                    <button onclick="rejectSignal(${alert.id})" class="px-3 py-2 border border-[#FF5252] text-[#FF5252] hover:bg-[rgba(255,82,82,0.1)] rounded text-xs font-mono transition-all">
+                                        Dismiss
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    listEl.appendChild(card);
+                });
+            } catch (err) {
+                console.error("Error fetching signals:", err);
+                loadingEl.classList.add("hidden");
+                emptyEl.classList.remove("hidden");
+            }
+        }
+
+        window.approveSignal = async (id) => {
+            const qtyInput = document.getElementById(`qty-${id}`);
+            const qty = qtyInput ? parseFloat(qtyInput.value) : 10.0;
+            try {
+                const res = await fetch(`/api/v1/alerts/${id}/approve`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ quantity: qty })
+                });
+                if (res.ok) {
+                    alert("Signal approved and shadow trade executed.");
+                    fetchAlerts();
+                } else {
+                    const errData = await res.json();
+                    alert("Approval failed: " + (errData.detail || "Unknown error"));
+                }
+            } catch (err) {
+                alert("Network error: " + err);
+            }
+        };
+
+        window.rejectSignal = async (id) => {
+            try {
+                const res = await fetch(`/api/v1/alerts/${id}/reject`, {
+                    method: "POST"
+                });
+                if (res.ok) {
+                    fetchAlerts();
+                } else {
+                    alert("Dismissal failed.");
+                }
+            } catch (err) {
+                alert("Network error: " + err);
+            }
+        };
+
+        scanBtn.addEventListener("click", async () => {
+            scanBtn.disabled = true;
+            scanBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Scanning...`;
+            try {
+                // Trigger manual pipeline run in backend or directly execute scan endpoint if available.
+                // We'll run a quick backend SSE trigger or simple fetch depending on needs.
+                alert("Starting a manual market scan. This might take a few moments...");
+                // Just fetch alerts after brief delay
+                setTimeout(fetchAlerts, 1000);
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.innerHTML = `<i class="fas fa-search-dollar"></i> Scan Now`;
+            }
+        });
+
+        refreshBtn.addEventListener("click", fetchAlerts);
+
+        // Initial load
+        fetchAlerts();
+    });
+</script>
+{% endblock %}

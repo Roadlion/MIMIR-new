@@ -144,8 +144,11 @@
                             </div>
                             <div class="text-[10px] text-[#4A6A70] font-mono mt-0.5">At close: <span id="price-timestamp">--</span></div>
                         </div>
-                        <div class="flex gap-1.5 items-center">
-                            <button id="toggle-sentiment-btn" class="pill-btn" onclick="toggleSentimentLine()">Toggle Sentiment</button>
+                        <div class="flex gap-1.5 items-center flex-wrap">
+                            <button id="toggle-sentiment-btn" class="pill-btn" onclick="toggleSentimentLine()">Sentiment</button>
+                            <button id="toggle-ma-btn" class="pill-btn" onclick="toggleMA()">MAs</button>
+                            <button id="toggle-levels-btn" class="pill-btn" onclick="toggleLevels()">Levels</button>
+                            <button id="toggle-rsi-btn" class="pill-btn" onclick="toggleRSI()">RSI</button>
                             <button id="toggle-normalize-btn" class="pill-btn" onclick="toggleNormalize()">Normalize</button>
                             <span class="w-[1px] h-4 bg-[#1A2A30] mx-1"></span>
                             <button class="pill-btn active" onclick="changeTimeframe('1d')">1D</button>
@@ -472,11 +475,53 @@
     let cachedCandles = null;
     let showSentiment = false;
     let showNormalized = false;
+    let showMA = false;
+    let showLevels = false;
+    let showRSI = false;
 
     function toggleSentimentLine() {
         showSentiment = !showSentiment;
         const btn = document.getElementById("toggle-sentiment-btn");
         if (showSentiment) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
+        }
+        if (cachedCandles) {
+            renderChart(cachedCandles);
+        }
+    }
+
+    function toggleMA() {
+        showMA = !showMA;
+        const btn = document.getElementById("toggle-ma-btn");
+        if (showMA) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
+        }
+        if (cachedCandles) {
+            renderChart(cachedCandles);
+        }
+    }
+
+    function toggleLevels() {
+        showLevels = !showLevels;
+        const btn = document.getElementById("toggle-levels-btn");
+        if (showLevels) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
+        }
+        if (cachedCandles) {
+            renderChart(cachedCandles);
+        }
+    }
+
+    function toggleRSI() {
+        showRSI = !showRSI;
+        const btn = document.getElementById("toggle-rsi-btn");
+        if (showRSI) {
             btn.classList.add("active");
         } else {
             btn.classList.remove("active");
@@ -709,18 +754,49 @@
         const labels = candles.map(c => new Date(c.time).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
         const prices = candles.map(c => c.close);
         const sentiments = candles.map(c => c.sentiment);
+        const maFast = candles.map(c => c.ma_fast);
+        const maSlow = candles.map(c => c.ma_slow);
+        const supports = candles.map(c => c.support);
+        const supportsUpper = candles.map(c => c.support_upper || c.support * 1.015);
+        const supportsLower = candles.map(c => c.support_lower || c.support * 0.985);
+        const resistances = candles.map(c => c.resistance);
+        const resistancesUpper = candles.map(c => c.resistance_upper || c.resistance * 1.015);
+        const resistancesLower = candles.map(c => c.resistance_lower || c.resistance * 0.985);
+        const rsiVals = candles.map(c => c.rsi);
 
         let displayPrices = prices;
         let displaySentiments = sentiments;
+        let displayMaFast = maFast;
+        let displayMaSlow = maSlow;
+        let displaySupports = supports;
+        let displaySupportsUpper = supportsUpper;
+        let displaySupportsLower = supportsLower;
+        let displayResistances = resistances;
+        let displayResistancesUpper = resistancesUpper;
+        let displayResistancesLower = resistancesLower;
+        let displayRSI = rsiVals;
         
         if (showNormalized) {
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
-            displayPrices = prices.map(p => (maxPrice - minPrice > 0) ? ((p - minPrice) / (maxPrice - minPrice)) * 100 : 50);
+            const norm = (p) => (maxPrice - minPrice > 0) ? ((p - minPrice) / (maxPrice - minPrice)) * 100 : 50;
+            displayPrices = prices.map(norm);
+            displayMaFast = maFast.map(norm);
+            displayMaSlow = maSlow.map(norm);
+            displaySupports = supports.map(norm);
+            displaySupportsUpper = supportsUpper.map(norm);
+            displaySupportsLower = supportsLower.map(norm);
+            displayResistances = resistances.map(norm);
+            displayResistancesUpper = resistancesUpper.map(norm);
+            displayResistancesLower = resistancesLower.map(norm);
             
             const minSent = Math.min(...sentiments);
             const maxSent = Math.max(...sentiments);
             displaySentiments = sentiments.map(s => (maxSent - minSent > 0) ? ((s - minSent) / (maxSent - minSent)) * 100 : 50);
+
+            const minRsi = Math.min(...rsiVals);
+            const maxRsi = Math.max(...rsiVals);
+            displayRSI = rsiVals.map(r => (maxRsi - minRsi > 0) ? ((r - minRsi) / (maxRsi - minRsi)) * 100 : 50);
         }
 
         const isUp = prices[prices.length - 1] >= prices[0];
@@ -751,6 +827,110 @@
                 pointRadius: 0,
                 tension: 0.1,
                 yAxisID: showNormalized ? 'y' : 'y_sentiment'
+            });
+        }
+
+        if (showMA) {
+            datasets.push({
+                label: 'MA (Fast)',
+                data: displayMaFast,
+                borderColor: '#38BDF8',
+                borderWidth: 1.5,
+                fill: false,
+                pointRadius: 0,
+                borderDash: [3, 3],
+                tension: 0.1,
+                yAxisID: 'y'
+            });
+            datasets.push({
+                label: 'MA (Slow)',
+                data: displayMaSlow,
+                borderColor: '#FB923C',
+                borderWidth: 1.5,
+                fill: false,
+                pointRadius: 0,
+                borderDash: [3, 3],
+                tension: 0.1,
+                yAxisID: 'y'
+            });
+        }
+
+        if (showLevels) {
+            // Support Band
+            datasets.push({
+                label: 'Support Band Lower',
+                data: displaySupportsLower,
+                borderColor: 'rgba(0, 230, 118, 0.05)',
+                borderWidth: 0,
+                fill: false,
+                pointRadius: 0,
+                yAxisID: 'y'
+            });
+            datasets.push({
+                label: 'Support Band Upper',
+                data: displaySupportsUpper,
+                borderColor: 'rgba(0, 230, 118, 0.15)',
+                borderWidth: 1,
+                fill: '-1',
+                backgroundColor: 'rgba(0, 230, 118, 0.05)',
+                pointRadius: 0,
+                yAxisID: 'y'
+            });
+            datasets.push({
+                label: 'Support Line',
+                data: displaySupports,
+                borderColor: '#00E676',
+                borderWidth: 1.5,
+                fill: false,
+                pointRadius: 0,
+                borderDash: [5, 5],
+                tension: 0,
+                yAxisID: 'y'
+            });
+
+            // Resistance Band
+            datasets.push({
+                label: 'Resistance Band Lower',
+                data: displayResistancesLower,
+                borderColor: 'rgba(255, 82, 82, 0.05)',
+                borderWidth: 0,
+                fill: false,
+                pointRadius: 0,
+                yAxisID: 'y'
+            });
+            datasets.push({
+                label: 'Resistance Band Upper',
+                data: displayResistancesUpper,
+                borderColor: 'rgba(255, 82, 82, 0.15)',
+                borderWidth: 1,
+                fill: '-1',
+                backgroundColor: 'rgba(255, 82, 82, 0.05)',
+                pointRadius: 0,
+                yAxisID: 'y'
+            });
+            datasets.push({
+                label: 'Resistance Line',
+                data: displayResistances,
+                borderColor: '#FF5252',
+                borderWidth: 1.5,
+                fill: false,
+                pointRadius: 0,
+                borderDash: [5, 5],
+                tension: 0,
+                yAxisID: 'y'
+            });
+        }
+
+        if (showRSI) {
+            datasets.push({
+                label: 'RSI',
+                data: displayRSI,
+                borderColor: '#EAB308',
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0,
+                tension: 0.1,
+                yAxisID: showNormalized ? 'y' : 'y_rsi'
             });
         }
 
@@ -797,6 +977,20 @@
                             font: { family: 'monospace', size: 9 },
                             callback: function(value) {
                                 return (value * 100).toFixed(0) + '%';
+                            }
+                        }
+                    },
+                    y_rsi: {
+                        position: 'right',
+                        min: 0,
+                        max: 100,
+                        display: showRSI && !showNormalized,
+                        grid: { display: false },
+                        ticks: {
+                            color: '#EAB308',
+                            font: { family: 'monospace', size: 9 },
+                            callback: function(value) {
+                                return value.toFixed(0);
                             }
                         }
                     }

@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest
+from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest, trade_alerts
 from .config import get_settings
 
 settings = get_settings()
@@ -29,6 +29,7 @@ app.include_router(refresh.router, prefix="/api/v1", tags=["refresh"])
 app.include_router(taxonomy.router, prefix="/api/v1", tags=["taxonomy"])
 app.include_router(niche.router, prefix="/api/v1", tags=["niche"])
 app.include_router(portfolio.router, prefix="/api/v1", tags=["portfolio"])
+app.include_router(trade_alerts.router, prefix="/api/v1", tags=["alerts"])
 app.include_router(backtest.router)
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -64,6 +65,10 @@ async def watchlist_page(request: Request):
 @app.get("/portfolio", response_class=HTMLResponse)
 async def portfolio_page(request: Request):
     return templates.TemplateResponse(request, "portfolio.html")
+
+@app.get("/alerts", response_class=HTMLResponse)
+async def alerts_page(request: Request):
+    return templates.TemplateResponse(request, "alerts.html")
 
 @app.get("/taxonomy", response_class=HTMLResponse)
 async def taxonomy_page(request: Request):

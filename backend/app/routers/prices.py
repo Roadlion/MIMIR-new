@@ -619,6 +619,45 @@ def get_candles(
             "sentiment": round(current_sentiment, 4)
         })
 
+    # Calculate Technical Analysis indicators on the candles list
+    import numpy as np
+    import pandas as pd
+    df_ta = pd.DataFrame(candles_list)
+    if not df_ta.empty:
+        df_ta['ma_fast'] = df_ta['close'].rolling(window=10, min_periods=1).mean()
+        df_ta['ma_slow'] = df_ta['close'].rolling(window=30, min_periods=1).mean()
+        
+        # RSI calculation
+        delta = df_ta['close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -1 * delta.clip(upper=0)
+        avg_gain = gain.rolling(window=14, min_periods=1).mean()
+        avg_loss = loss.rolling(window=14, min_periods=1).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        df_ta['rsi'] = rsi.fillna(50.0)
+        
+        # Support/Resistance over rolling 20 period window
+        df_ta['support'] = df_ta['low'].rolling(window=20, min_periods=1).min()
+        df_ta['resistance'] = df_ta['high'].rolling(window=20, min_periods=1).max()
+        
+        # Hydrate back to dicts
+        for idx, row in df_ta.iterrows():
+            candles_list[idx]['ma_fast'] = float(row['ma_fast']) if not np.isnan(row['ma_fast']) else float(row['close'])
+            candles_list[idx]['ma_slow'] = float(row['ma_slow']) if not np.isnan(row['ma_slow']) else float(row['close'])
+            candles_list[idx]['rsi'] = float(row['rsi']) if not np.isnan(row['rsi']) else 50.0
+            
+            support_val = float(row['support']) if not np.isnan(row['support']) else float(row['close'])
+            resistance_val = float(row['resistance']) if not np.isnan(row['resistance']) else float(row['close'])
+            
+            candles_list[idx]['support'] = support_val
+            candles_list[idx]['support_upper'] = support_val * 1.015
+            candles_list[idx]['support_lower'] = support_val * 0.985
+            
+            candles_list[idx]['resistance'] = resistance_val
+            candles_list[idx]['resistance_upper'] = resistance_val * 1.015
+            candles_list[idx]['resistance_lower'] = resistance_val * 0.985
+
     return {
         "ticker": ticker,
         "interval": interval,
