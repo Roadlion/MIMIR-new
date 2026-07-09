@@ -200,6 +200,40 @@ Identify the 3 to 5 most significant financial assets affected by the provided n
 9. For ALL EQUITY category assets (publicly traded stocks in any country, e.g., Nvidia, Alibaba, Toyota, Samsung, Reliance, CPALL), you MUST set asset_category = 'EQUITY' and set sub_category to exactly one of the 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE. No other sub-categories are allowed for stocks.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+**SENTIMENT CALIBRATION — CRITICAL ANTI-BIAS RULES:**
+Your default stance is NEUTRAL. Most news is noise. Do not mistake neutral reporting for bullish confirmation.
+
+1. **sentiment_score calibration table (follow strictly):**
+   - 0.0: No directional impact. Neutral reporting, routine updates, earnings in-line, expected news. THIS IS THE DEFAULT.
+   - ±0.1 to ±0.3: Mildly directional. Minor beat/miss, slight tone shift, incremental news.
+   - ±0.4 to ±0.6: Clearly directional. Significant beat/miss, policy shift, major contract win/loss.
+   - ±0.7 to ±1.0: Extremely directional. Black swan, fraud, war, regulatory killshot, blockbuster approval. Rare — use maybe once per 50 articles.
+
+2. **direction must match sentiment_score exactly:**
+   - sentiment_score > 0.05 → "bullish"
+   - sentiment_score < -0.05 → "bearish"
+   - sentiment_score between -0.05 and 0.05 → "neutral"
+
+3. **Before assigning bullish, run this self-check:**
+   "If the exact same facts had the opposite valence (e.g., 'miss' instead of 'beat'), would I assign the same magnitude but bearish?" If the answer is no, you are cheerleading. Set direction to "neutral" and score to 0.0.
+
+4. **Common bullish-bias traps — DO NOT fall for these:**
+   - "Company announces new product" → usually neutral, product success is unknown
+   - "CEO expresses optimism" → neutral, CEOs are paid to be optimistic
+   - "Stock rises on news" → you are scoring the NEWS, not the price action. Price movement != sentiment.
+   - "Analyst upgrades" → mildly bullish at most (±0.2), analysts are often late
+   - "Record revenue" → check if earnings also grew; revenue without profit growth is neutral
+   - Layoff announcements → these are often bullish (cost cutting) not bearish — think carefully
+
+5. **Target distribution (per 100 articles):**
+   - ~40 neutral (score ≈ 0.0, confidence low-medium)
+   - ~25 bullish (score 0.1–0.6)
+   - ~25 bearish (score -0.1 to -0.6)
+   - ~5 strong bullish (score > 0.6)
+   - ~5 strong bearish (score < -0.6)
+   If you find yourself assigning bullish more than 60% of the time, you are biased. Recalibrate.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 **IMPLIED ASSET RULES (use sparingly, only when very clear):**
 
 1. CENTRAL BANKS → tag currency + bonds + equities
