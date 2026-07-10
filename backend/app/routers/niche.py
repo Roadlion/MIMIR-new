@@ -12,6 +12,8 @@ settings = get_settings()
 
 class Opportunity(BaseModel):
     pair: str
+    ticker1: Optional[str] = None
+    ticker2: Optional[str] = None
     z_score: float
     mean_spread: float
     current_spread: float
@@ -98,6 +100,8 @@ def get_niche_opportunities():
 
                 opps.append(Opportunity(
                     pair=f"{t1} / {t2}",
+                    ticker1=t1,
+                    ticker2=t2,
                     z_score=z,
                     mean_spread=float(r["mean_spread"]) if r["mean_spread"] else 0,
                     current_spread=float(r["current_spread"]) if r["current_spread"] else 0,
@@ -269,3 +273,59 @@ def get_niche_articles(
         return NicheArticlesResponse(articles=[])
     finally:
         conn.close()
+
+
+@router.get("/niche/pair-history")
+def get_pair_history(ticker1: str = Query(...), ticker2: str = Query(...), days: int = Query(30, ge=7, le=180)):
+    """
+    Returns the daily spread history and Z-score history for a given ticker pair.
+    """
+    from fastapi import HTTPException
+    from ..analytics.cointegration import _fetch_daily_closes
+    from datetime import date
+    import pandas as pd
+    import numpy as np
+
+    ticker1 = ticker1.upper().strip()
+    ticker2 = ticker2.upper().strip()
+
+    data1 = _fetch_daily_closes(ticker1, period_days=days + 10)
+    data2 = _fetch_daily_closes(ticker2, period_days=days + 10)
+
+    if data1 is None or data2 is None or data1.empty or data2.empty:
+        raise HTTPException(status_code=400, detail="Historical data not found for one or both tickers")
+
+    df = pd.concat([data1["close"], data2["close"]], axis=1, join="inner").dropna()
+    df.columns = [ticker1, ticker2]
+
+    df[ticker1] = df[ticker1].astype(float)
+    df[ticker2] = df[ticker2].astype(float)
+
+    if len(df) < 5:
+        raise HTTPException(status_code=400, detail="Insufficient overlapping price history")
+
+    df["Spread"] = df[ticker1] / df[ticker2]
+    mean_val = df["Spread"].mean()
+    std_val = df["Spread"].std()
+    if std_val == 0:
+        std_val = 1.0
+
+    df["z_score"] = (df["Spread"] - mean_val) / std_val
+    df = df.tail(days)
+
+    history = []
+    for date_idx, row in df.iterrows():
+        date_str = date_idx.strftime("%Y-%m-%d") if isinstance(date_idx, (datetime, date, pd.Timestamp)) else str(date_idx)
+        history.append({
+            "date": date_str,
+            "ticker1_close": round(float(row[ticker1]), 2),
+            "ticker2_close": round(float(row[ticker2]), 2),
+            "spread": round(float(row["Spread"]), 4),
+            "z_score": round(float(row["z_score"]), 2),
+            "mean": round(float(mean_val), 4),
+            "upper_threshold": 2.0,
+            "lower_threshold": -2.0
+        })
+
+    return history
+

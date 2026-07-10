@@ -584,19 +584,73 @@ def get_portfolio_advice():
         ]
     }
     
-    system_prompt = "You are MIMIR's Senior Investment Strategist. Output clear, concise investment strategy insights and stock suggestions."
+    system_prompt = (
+        "You are MIMIR's Senior Investment Strategist, an expert quantitative portfolio manager and macro economist. "
+        "Your task is to analyze the user's portfolio data, market sentiment, online news, and macroeconomic indicators, "
+        "and generate a highly professional, visually beautiful, and deeply insightful strategic report in HTML format. "
+        "Write in a sharp, professional financial-analyst tone. Avoid fluff."
+    )
     user_prompt = f"""
-Analyze the user's shadow portfolio, recent local sentiment impacts, real-time online headlines, and key global macro trends to provide actionable recommendations.
-Context:
+You are provided with the following real-time and historical context:
+---
+CONTEXT DATA:
 {json.dumps(prompt_context, indent=2)}
+---
 
-Please structure your response in HTML format (using tailwind CSS classes where appropriate for typography/tables/lists, but keeping it clean). Do not include markdown wrappers (like ```html).
-Sections required:
-1. <div class="mb-6"><h3 class="text-xl font-bold text-[#00A6B2] mb-3">📈 Portfolio Performance & Allocation Advice</h3><p class="text-[#8BA4A8] text-sm mb-2">Provide a qualitative assessment of the allocation and diversification. Then recommend an action (Buy, Hold, Trim, Sell) for each ticker in the portfolio with a concise 1-2 sentence rationale linked to recent sentiment/news and online news headlines.</p></div>
-2. <div class="mb-6"><h3 class="text-xl font-bold text-[#ffd700] mb-3">🔥 Top Sentiment Stock Picks</h3><p class="text-[#8BA4A8] text-sm mb-3">Recommend 2-3 stocks from the 'top_sentiment_candidates' or high quality sentiment names. For each, give the ticker, name, and a 1-sentence bull case explaining why the sentiment is so strong.</p></div>
-3. <div class="mb-6"><h3 class="text-xl font-bold text-[#00E676] mb-3">🌍 Macroeconomic Outlook</h3><p class="text-[#8BA4A8] text-sm mb-2">Synthesize the 'online_macro_trends' (S&P 500, Nasdaq, VIX, US Dollar, Gold, US 10Y Yield) to evaluate overall market regime (e.g. Risk-On vs Risk-Off, hawkish/dovish indicators) and how it affects the user's portfolio.</p></div>
-4. <div class="mb-4"><h3 class="text-xl font-bold text-[#00E5F2] mb-3">💰 Alternative MIMIR Profit Strategies</h3><ul class="list-disc list-inside text-sm text-[#D6E5E3] space-y-2"><li><strong>Swing Trading Sentinel:</strong> Describe how to swing trade stocks when sentiment swings heavily into bullish (>0.40) or bearish (<-0.40) ranges.</li><li><strong>Guerilla Arbitrage:</strong> Explain how to use MIMIR's Guerilla Quant tab to find statistical arbitrage pairs and monitor their spread.</li><li><strong>Volume Anomaly Trigger:</strong> Outline how tracking volume spikes alongside news sentiment is a powerful signal for breakout trading.</li></ul></div>
+Generate a comprehensive strategic briefing for the user's portfolio. The output MUST be raw HTML (do not wrap in ```html or other markdown blocks; just start with the HTML elements directly).
+Use Tailwind CSS classes to style the output so it looks premium, sleek, and matches a high-end terminal dashboard (dark theme, using the application's palette of dark slate, emerald, cyan, amber, and gold/yellow).
+
+Ensure the HTML includes the following 4 sections, designed beautifully:
+
+1. <div class="mb-6">
+     <h3 class="text-xl font-bold text-[#00A6B2] mb-3">📈 Portfolio Performance & Allocation Advice</h3>
+     <p class="text-[#8BA4A8] text-sm mb-3">Provide a qualitative assessment of the current portfolio's concentration, diversification, and general risk profile based on current positions and their 14-day sentiment trend.</p>
+     <div class="overflow-x-auto mb-4">
+       <table class="w-full text-left text-xs text-[#D6E5E3] border-collapse">
+         <thead>
+           <tr class="border-b border-[#1A2A30] text-[#8BA4A8]">
+             <th class="py-2 px-3">Ticker</th>
+             <th class="py-2 px-3">Value</th>
+             <th class="py-2 px-3">Unrealized P&L</th>
+             <th class="py-2 px-3">Action</th>
+             <th class="py-2 px-3">Rationale</th>
+           </tr>
+         </thead>
+         <tbody>
+           <!-- Generate rows for each ticker in the portfolio here -->
+         </tbody>
+       </table>
+     </div>
+   </div>
+
+2. <div class="mb-6">
+     <h3 class="text-xl font-bold text-[#ffd700] mb-3">🔥 Top Sentiment Stock Picks</h3>
+     <p class="text-[#8BA4A8] text-sm mb-3">Recommend 2-3 stocks from 'top_sentiment_candidates' or select other high-performing sentiment names. Render them as clean, cards/columns or structured lists.</p>
+   </div>
+
+3. <div class="mb-6">
+     <h3 class="text-xl font-bold text-[#00E676] mb-3">🌍 Macroeconomic Outlook & Market Regime</h3>
+     <p class="text-[#8BA4A8] text-sm mb-3">Synthesize the global indicators from 'online_macro_trends' (S&P 500, Nasdaq, VIX, US Dollar, Gold, US 10Y Yield). Identify the prevailing market regime (e.g., Risk-On, Risk-Off) and discuss how it directly impacts the user's specific holdings.</p>
+   </div>
+
+4. <div class="mb-4">
+     <h3 class="text-xl font-bold text-[#00E5F2] mb-3">💰 Alternative MIMIR Profit Strategies</h3>
+     <ul class="list-disc list-inside text-sm text-[#D6E5E3] space-y-2">
+       <li><strong>Swing Trading Sentinel:</strong> Describe how to set up alerts and swing trade stocks when sentiment swings heavily into bullish (>0.40) or bearish (&lt;-0.40) zones.</li>
+       <li><strong>Guerilla Arbitrage:</strong> Explain how to leverage the 'Guerilla Quant' tab to identify co-integrated statistical arbitrage pairs (e.g., tracking spread deviation from Z-score thresholds).</li>
+       <li><strong>Volume Anomaly Trigger:</strong> Outline how tracking abnormal volume spikes (relative volume > 2.0) alongside positive sentiment changes serves as a confirmation indicator for momentum breakouts.</li>
+     </ul>
+   </div>
+
+For the "Action" column in the table, please use one of these HTML badges exactly:
+- <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">BUY</span>
+- <span class="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">HOLD</span>
+- <span class="bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">TRIM</span>
+- <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">SELL</span>
+
+Format values nicely (e.g. prefixing dollar amounts with $, formatting percentages to 2 decimals). Do not include any greeting or conversational filler. Start directly with the first section's HTML wrapper.
 """
+
 
     # Call LLM via centralized completion router
     try:
@@ -622,3 +676,154 @@ Sections required:
         return {
             "advice": f"<p class='text-[#FF5252]'>Error generating AI advice: {str(e)}. Please try again later.</p>"
         }
+
+
+@router.get("/portfolio/history")
+def get_portfolio_history():
+    from datetime import timedelta, date
+    import time
+    from curl_cffi.requests import Session
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    
+    # 1. Fetch all transactions sorted by order_date
+    cur.execute(f"""
+        SELECT ticker, buy_price, quantity, transaction_type, order_date
+        FROM {settings.mimir_schema}.mimir_portfolio
+        ORDER BY order_date ASC
+    """)
+    txs = cur.fetchall()
+    
+    if not txs:
+        cur.close()
+        conn.close()
+        return []
+        
+    tickers = list(set(tx["ticker"].upper() for tx in txs))
+    
+    # 2. Fetch price history for the tickers for the last 30 days
+    # We will query local hourly/daily cache first or fallback to yfinance
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=30)
+    
+    prices_map = {} # {ticker: {date_str: price}}
+    
+    session = Session(impersonate="chrome")
+    session.verify = False
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    })
+    
+    def fetch_ticker_history(ticker):
+        ticker_prices = {}
+        try:
+            cur_p = conn.cursor()
+            cur_p.execute(f"""
+                SELECT DISTINCT ON (DATE(timestamp)) DATE(timestamp) as date, close
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = %s AND timestamp >= NOW() - INTERVAL '40 days'
+                ORDER BY DATE(timestamp), timestamp DESC
+            """, (ticker,))
+            rows = cur_p.fetchall()
+            cur_p.close()
+            
+            for row in rows:
+                date_str = row["date"].strftime("%Y-%m-%d")
+                ticker_prices[date_str] = float(row["close"])
+        except Exception as e:
+            print(f"[PORTFOLIO HISTORY] DB error for {ticker}: {e}")
+            
+        # If we got no data or less than 15 days, let's fetch from yfinance as fallback
+        if len(ticker_prices) < 15:
+            try:
+                t = yf.Ticker(ticker, session=session)
+                df = t.history(period="1mo", interval="1d")
+                for index, row in df.iterrows():
+                    date_str = index.strftime("%Y-%m-%d")
+                    ticker_prices[date_str] = float(row["Close"])
+            except Exception as e:
+                print(f"[PORTFOLIO HISTORY] yfinance error for {ticker}: {e}")
+                
+        return ticker, ticker_prices
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(fetch_ticker_history, tickers)
+        for ticker, t_prices in results:
+            prices_map[ticker] = t_prices
+            
+    cur.close()
+    conn.close()
+    
+    # 3. Generate list of dates for the last 30 days
+    date_list = []
+    for i in range(31):
+        day = start_date + timedelta(days=i)
+        date_list.append(day.date())
+        
+    history_data = []
+    
+    # 4. For each day, simulate portfolio holdings up to that date and calculate value
+    for day_date in date_list:
+        day_str = day_date.strftime("%Y-%m-%d")
+        
+        holdings_on_day = {}
+        for tx in txs:
+            tx_date = tx["order_date"]
+            if tx_date.date() <= day_date:
+                ticker = tx["ticker"].upper()
+                qty = float(tx["quantity"])
+                price = float(tx["buy_price"])
+                tx_type = tx.get("transaction_type", "BUY").upper()
+                
+                if ticker not in holdings_on_day:
+                    holdings_on_day[ticker] = {"qty": 0.0, "avg_buy": 0.0}
+                    
+                h = holdings_on_day[ticker]
+                if tx_type == "BUY":
+                    if h["qty"] + qty > 0:
+                        h["avg_buy"] = (h["qty"] * h["avg_buy"] + qty * price) / (h["qty"] + qty)
+                    else:
+                        h["avg_buy"] = 0.0
+                    h["qty"] += qty
+                elif tx_type == "SELL":
+                    h["qty"] -= qty
+                    if h["qty"] <= 0:
+                        h["qty"] = 0.0
+                        h["avg_buy"] = 0.0
+                        
+        day_value = 0.0
+        day_cost = 0.0
+        
+        for ticker, h in holdings_on_day.items():
+            if h["qty"] > 0:
+                ticker_prices = prices_map.get(ticker, {})
+                price = ticker_prices.get(day_str)
+                
+                if price is None:
+                    # Look back up to 10 days for closest preceding price
+                    for lookback in range(1, 10):
+                        prev_date = (day_date - timedelta(days=lookback)).strftime("%Y-%m-%d")
+                        if prev_date in ticker_prices:
+                            price = ticker_prices[prev_date]
+                            break
+                            
+                if price is None:
+                    price = h["avg_buy"]
+                    
+                day_value += h["qty"] * price
+                day_cost += h["qty"] * h["avg_buy"]
+                
+        day_pl = day_value - day_cost
+        day_pl_pct = (day_pl / day_cost * 100) if day_cost > 0 else 0.0
+        
+        history_data.append({
+            "date": day_str,
+            "portfolio_value": round(day_value, 2),
+            "cost_basis": round(day_cost, 2),
+            "profit_loss": round(day_pl, 2),
+            "profit_loss_pct": round(day_pl_pct, 2)
+        })
+        
+    return history_data
+

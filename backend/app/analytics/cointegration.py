@@ -21,6 +21,15 @@ NICHE_PAIRS = [
     ("GDX", "GDXJ"),
     # Battery metals
     ("COPX", "LIT"),
+    # Mega-Cap / Share Class Arbitrage
+    ("GOOG", "GOOGL"),
+    ("AAPL", "MSFT"),
+    # Financials Arbitrage
+    ("GS", "MS"),
+    # Consumer Staples Arbitrage
+    ("KO", "PEP"),
+    # Energy Majors Arbitrage
+    ("CVX", "XOM"),
 ]
 
 
@@ -42,6 +51,7 @@ def _fetch_daily_closes(ticker, period_days=365):
         conn.close()
         if rows:
             df = pd.DataFrame(rows, columns=["date", "close"])
+            df["close"] = df["close"].astype(float)
             df = df.set_index("date").sort_index()
             return df
     except Exception as e:

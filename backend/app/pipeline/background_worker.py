@@ -181,70 +181,85 @@ def run_niche_scan():
     then compute and persist pair signals for Guerilla Quant.
     """
     print(f"[BG_WORKER] Starting Guerilla Quant niche scan at {datetime.now()}")
-    articles = scrape_niche_articles(sample_size=5)
+    articles = scrape_niche_articles(sample_size=30)
     if not articles:
         print("[BG_WORKER] No niche articles scraped, skipping.")
         return
 
-    analyzer = DeepSeekSentiment()
-    scored_items = []
-
+    # Check database to filter out existing articles (avoid duplicate scoring & API costs)
+    conn_check = get_db_connection()
+    cur_check = conn_check.cursor()
+    new_articles = []
     for art in articles:
         title = (art.get("title") or "")[:500]
-        summary = (art.get("summary") or "")[:2000]
         title_hash = hashlib.md5(title.lower().encode()).hexdigest()
-        source_type = art.get("source_type", "niche")
+        cur_check.execute(f"SELECT EXISTS(SELECT 1 FROM {settings.mimir_schema}.mimir_raw_articles WHERE title_hash = %s)", (title_hash,))
+        if not cur_check.fetchone()[0]:
+            new_articles.append(art)
+    cur_check.close()
+    conn_check.close()
 
-        # Generate unique link and url_hash to avoid constraint violations
-        link = art.get("link") or f"niche://{source_type}/{title_hash}"
-        url_hash = hashlib.md5(link.encode()).hexdigest()
+    print(f"[BG_WORKER] Scraped {len(articles)} articles total. {len(new_articles)} are new. Scoring new articles...")
 
-        # Parse published date
-        pub_raw = art.get("published_raw", "")
-        pub_ts = None
-        if pub_raw:
-            try:
-                import dateutil.parser
-                tzinfos = {
-                    "EST": -18000, "EDT": -14400,
-                    "CST": -21600, "CDT": -18000,
-                    "MST": -25200, "MDT": -21600,
-                    "PST": -28800, "PDT": -25200,
-                    "UTC": 0, "GMT": 0, "BST": 3600,
-                    "CET": 3600, "CEST": 7200
-                }
-                pub_ts = dateutil.parser.parse(pub_raw, tzinfos=tzinfos)
-                if pub_ts.tzinfo is None:
-                    pub_ts = pub_ts.replace(tzinfo=timezone.utc)
-            except Exception:
+    scored_items = []
+    if new_articles:
+        analyzer = DeepSeekSentiment()
+        for art in new_articles:
+            title = (art.get("title") or "")[:500]
+            summary = (art.get("summary") or "")[:2000]
+            title_hash = hashlib.md5(title.lower().encode()).hexdigest()
+            source_type = art.get("source_type", "niche")
+
+            # Generate unique link and url_hash to avoid constraint violations
+            link = art.get("link") or f"niche://{source_type}/{title_hash}"
+            url_hash = hashlib.md5(link.encode()).hexdigest()
+
+            # Parse published date
+            pub_raw = art.get("published_raw", "")
+            pub_ts = None
+            if pub_raw:
+                try:
+                    import dateutil.parser
+                    tzinfos = {
+                        "EST": -18000, "EDT": -14400,
+                        "CST": -21600, "CDT": -18000,
+                        "MST": -25200, "MDT": -21600,
+                        "PST": -28800, "PDT": -25200,
+                        "UTC": 0, "GMT": 0, "BST": 3600,
+                        "CET": 3600, "CEST": 7200
+                    }
+                    pub_ts = dateutil.parser.parse(pub_raw, tzinfos=tzinfos)
+                    if pub_ts.tzinfo is None:
+                        pub_ts = pub_ts.replace(tzinfo=timezone.utc)
+                except Exception:
+                    pub_ts = datetime.now(timezone.utc)
+            else:
                 pub_ts = datetime.now(timezone.utc)
-        else:
-            pub_ts = datetime.now(timezone.utc)
 
-        # Score immediately via DeepSeek in-memory (network call)
-        assets = []
-        scoring_status = 'pending'
-        try:
-            result = analyzer.score_article_with_assets(title, summary, force_relevance=True)
-            assets = result.get("assets", [])
-            scoring_status = 'scored' if assets else 'empty'
-        except Exception as e:
-            print(f"[BG_WORKER] Niche scoring error for title '{title[:40]}...': {e}")
-            scoring_status = 'failed'
+            # Score immediately via DeepSeek in-memory (network call)
+            assets = []
+            scoring_status = 'pending'
+            try:
+                result = analyzer.score_article_with_assets(title, summary, force_relevance=True)
+                assets = result.get("assets", [])
+                scoring_status = 'scored' if assets else 'empty'
+            except Exception as e:
+                print(f"[BG_WORKER] Niche scoring error for title '{title[:40]}...': {e}")
+                scoring_status = 'failed'
 
-        scored_items.append({
-            "source_name": f"niche-{source_type}",
-            "feed_url": "",
-            "title": title,
-            "link": link,
-            "published_raw": pub_raw,
-            "published_ts": pub_ts,
-            "summary": summary,
-            "url_hash": url_hash,
-            "title_hash": title_hash,
-            "scoring_status": scoring_status,
-            "assets": assets
-        })
+            scored_items.append({
+                "source_name": f"niche-{source_type}",
+                "feed_url": "",
+                "title": title,
+                "link": link,
+                "published_raw": pub_raw,
+                "published_ts": pub_ts,
+                "summary": summary,
+                "url_hash": url_hash,
+                "title_hash": title_hash,
+                "scoring_status": scoring_status,
+                "assets": assets
+            })
 
     # Now open connection ONLY to perform bulk insertion
     conn = get_db_connection()

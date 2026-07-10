@@ -19,6 +19,20 @@ NICHE_ASSETS_DATA = [
     ("LIT", "Global X Lithium & Battery Tech ETF", "EQUITY", "NYSEARCA"),
     ("XLE", "Energy Select Sector SPDR", "EQUITY", "NYSEARCA"),
     ("XOP", "SPDR S&P Oil & Gas E&P ETF", "EQUITY", "NYSEARCA"),
+    # Mega-Cap Tech
+    ("AAPL", "Apple Inc.", "EQUITY", "NASDAQ"),
+    ("MSFT", "Microsoft Corp.", "EQUITY", "NASDAQ"),
+    ("GOOG", "Alphabet Inc. Class C", "EQUITY", "NASDAQ"),
+    ("GOOGL", "Alphabet Inc. Class A", "EQUITY", "NASDAQ"),
+    # Financials
+    ("GS", "Goldman Sachs Group Inc.", "EQUITY", "NYSE"),
+    ("MS", "Morgan Stanley", "EQUITY", "NYSE"),
+    # Consumer Staples
+    ("KO", "Coca-Cola Co.", "EQUITY", "NYSE"),
+    ("PEP", "PepsiCo Inc.", "EQUITY", "NASDAQ"),
+    # Energy Majors
+    ("CVX", "Chevron Corp.", "EQUITY", "NYSE"),
+    ("XOM", "Exxon Mobil Corp.", "EQUITY", "NYSE"),
 ]
 
 
@@ -108,8 +122,8 @@ def get_hybrid_signals():
             if not res:
                 continue
 
-            s1 = sentiment.get(t1, 0.0)
-            s2 = sentiment.get(t2, 0.0)
+            s1 = float(sentiment.get(t1, 0.0) or 0.0)
+            s2 = float(sentiment.get(t2, 0.0) or 0.0)
             sentiment_delta = s2 - s1
             z_score = res["z_score"]
             signal = res["signal"]

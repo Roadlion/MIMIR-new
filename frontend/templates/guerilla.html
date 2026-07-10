@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <div class="px-8 py-6 max-w-7xl mx-auto space-y-6">
 
     <!-- Header -->
@@ -105,6 +106,36 @@
         <div id="niche-news" class="p-5 grid grid-cols-2 gap-4">
             <div class="col-span-2 text-center text-[#4A6A70] font-mono text-sm py-8">Loading niche news...</div>
         </div>
+    <!-- Spread History Modal -->
+    <div id="chart-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/75 backdrop-blur-sm">
+        <div class="bg-[#111C21] border border-[#1A2A30] rounded w-full max-w-3xl p-6 shadow-[0_0_50px_rgba(0,166,178,0.15)] space-y-4">
+            <div class="flex justify-between items-center border-b border-[#1A2A30] pb-3">
+                <div>
+                    <h3 id="modal-title" class="text-base font-bold font-mono text-[#E8F1F0] uppercase tracking-wide">Pair Cointegration Spread</h3>
+                    <p id="modal-subtitle" class="text-xs text-[#4A6A70] font-mono mt-0.5">Historical Z-score over the last 30 days</p>
+                </div>
+                <button id="close-modal-btn" class="text-[#4A6A70] hover:text-[#E8F1F0] font-mono text-lg font-bold px-2">&times;</button>
+            </div>
+            
+            <div class="relative h-80 w-full bg-[#0c1417] p-2 rounded border border-[#1A2A30]/50">
+                <canvas id="spread-chart"></canvas>
+            </div>
+            
+            <div class="flex justify-between items-center text-xs font-mono pt-2 border-t border-[#1A2A30]">
+                <div class="flex gap-4 text-[#8A9E9B]">
+                    <span>Mean Ratio: <strong id="modal-mean-ratio" class="text-[#E8F1F0]">--</strong></span>
+                    <span>Current Ratio: <strong id="modal-current-ratio" class="text-[#00A6B2]">--</strong></span>
+                </div>
+                <div class="flex gap-2">
+                    <button id="modal-trade-btn" class="px-3 py-1.5 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-bold rounded transition-colors">
+                        Quick Trade
+                    </button>
+                    <button id="close-modal-footer-btn" class="px-3 py-1.5 border border-[#1A2A30] hover:bg-[#1A2A30] text-[#8A9E9B] rounded transition-colors">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
 </div>
@@ -194,7 +225,8 @@ async function loadResults() {
         if (data.opportunities && data.opportunities.length > 0) {
             data.opportunities.forEach(opp => {
                 const tr = document.createElement('tr');
-                tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+                tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors cursor-pointer";
+                tr.title = "Click to view historical spread chart";
                 let signalColor = "#4A6A70";
                 if (opp.signal.includes("LONG")) signalColor = "#00A6B2";
                 if (opp.signal.includes("SHORT")) signalColor = "#ff4d4d";
@@ -215,6 +247,9 @@ async function loadResults() {
                     <td class="px-5 py-4 font-bold text-xs" style="color: ${convictionColor}">${opp.conviction}</td>
                     <td class="px-5 py-4">${spark}</td>
                 `;
+                tr.addEventListener('click', () => {
+                    openPairChart(opp.ticker1, opp.ticker2, opp.z_score, opp.signal);
+                });
                 resultsTable.appendChild(tr);
             });
             document.getElementById('stat-high-conviction').textContent = highConvCount;
@@ -240,7 +275,8 @@ async function loadHistory() {
         }
         data.signals.forEach(s => {
             const tr = document.createElement('tr');
-            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors cursor-pointer";
+            tr.title = "Click to view historical spread chart";
             const z = s.z_score;
             let signalText = "WAIT";
             let signalColor = "#4A6A70";
@@ -257,6 +293,9 @@ async function loadHistory() {
                 <td class="px-5 py-3 text-xs" style="color: ${convColor}">${s.conviction || 'LOW'}</td>
                 <td class="px-5 py-3"><span class="text-xs px-2 py-0.5 rounded ${s.status === 'OPEN' ? 'bg-[#00A6B2]/20 text-[#00A6B2]' : 'bg-[#4A6A70]/20 text-[#4A6A70]'}">${s.status}</span></td>
             `;
+            tr.addEventListener('click', () => {
+                openPairChart(s.ticker1, s.ticker2, s.z_score, signalText);
+            });
             signalHistory.appendChild(tr);
         });
     } catch (err) {
@@ -324,5 +363,142 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 runBtn.addEventListener('click', runScanner);
+
+// Modal and Chart.js code
+let spreadChart = null;
+
+async function openPairChart(ticker1, ticker2, currentZScore, signal) {
+    const modal = document.getElementById('chart-modal');
+    const title = document.getElementById('modal-title');
+    const subtitle = document.getElementById('modal-subtitle');
+    const meanRatioEl = document.getElementById('modal-mean-ratio');
+    const currentRatioEl = document.getElementById('modal-current-ratio');
+    const tradeBtn = document.getElementById('modal-trade-btn');
+    
+    title.textContent = `${ticker1} / ${ticker2} Cointegration Spread`;
+    subtitle.textContent = `Current Z-score: ${currentZScore.toFixed(2)} (${signal})`;
+    modal.classList.remove('hidden');
+    
+    // Set up trade button redirect
+    tradeBtn.onclick = () => {
+        let pType = 'BUY';
+        if (signal.includes("SHORT " + ticker1)) {
+            pType = 'SELL';
+        }
+        window.location.href = `/portfolio?ticker=${ticker1}&type=${pType}`;
+    };
+    
+    try {
+        const res = await fetch(`/api/v1/niche/pair-history?ticker1=${ticker1}&ticker2=${ticker2}&days=30`);
+        if (!res.ok) throw new Error("Failed to load history");
+        const history = await res.json();
+        
+        if (history.length === 0) return;
+        
+        const labels = history.map(h => h.date);
+        const zScores = history.map(h => h.z_score);
+        
+        const lastItem = history[history.length - 1];
+        meanRatioEl.textContent = lastItem.mean.toFixed(4);
+        currentRatioEl.textContent = lastItem.spread.toFixed(4);
+        
+        const ctx = document.getElementById('spread-chart').getContext('2d');
+        if (spreadChart) {
+            spreadChart.destroy();
+        }
+        
+        // Custom plugin to draw threshold lines
+        const thresholdLinesPlugin = {
+            id: 'thresholdLines',
+            afterDraw(chart) {
+                const {ctx, chartArea: {top, bottom, left, right}, scales: {y}} = chart;
+                ctx.save();
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                
+                // Draw 2.0 threshold (Red)
+                ctx.strokeStyle = '#ff4d4d';
+                ctx.beginPath();
+                ctx.moveTo(left, y.getPixelForValue(2));
+                ctx.lineTo(right, y.getPixelForValue(2));
+                ctx.stroke();
+                
+                // Draw -2.0 threshold (Blue)
+                ctx.strokeStyle = '#00A6B2';
+                ctx.beginPath();
+                ctx.moveTo(left, y.getPixelForValue(-2));
+                ctx.lineTo(right, y.getPixelForValue(-2));
+                ctx.stroke();
+                
+                // Draw 0.0 mean (Grey)
+                ctx.strokeStyle = '#4A6A70';
+                ctx.beginPath();
+                ctx.moveTo(left, y.getPixelForValue(0));
+                ctx.lineTo(right, y.getPixelForValue(0));
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+        };
+        
+        spreadChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Spread Z-score',
+                    data: zScores,
+                    borderColor: '#ffd700',
+                    borderWidth: 2,
+                    pointBackgroundColor: '#ffd700',
+                    pointRadius: 3,
+                    fill: false,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#1A2A30' },
+                        ticks: { color: '#8A9E9B', font: { family: 'monospace', size: 10 } }
+                    },
+                    y: {
+                        grid: { color: '#1A2A30' },
+                        ticks: { color: '#8A9E9B', font: { family: 'monospace', size: 10 } },
+                        suggestedMin: -3,
+                        suggestedMax: 3
+                    }
+                }
+            },
+            plugins: [thresholdLinesPlugin]
+        });
+        
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// Close modal handlers
+function closeModal() {
+    document.getElementById('chart-modal').classList.add('hidden');
+    if (spreadChart) {
+        spreadChart.destroy();
+        spreadChart = null;
+    }
+}
+
+document.getElementById('close-modal-btn').addEventListener('click', closeModal);
+document.getElementById('close-modal-footer-btn').addEventListener('click', closeModal);
+window.addEventListener('click', (e) => {
+    const modal = document.getElementById('chart-modal');
+    if (e.target === modal) {
+        closeModal();
+    }
+});
 </script>
 {% endblock %}

@@ -53,6 +53,9 @@
         <button id="tabAI" class="px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none">
             <i class="fas fa-wand-sparkles text-[#ffd700]"></i> AI Strategic Advisor
         </button>
+        <button id="tabAnalytics" class="px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none">
+            <i class="fas fa-chart-line"></i> Analytics & History
+        </button>
     </div>
 
     <!-- Tab Contents -->
@@ -76,12 +79,11 @@
                                 <th class="px-5 py-3">Total Cost</th>
                                 <th class="px-5 py-3">Current Value</th>
                                 <th class="px-5 py-3">Unrealized P&L</th>
-                                <th class="px-5 py-3">Realized P&L</th>
                             </tr>
                         </thead>
                         <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                             <tr>
-                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                                <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -192,16 +194,32 @@
                 </div>
             </div>
         </div>
+
+        <!-- Tab 3: Analytics & History -->
+        <div id="contentAnalytics" class="hidden space-y-6">
+            <div class="card p-6 bg-[#111C21]">
+                <div class="bg-[#111C21] pb-3 border-b border-[#1A2A30] flex justify-between items-center mb-4">
+                    <h2 class="text-sm font-mono text-[#00A6B2] uppercase tracking-wider"><i class="fas fa-chart-line mr-1"></i> Portfolio Value & Profit History (30 Days)</h2>
+                    <span class="text-xs text-[#00A6B2] font-mono">Real-time Cost vs Value</span>
+                </div>
+                <div class="w-full h-[400px] relative">
+                    <canvas id="portfolioHistoryChart"></canvas>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     let currentLedgerPage = 1;
     const ledgerPageSize = 10;
     let cachedHoldings = {};
     let cachedAdvice = localStorage.getItem("mimir_portfolio_advice");
+    let portfolioChartInstance = null;
+    window.portfolioLogos = {};
 
     document.addEventListener("DOMContentLoaded", () => {
         // Set default order date to now
@@ -226,6 +244,27 @@
                 txSubmitBtn.className = "px-4 py-2 bg-[#FF5252] hover:bg-[#d32f2f] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(255,82,82,0.2)]";
             }
         });
+
+        // Parse query params to auto-fill form (placed after event listeners registration)
+        const urlParams = new URLSearchParams(window.location.search);
+        const qTicker = urlParams.get('ticker');
+        const qPrice = urlParams.get('price');
+        const qType = urlParams.get('type');
+        const qQty = urlParams.get('qty');
+        
+        if (qTicker) {
+            document.getElementById("txTicker").value = qTicker.toUpperCase();
+        }
+        if (qPrice) {
+            document.getElementById("txPrice").value = parseFloat(qPrice);
+        }
+        if (qType) {
+            document.getElementById("txType").value = qType.toUpperCase();
+            document.getElementById("txType").dispatchEvent(new Event('change'));
+        }
+        if (qQty) {
+            document.getElementById("txQty").value = parseFloat(qQty);
+        }
         
         // Form submission
         document.getElementById("addTxForm").addEventListener("submit", async (e) => {
@@ -268,9 +307,11 @@
         // Tabs Interactivity
         const tabPositions = document.getElementById("tabPositions");
         const tabAI = document.getElementById("tabAI");
+        const tabAnalytics = document.getElementById("tabAnalytics");
         
         tabPositions.addEventListener("click", () => switchTab("positions"));
         tabAI.addEventListener("click", () => switchTab("ai"));
+        tabAnalytics.addEventListener("click", () => switchTab("analytics"));
 
         // Pagination Buttons Interactivity
         document.getElementById("prevPageBtn").addEventListener("click", () => {
@@ -289,22 +330,30 @@
     function switchTab(activeTab) {
         const tabPositions = document.getElementById("tabPositions");
         const tabAI = document.getElementById("tabAI");
+        const tabAnalytics = document.getElementById("tabAnalytics");
         const contentPositions = document.getElementById("contentPositions");
         const contentAI = document.getElementById("contentAI");
+        const contentAnalytics = document.getElementById("contentAnalytics");
+
+        tabPositions.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
+        tabAI.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none";
+        tabAnalytics.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
+        
+        contentPositions.classList.add("hidden");
+        contentAI.classList.add("hidden");
+        contentAnalytics.classList.add("hidden");
 
         if (activeTab === "positions") {
             tabPositions.className = "px-6 py-3 text-[#00A6B2] border-b-2 border-[#00A6B2] font-bold flex items-center gap-2 transition-colors focus:outline-none";
-            tabAI.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none";
             contentPositions.classList.remove("hidden");
-            contentAI.classList.add("hidden");
-        } else {
+        } else if (activeTab === "ai") {
             tabAI.className = "px-6 py-3 text-[#ffd700] border-b-2 border-[#ffd700] font-bold flex items-center gap-2 transition-colors focus:outline-none";
-            tabPositions.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
-            contentPositions.classList.add("hidden");
             contentAI.classList.remove("hidden");
-            
-            // Switch to AI tab and display advice (loads from cache if present)
             generateAdvice(false);
+        } else if (activeTab === "analytics") {
+            tabAnalytics.className = "px-6 py-3 text-[#00E5F2] border-b-2 border-[#00E5F2] font-bold flex items-center gap-2 transition-colors focus:outline-none";
+            contentAnalytics.classList.remove("hidden");
+            loadAnalyticsChart();
         }
     }
 
@@ -316,6 +365,21 @@
             
             cachedHoldings = data.holdings;
             updateKPIs(data);
+            
+            // Fetch logos
+            const activeTickers = Object.keys(data.holdings).filter(t => data.holdings[t].quantity > 0);
+            if (activeTickers.length > 0) {
+                try {
+                    const logoRes = await fetch(`/api/v1/prices/logos?tickers=${activeTickers.join(",")}`);
+                    if (logoRes.ok) {
+                        const logoData = await logoRes.json();
+                        window.portfolioLogos = logoData.tickers || {};
+                    }
+                } catch (logoErr) {
+                    console.error("Error loading portfolio logos:", logoErr);
+                }
+            }
+            
             renderHoldingsTable(data.holdings);
             renderLedger();
         } catch (err) {
@@ -391,29 +455,29 @@
         const pl = data.total_profit_loss;
         const plPct = data.total_profit_loss_pct;
         const plEl = document.getElementById("kpiPL");
-        plEl.innerText = `${formatCurrency(pl)} (${plPct.toFixed(2)}%)`;
+        plEl.innerHTML = `${formatCurrency(pl)} <span class="text-sm font-normal text-opacity-80 block lg:inline">(${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}%)</span>`;
         if (pl >= 0) {
-            plEl.className = "text-2xl font-bold text-[#00E676] font-mono mt-1";
+            plEl.className = "text-xl lg:text-2xl font-bold text-[#00E676] font-mono mt-1";
         } else {
-            plEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
+            plEl.className = "text-xl lg:text-2xl font-bold text-[#FF5252] font-mono mt-1";
         }
 
         const realized = data.total_realized_pl || 0.0;
         const realizedEl = document.getElementById("kpiRealizedPL");
         realizedEl.innerText = formatCurrency(realized);
         if (realized >= 0) {
-            realizedEl.className = "text-2xl font-bold text-[#00E676] font-mono mt-1";
+            realizedEl.className = "text-xl lg:text-2xl font-bold text-[#00E676] font-mono mt-1";
         } else {
-            realizedEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
+            realizedEl.className = "text-xl lg:text-2xl font-bold text-[#FF5252] font-mono mt-1";
         }
 
         const grand = data.grand_total_pl || 0.0;
         const grandEl = document.getElementById("kpiGrandPL");
         grandEl.innerText = formatCurrency(grand);
         if (grand >= 0) {
-            grandEl.className = "text-2xl font-bold text-[#00A6B2] font-mono mt-1";
+            grandEl.className = "text-xl lg:text-2xl font-bold text-[#00A6B2] font-mono mt-1";
         } else {
-            grandEl.className = "text-2xl font-bold text-[#FF5252] font-mono mt-1";
+            grandEl.className = "text-xl lg:text-2xl font-bold text-[#FF5252] font-mono mt-1";
         }
 
         const costs = data.total_api_costs || 0.0;
@@ -430,7 +494,7 @@
         if (activeHoldingsKeys.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                    <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
                 </tr>
             `;
             return;
@@ -439,22 +503,142 @@
         activeHoldingsKeys.sort().forEach(ticker => {
             const h = holdings[ticker];
             const plColor = h.profit_loss >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
-            const rColor = h.realized_pl >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            
+            const logoInfo = window.portfolioLogos[ticker] || {};
+            const logoUrl = logoInfo.logo_url || `https://finance-logo.perplexity.ai/ticker/${ticker}?format=png&fallback=404&size=40&theme=dark`;
+            const logoImg = logoUrl ? `<img src="${logoUrl}" alt="${ticker}" class="w-6 h-6 rounded object-contain bg-[#111A20] mr-2 inline" onerror="this.style.display='none'">` : '';
             
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
             tr.innerHTML = `
-                <td class="px-5 py-3 font-bold text-[#00A6B2]">${ticker}</td>
+                <td class="px-5 py-3 font-bold text-[#00A6B2] flex items-center">
+                    ${logoImg}
+                    <a href="/asset/${ticker}" class="hover:underline hover:text-[#00E5F2] transition-colors">${ticker}</a>
+                </td>
                 <td class="px-5 py-3">${h.quantity.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 4})}</td>
                 <td class="px-5 py-3">${formatCurrency(h.avg_buy_price)}</td>
                 <td class="px-5 py-3">${formatCurrency(h.current_price)}</td>
                 <td class="px-5 py-3 text-[#4A6A70]">${formatCurrency(h.total_cost)}</td>
                 <td class="px-5 py-3">${formatCurrency(h.current_value)}</td>
                 <td class="px-5 py-3 font-bold ${plColor}">${formatCurrency(h.profit_loss)} (${h.profit_loss_pct.toFixed(2)}%)</td>
-                <td class="px-5 py-3 font-bold ${rColor}">${formatCurrency(h.realized_pl)}</td>
             `;
             tbody.appendChild(tr);
         });
+    }
+
+    async function loadAnalyticsChart() {
+        try {
+            const res = await fetch("/api/v1/portfolio/history");
+            if (!res.ok) throw new Error("Could not load portfolio history");
+            const history = await res.json();
+            
+            if (history.length === 0) return;
+            
+            const labels = history.map(h => h.date);
+            const portfolioValues = history.map(h => h.portfolio_value);
+            const profits = history.map(h => h.profit_loss);
+            
+            const ctx = document.getElementById("portfolioHistoryChart").getContext("2d");
+            if (portfolioChartInstance) {
+                portfolioChartInstance.destroy();
+            }
+            
+            portfolioChartInstance = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: "Portfolio Value ($)",
+                            data: portfolioValues,
+                            borderColor: "#00A6B2",
+                            backgroundColor: "rgba(0, 166, 178, 0.1)",
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.2,
+                            yAxisID: "y-value"
+                        },
+                        {
+                            label: "Unrealized P&L ($)",
+                            data: profits,
+                            borderColor: "#00E676",
+                            backgroundColor: "rgba(0, 230, 118, 0.05)",
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.2,
+                            yAxisID: "y-pl"
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            grid: {
+                                color: "rgba(26, 42, 48, 0.5)"
+                            },
+                            ticks: {
+                                color: "#8BA4A8",
+                                font: { family: "monospace", size: 10 }
+                            }
+                        },
+                        "y-value": {
+                            type: "linear",
+                            position: "left",
+                            grid: {
+                                color: "rgba(26, 42, 48, 0.5)"
+                            },
+                            ticks: {
+                                color: "#00A6B2",
+                                font: { family: "monospace", size: 10 },
+                                callback: function(value) {
+                                    return "$" + value.toLocaleString();
+                                }
+                            }
+                        },
+                        "y-pl": {
+                            type: "linear",
+                            position: "right",
+                            grid: {
+                                drawOnChartArea: false
+                            },
+                            ticks: {
+                                color: "#00E676",
+                                font: { family: "monospace", size: 10 },
+                                callback: function(value) {
+                                    return "$" + value.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: "#D6E5E3",
+                                font: { family: "monospace", size: 11 }
+                            }
+                        },
+                        tooltip: {
+                            mode: "index",
+                            intersect: false,
+                            backgroundColor: "#111C21",
+                            titleFont: { family: "monospace", size: 12, weight: "bold" },
+                            bodyFont: { family: "monospace", size: 11 },
+                            borderColor: "#1A2A30",
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label.split(" ")[0] + ": $" + context.raw.toLocaleString();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (err) {
+            console.error("Error drawing analytics chart:", err);
+        }
     }
 
     function renderLedger() {
