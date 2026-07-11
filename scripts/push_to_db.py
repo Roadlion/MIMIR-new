@@ -78,22 +78,25 @@ def insert_articles(records):
         ON yggdrasil.mimir_raw_articles (title_hash);
     """)
 
-    # --- Get existing title hashes from DB ---
-    cur.execute("SELECT title_hash FROM yggdrasil.mimir_raw_articles")
-    existing_hashes = {row[0] for row in cur.fetchall()}
+    # Pre-calculate hashes and ensure url_hash is set
+    for r in records:
+        title_hash = hashlib.md5(r['title'].lower().strip().encode()).hexdigest()
+        r['title_hash'] = title_hash
+        if not r.get('url_hash'):
+            r['url_hash'] = hashlib.md5(r['link'].strip().encode()).hexdigest()
+
+    # --- Get existing title hashes from DB for this batch ONLY ---
+    batch_hashes = list({r['title_hash'] for r in records if r.get('title_hash')})
+    existing_hashes = set()
+    if batch_hashes:
+        cur.execute("SELECT title_hash FROM yggdrasil.mimir_raw_articles WHERE title_hash = ANY(%s)", (batch_hashes,))
+        existing_hashes = {row[0] for row in cur.fetchall()}
 
     # --- Filter out duplicates ---
     unique_records = []
     skipped_count = 0
     for r in records:
-        # Generate title_hash (same as scraper)
-        title_hash = hashlib.md5(r['title'].lower().strip().encode()).hexdigest()
-        r['title_hash'] = title_hash
-
-        # Also ensure url_hash exists (scraper should provide it)
-        if not r.get('url_hash'):
-            r['url_hash'] = hashlib.md5(r['link'].strip().encode()).hexdigest()
-
+        title_hash = r['title_hash']
         # Check if we've already seen this title in this run or in DB
         if title_hash in existing_hashes:
             skipped_count += 1

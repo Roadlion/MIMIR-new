@@ -386,15 +386,93 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
         try:
             clean_symbol = t_symbol.strip().lstrip('$').upper()
             t = yf.Ticker(clean_symbol, session=session)
-            hist = t.history(period="5d")
+            
+            # Fetch 200 days of history for technical analysis
+            hist = t.history(period="200d")
+            techs = {
+                "rsi_14": 50.0,
+                "dma_50": 0.0,
+                "dma_200": 0.0,
+                "volume_ratio": 1.0,
+                "price_trend_status": "Neutral"
+            }
+            
+            current_price = 0.0
+            change_5d_pct = 0.0
+            
             if not hist.empty:
                 current_price = float(hist["Close"].iloc[-1])
-                price_5d_ago = float(hist["Close"].iloc[0])
+                price_5d_ago = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else float(hist["Close"].iloc[0])
                 change_5d_pct = ((current_price - price_5d_ago) / price_5d_ago * 100) if price_5d_ago > 0 else 0.0
-                return t_symbol, {
-                    "current_price": current_price,
-                    "change_5d_pct": change_5d_pct
+                
+                # Compute Moving Averages
+                closes = hist["Close"]
+                volumes = hist["Volume"]
+                dma50 = float(closes.tail(50).mean()) if len(closes) >= 50 else current_price
+                dma200 = float(closes.mean()) if len(closes) >= 200 else dma50
+                
+                # Compute RSI 14
+                rsi14 = 50.0
+                if len(closes) >= 15:
+                    delta = closes.diff()
+                    gain = delta.clip(lower=0)
+                    loss = -delta.clip(upper=0)
+                    avg_gain = gain.rolling(window=14).mean()
+                    avg_loss = loss.rolling(window=14).mean()
+                    rs = avg_gain / avg_loss
+                    rsi_series = 100 - (100 / (1 + rs))
+                    rsi14 = float(rsi_series.fillna(50.0).iloc[-1])
+                    
+                # Compute Volume Ratio
+                vol_ratio = 1.0
+                if len(volumes) >= 5:
+                    avg_vol = float(volumes.tail(30).mean())
+                    if avg_vol > 0:
+                        vol_ratio = float(volumes.iloc[-1] / avg_vol)
+                        
+                # Determine price trend classification
+                trend_status = "Neutral"
+                if current_price > dma50 and dma50 > dma200:
+                    trend_status = "Strongly Bullish (Golden Cross/Uptrend)"
+                elif current_price > dma50:
+                    trend_status = "Moderately Bullish (Above 50 DMA)"
+                elif current_price < dma50 and dma50 < dma200:
+                    trend_status = "Strongly Bearish (Death Cross/Downtrend)"
+                elif current_price < dma50:
+                    trend_status = "Moderately Bearish (Below 50 DMA)"
+                    
+                techs = {
+                    "rsi_14": round(rsi14, 2),
+                    "dma_50": round(dma50, 2),
+                    "dma_200": round(dma200, 2),
+                    "volume_ratio": round(vol_ratio, 2),
+                    "price_trend_status": trend_status
                 }
+            
+            # Fetch fundamental details
+            info = {}
+            try:
+                raw_info = t.info
+                if raw_info:
+                    info = {
+                        "pe_ratio": raw_info.get("trailingPE"),
+                        "forward_pe": raw_info.get("forwardPE"),
+                        "peg_ratio": raw_info.get("pegRatio"),
+                        "pb_ratio": raw_info.get("priceToBook"),
+                        "debt_to_equity": raw_info.get("debtToEquity"),
+                        "dividend_yield": raw_info.get("dividendYield"),
+                        "profit_margin": raw_info.get("profitMargins"),
+                        "market_cap": raw_info.get("marketCap")
+                    }
+            except Exception:
+                pass
+                
+            return t_symbol, {
+                "current_price": current_price,
+                "change_5d_pct": change_5d_pct,
+                "technical_analysis": techs,
+                "fundamental_analysis": info
+            }
         except Exception:
             pass
         return t_symbol, None
@@ -407,7 +485,15 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
             else:
                 trends[t_symbol] = {
                     "current_price": 0.0,
-                    "change_5d_pct": 0.0
+                    "change_5d_pct": 0.0,
+                    "technical_analysis": {
+                        "rsi_14": 50.0,
+                        "dma_50": 0.0,
+                        "dma_200": 0.0,
+                        "volume_ratio": 1.0,
+                        "price_trend_status": "Neutral"
+                    },
+                    "fundamental_analysis": {}
                 }
                 
     return trends
@@ -526,7 +612,7 @@ def get_portfolio_advice():
     macro_trends = fetch_macro_indicators()
     price_trends = fetch_portfolio_price_trends(tickers_list)
     
-    # Enrich portfolio_list with profit and price movement metrics
+    # Enrich portfolio_list with profit, price movement, technical indicators, and fundamental metrics
     enriched_portfolio = []
     for p in portfolio_list:
         ticker = p["ticker"]
@@ -534,7 +620,18 @@ def get_portfolio_advice():
         avg_price = p["avg_price"]
         realized_pl = p["realized_pl"]
         
-        trend = price_trends.get(ticker, {"current_price": 0.0, "change_5d_pct": 0.0})
+        trend = price_trends.get(ticker, {
+            "current_price": 0.0,
+            "change_5d_pct": 0.0,
+            "technical_analysis": {
+                "rsi_14": 50.0,
+                "dma_50": 0.0,
+                "dma_200": 0.0,
+                "volume_ratio": 1.0,
+                "price_trend_status": "Neutral"
+            },
+            "fundamental_analysis": {}
+        })
         current_price = trend["current_price"]
         if current_price == 0.0:
             current_price = avg_price
@@ -556,7 +653,9 @@ def get_portfolio_advice():
             "recent_price_movement": {
                 "current_price": current_price,
                 "change_5d_pct": trend["change_5d_pct"]
-            }
+            },
+            "technical_analysis": trend.get("technical_analysis", {}),
+            "fundamental_analysis": trend.get("fundamental_analysis", {})
         })
         
     # 5. Formulate Prompt for DeepSeek
@@ -586,9 +685,11 @@ def get_portfolio_advice():
     
     system_prompt = (
         "You are MIMIR's Senior Investment Strategist, an expert quantitative portfolio manager and macro economist. "
-        "Your task is to analyze the user's portfolio data, market sentiment, online news, and macroeconomic indicators, "
+        "Your task is to analyze the user's portfolio data, technical analysis metrics, fundamental valuation metrics, "
+        "market sentiment, online news, and macroeconomic indicators, "
         "and generate a highly professional, visually beautiful, and deeply insightful strategic report in HTML format. "
-        "Write in a sharp, professional financial-analyst tone. Avoid fluff."
+        "Write in a sharp, professional financial-analyst tone. Avoid fluff. "
+        "STRICT GROUNDING RULE: You must rely SOLELY on the explicit technical indicators and fundamental metrics provided in the prompt context JSON (e.g. `technical_analysis` and `fundamental_analysis`). Do NOT hallucinate, approximate, or invent any indicators or ratios. If a metric is missing or null in the context, do not supply a placeholder or look it up; simply omit it from your reasoning or write 'N/A'."
     )
     user_prompt = f"""
 You are provided with the following real-time and historical context:
@@ -600,11 +701,19 @@ CONTEXT DATA:
 Generate a comprehensive strategic briefing for the user's portfolio. The output MUST be raw HTML (do not wrap in ```html or other markdown blocks; just start with the HTML elements directly).
 Use Tailwind CSS classes to style the output so it looks premium, sleek, and matches a high-end terminal dashboard (dark theme, using the application's palette of dark slate, emerald, cyan, amber, and gold/yellow).
 
+STRICT DATA INTEGRITY DIRECTIVES:
+- Do NOT search online, use pre-trained general knowledge, or fabricate numbers.
+- You MUST only use the exact values present in the CONTEXT DATA JSON under `technical_analysis` (RSI, DMAs, Volume Ratios, Trend Status) and `fundamental_analysis` (P/E, forward P/E, debt, profit margin) for each ticker.
+- If an indicator or metric is missing, write 'N/A' or omit it from your reasoning.
+
 Ensure the HTML includes the following 4 sections, designed beautifully:
 
 1. <div class="mb-6">
      <h3 class="text-xl font-bold text-[#00A6B2] mb-3">📈 Portfolio Performance & Allocation Advice</h3>
-     <p class="text-[#8BA4A8] text-sm mb-3">Provide a qualitative assessment of the current portfolio's concentration, diversification, and general risk profile based on current positions and their 14-day sentiment trend.</p>
+     <p class="text-[#8BA4A8] text-sm mb-3">
+       Provide a qualitative and quantitative assessment of the current portfolio's concentration, diversification, and general risk profile. 
+       Analyze each position by overlaying **Technical Analysis** (price relation to 50/200 DMAs, RSI momentum, volume ratios), **Fundamental Analysis** (P/E ratios, profit margins, debt ratios), and **Sentiment**.
+     </p>
      <div class="overflow-x-auto mb-4">
        <table class="w-full text-left text-xs text-[#D6E5E3] border-collapse">
          <thead>
@@ -613,7 +722,7 @@ Ensure the HTML includes the following 4 sections, designed beautifully:
              <th class="py-2 px-3">Value</th>
              <th class="py-2 px-3">Unrealized P&L</th>
              <th class="py-2 px-3">Action</th>
-             <th class="py-2 px-3">Rationale</th>
+             <th class="py-2 px-3">Rationale (TA + FA + Sentiment)</th>
            </tr>
          </thead>
          <tbody>
@@ -624,8 +733,8 @@ Ensure the HTML includes the following 4 sections, designed beautifully:
    </div>
 
 2. <div class="mb-6">
-     <h3 class="text-xl font-bold text-[#ffd700] mb-3">🔥 Top Sentiment Stock Picks</h3>
-     <p class="text-[#8BA4A8] text-sm mb-3">Recommend 2-3 stocks from 'top_sentiment_candidates' or select other high-performing sentiment names. Render them as clean, cards/columns or structured lists.</p>
+     <h3 class="text-xl font-bold text-[#ffd700] mb-3">🔥 Top Sentiment & Fundamental Picks</h3>
+     <p class="text-[#8BA4A8] text-sm mb-3">Recommend 2-3 stocks from 'top_sentiment_candidates' or select other high-performing names. Combine sentiment momentum with fundamental strength and technical breakout characteristics to justify these recommendations.</p>
    </div>
 
 3. <div class="mb-6">
@@ -647,6 +756,8 @@ For the "Action" column in the table, please use one of these HTML badges exactl
 - <span class="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">HOLD</span>
 - <span class="bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">TRIM</span>
 - <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">SELL</span>
+
+For the "Rationale" column in the table, you MUST synthesize Technical Analysis (e.g. RSI, 50 DMA, Golden Cross), Fundamental Analysis (e.g. Forward P/E, debt profile), and Sentiment trends into a cohesive, institutional-grade single-sentence argument. Use ONLY the technical and fundamental metrics provided in the CONTEXT DATA.
 
 Format values nicely (e.g. prefixing dollar amounts with $, formatting percentages to 2 decimals). Do not include any greeting or conversational filler. Start directly with the first section's HTML wrapper.
 """

@@ -248,27 +248,51 @@ def main():
     for (ticker, name), plist in grouped_posts.items():
         print(f" - {ticker} ({name}): {len(plist)} posts")
         
-    if not grouped_posts:
-        print("No asset mentions detected in the current social batch. Done.")
-        return
-        
     # 4. Score consolidated chatter using DeepSeek
     client = DeepSeekSentiment()
     conn = get_db_connection()
     cur = conn.cursor()
     
+    try:
+        cur.execute("ALTER TABLE yggdrasil.mimir_social_chatter ADD COLUMN IF NOT EXISTS content_hash VARCHAR(32)")
+        conn.commit()
+    except Exception as db_err:
+        print(f"Note: Could not run ALTER TABLE: {db_err}")
+
+    # Gather existing content hashes
+    existing_hashes = {}
+    all_bucket_times = []
+    for p in posts:
+        ts = p["published_ts"]
+        bucket_ts = datetime(ts.year, ts.month, ts.day, ts.hour, 0, 0, tzinfo=timezone.utc)
+        all_bucket_times.append(bucket_ts)
+        
+    if all_bucket_times:
+        min_ts = min(all_bucket_times)
+        try:
+            cur.execute("""
+                SELECT channel, ticker, bucket_ts, content_hash 
+                FROM yggdrasil.mimir_social_chatter 
+                WHERE platform = 'reddit' AND bucket_ts >= %s
+            """, (min_ts,))
+            for row in cur.fetchall():
+                existing_hashes[(row[0], row[1], row[2])] = row[3]
+        except Exception as e:
+            print(f"Note: Could not fetch existing hashes: {e}")
+
     scored_count = 0
     upsert_sql = """
     INSERT INTO yggdrasil.mimir_social_chatter (
         platform, channel, ticker, asset_name, bucket_ts, 
-        sentiment_score, confidence, post_count, engagement_score, summary_text
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        sentiment_score, confidence, post_count, engagement_score, summary_text, content_hash
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (platform, channel, ticker, bucket_ts) DO UPDATE 
     SET sentiment_score = EXCLUDED.sentiment_score,
         confidence = EXCLUDED.confidence,
         post_count = EXCLUDED.post_count,
         engagement_score = EXCLUDED.engagement_score,
         summary_text = EXCLUDED.summary_text,
+        content_hash = EXCLUDED.content_hash,
         scraped_at = NOW();
     """
     
@@ -286,6 +310,18 @@ def main():
             subgroups[skey].append(p)
             
         for (channel, bucket_ts), subposts in subgroups.items():
+            # Calculate content hash
+            links = sorted([sp['link'] for sp in subposts if sp.get('link')])
+            if not links:
+                links = sorted([sp['title'] + sp['summary'] for sp in subposts])
+            content_str = "|".join(links)
+            content_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
+            
+            # Check if unchanged
+            if existing_hashes.get((channel, ticker, bucket_ts)) == content_hash:
+                print(f" ⏭️ {ticker} in {channel} at {bucket_ts.isoformat()} is unchanged (hash matches). Skipping LLM scoring.")
+                continue
+
             print(f"\nScoring {ticker} in {channel} for hour {bucket_ts.isoformat()} ({len(subposts)} posts)...")
             
             # Consolidate post contents
@@ -342,7 +378,8 @@ def main():
                     confidence,
                     len(subposts),
                     engagement_score,
-                    summary_text[:1000] # Store preview in DB
+                    summary_text[:1000], # Store preview in DB
+                    content_hash
                 ))
                 conn.commit()
                 scored_count += 1
@@ -357,3 +394,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

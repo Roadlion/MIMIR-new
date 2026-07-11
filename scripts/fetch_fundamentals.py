@@ -42,7 +42,7 @@ def fetch_and_cache_fundamentals(ticker_symbol: str, cur, conn):
         updated_at = row[4]
         if datetime.now(timezone.utc) - updated_at < timedelta(days=1):
             print(f"[FUNDAMENTALS] {ticker_symbol} is fresh (updated at {updated_at}). Skipping.")
-            return True
+            return "skipped"
             
     print(f"[FUNDAMENTALS] Fetching {ticker_symbol} from yfinance...")
     try:
@@ -50,7 +50,7 @@ def fetch_and_cache_fundamentals(ticker_symbol: str, cur, conn):
         info = ticker.info
         if not info:
             print(f" [!] Empty info dictionary returned for {ticker_symbol}")
-            return False
+            return "failed"
             
         pe_ratio = info.get("trailingPE") or info.get("forwardPE")
         debt_to_equity = info.get("debtToEquity")
@@ -76,11 +76,11 @@ def fetch_and_cache_fundamentals(ticker_symbol: str, cur, conn):
         """, (ticker_symbol, pe_ratio, debt_to_equity, eps_growth, operating_margin))
         conn.commit()
         print(f" [ok] {ticker_symbol} -> PE: {pe_ratio}, Debt/Eq: {debt_to_equity}, EPS Growth: {eps_growth}, Margin: {operating_margin}")
-        return True
+        return "fetched"
     except Exception as e:
         conn.rollback()
         print(f" [error] Failed to fetch fundamentals for {ticker_symbol}: {e}")
-        return False
+        return "failed"
 
 def main():
     conn = get_db_connection()
@@ -93,20 +93,24 @@ def main():
         print(f"[FUNDAMENTALS] Loaded {len(tickers)} tickers for fundamentals check.")
         
         success_count = 0
-        for i, ticker in enumerate(tickers):
-            # Limit calls to keep it lightweight or check in sequence
-            success = fetch_and_cache_fundamentals(ticker, cur, conn)
-            if success:
+        fetched_count = 0
+        for ticker in tickers:
+            status = fetch_and_cache_fundamentals(ticker, cur, conn)
+            if status == "fetched":
                 success_count += 1
-            # Sleep to prevent Yahoo Finance block
-            time.sleep(1.0)
+                fetched_count += 1
+                time.sleep(1.0)  # sleep only on actual network calls
+            elif status == "skipped":
+                success_count += 1
+            else:  # failed
+                time.sleep(0.5)
             
-            # For testing, let's cap at 15 fetches to avoid blocking during test run if database is huge
-            if i >= 15:
-                print("[FUNDAMENTALS] Cap of 15 fetches reached. Remaining tickers will be updated in subsequent cycles.")
+            # Limit actual network fetches to 15 per cycle to prevent rate limits
+            if fetched_count >= 15:
+                print("[FUNDAMENTALS] Cap of 15 network fetches reached. Remaining tickers will be updated in subsequent cycles.")
                 break
                 
-        print(f"[FUNDAMENTALS] Successfully updated {success_count} tickers.")
+        print(f"[FUNDAMENTALS] Successfully updated/checked {success_count} tickers. Fetched {fetched_count} from yfinance.")
     except Exception as e:
         print(f"[FUNDAMENTALS] Fatal error in cycle: {e}")
     finally:

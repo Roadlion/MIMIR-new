@@ -52,6 +52,7 @@ PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline copy.py
 SCRAPE_SOCIAL_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_social.py")
 SCRAPE_TWITTER_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_twitter.py")
 FETCH_FUNDAMENTALS_PATH = os.path.join(PROJECT_ROOT, "scripts", "fetch_fundamentals.py")
+TUNE_TICKERS_PATH = os.path.join(PROJECT_ROOT, "scripts", "tune_ticker_parameters.py")
 
 PRICE_FETCH_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_price_fetch.py")
 
@@ -82,6 +83,20 @@ def run_fundamentals_cycle():
             print("[BG_WORKER] Fundamentals fetcher completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error spawning fundamentals fetcher: {e}")
+
+def run_ticker_tuning_cycle():
+    """Runs the ticker parameter tuning script as a separate subprocess to avoid GIL contention."""
+    print(f"[BG_WORKER] Spawning ticker parameter tuning subprocess at {datetime.now()}")
+    env = _subprocess_env()
+    try:
+        res = subprocess.run([sys.executable, TUNE_TICKERS_PATH], env=env, cwd=PROJECT_ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            print(f"[BG_WORKER] Ticker tuning failed: {res.stderr}")
+        else:
+            print("[BG_WORKER] Ticker tuning completed successfully.")
+    except Exception as e:
+        print(f"[BG_WORKER] Error spawning ticker tuning subprocess: {e}")
 
 def _subprocess_env():
     env = os.environ.copy()
@@ -330,6 +345,7 @@ def run_niche_scan():
 
 async def start_price_loop():
     """5-minute async loop for fetching 1-minute prices."""
+    await asyncio.sleep(5)  # Stagger startup
     while True:
         try:
             await asyncio.to_thread(run_price_fetch_cycle)
@@ -340,6 +356,7 @@ async def start_price_loop():
 
 async def start_scrape_loop():
     """5-minute async loop for scraping fresh articles (no heavy LLM work)."""
+    await asyncio.sleep(15)  # Stagger startup
     while True:
         try:
             await asyncio.to_thread(run_scrape_cycle)
@@ -350,6 +367,7 @@ async def start_scrape_loop():
 
 async def start_sentiment_loop():
     """15-minute async loop for heavy sentiment pipeline (LLM calls)."""
+    await asyncio.sleep(30)  # Stagger startup
     while True:
         try:
             await asyncio.to_thread(run_sentiment_cycle)
@@ -360,6 +378,7 @@ async def start_sentiment_loop():
 
 async def start_signal_fusion_loop():
     """10-minute async loop scanning price and sentiment for trade signals."""
+    await asyncio.sleep(45)  # Stagger startup
     from ..analytics.signal_fusion import scan_all_tickers
     while True:
         try:
@@ -372,12 +391,42 @@ async def start_signal_fusion_loop():
 
 async def start_fundamentals_loop():
     """12-hour async loop for fetching ticker fundamentals."""
+    await asyncio.sleep(60)  # Stagger startup
     while True:
         try:
             await asyncio.to_thread(run_fundamentals_cycle)
         except Exception as e:
             print(f"[BG_WORKER] Error in fundamentals loop: {e}")
         await asyncio.sleep(43200)  # every 12 hours
+
+
+async def start_performance_and_learning_loop():
+    """
+    1-hour async loop that:
+    1. Evaluates mature trade signals (every 1 hour).
+    2. Re-runs ticker-specific parameter tuning (every 24 hours).
+    """
+    await asyncio.sleep(90)  # Stagger startup
+    from ..analytics.performance_evaluator import evaluate_past_signals
+    
+    last_tuning_time = datetime.now()
+    
+    while True:
+        try:
+            print("[BG_WORKER] Running Trade Alerts Performance Evaluation...")
+            # Run evaluation (updates trade signals with PnL and successful/failed tags)
+            await asyncio.to_thread(evaluate_past_signals)
+            
+            # Run re-tuning if 24 hours have passed
+            if datetime.now() - last_tuning_time >= timedelta(hours=24):
+                print("[BG_WORKER] Running daily Trade Alerts Ticker Parameter Tuning...")
+                await asyncio.to_thread(run_ticker_tuning_cycle)
+                last_tuning_time = datetime.now()
+                
+        except Exception as e:
+            print(f"[BG_WORKER] Error in performance/learning loop: {e}")
+            
+        await asyncio.sleep(3600)  # every 1 hour
 
 
 # ponytail: kept for backward compat
@@ -405,10 +454,12 @@ def start_background_worker():
     t_sentiment = threading.Thread(target=_thread_target, args=(start_sentiment_loop,), daemon=True)
     t_fusion = threading.Thread(target=_thread_target, args=(start_signal_fusion_loop,), daemon=True)
     t_fundamentals = threading.Thread(target=_thread_target, args=(start_fundamentals_loop,), daemon=True)
+    t_learning = threading.Thread(target=_thread_target, args=(start_performance_and_learning_loop,), daemon=True)
 
     t_price.start()
     t_scrape.start()
     t_sentiment.start()
     t_fusion.start()
     t_fundamentals.start()
-    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m, fundamentals=12h).")
+    t_learning.start()
+    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m, fundamentals=12h, learning=1h).")

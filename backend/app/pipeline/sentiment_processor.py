@@ -376,7 +376,7 @@ Here is the list of articles to evaluate:
         return []
     except Exception as e:
         print(f"[TRIAGE] Error parsing triage response: {e}")
-        return []
+        return None
 
 def triage_pending_articles(batch_size: int = 50) -> int:
     """
@@ -405,6 +405,13 @@ def triage_pending_articles(batch_size: int = 50) -> int:
     
     triage_results = run_triage_batch(articles)
     
+    # If LLM call or parsing failed, skip updating database so they can be retried
+    if triage_results is None:
+        print(" [TRIAGE] [Warning] Triage failed or response unparseable. Retaining status for retry.")
+        cur.close()
+        conn.close()
+        return 0
+        
     # Map results by article ID
     relevance_map = {}
     for res in triage_results:
@@ -420,8 +427,8 @@ def triage_pending_articles(batch_size: int = 50) -> int:
     ignored_ids = []
     
     for aid, title, summary in articles:
-        # Fallback to True (relevant) if LLM missed it or failed
-        is_relevant = relevance_map.get(aid, True)
+        # Default to False if omitted by LLM (which only outputs relevant ones)
+        is_relevant = relevance_map.get(aid, False)
         if is_relevant:
             relevant_ids.append(aid)
         else:
