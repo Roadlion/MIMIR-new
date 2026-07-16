@@ -30,7 +30,7 @@ symbols = [
     "MS.US", "KO.US", "PG.US", "HD.US", "GS.US", 
     "PLTR.US", "NFLX.US", "KLAC.US", "MRK.US", "DELL.US", 
     "PANW.US", "GEV.US", "TXN.US", "AXP.US", "LIN.US", 
-    "ANET.US", "C.US", "CRWD.US", "IBM.US", "TMUS.US"
+    "ANET.US", "C.US", "CRWD.US", "IBM.US", "TMUS.US", "BTCUSD"
 ]
 
 # Verify symbols actively
