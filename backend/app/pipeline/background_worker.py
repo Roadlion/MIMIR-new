@@ -48,7 +48,7 @@ def _get_tls_session():
 ROUTER_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 PUSH_TO_DB_PATH = os.path.join(PROJECT_ROOT, "scripts", "push_to_db.py")
-PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline copy.py")
+PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline.py")
 SCRAPE_SOCIAL_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_social.py")
 SCRAPE_TWITTER_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_twitter.py")
 FETCH_FUNDAMENTALS_PATH = os.path.join(PROJECT_ROOT, "scripts", "fetch_fundamentals.py")

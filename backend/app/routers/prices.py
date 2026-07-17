@@ -428,7 +428,7 @@ def get_candles(
     if not has_data:
         # If minute table is empty, we can fetch dynamic ticker or cache ticker
         if is_minute:
-            from backend.app.pipeline.background_worker import fetch_and_cache_minute_ticker
+            from scripts.run_price_fetch import fetch_and_cache_minute_ticker
             fetch_and_cache_minute_ticker(ticker, conn)
         else:
             fetch_and_cache_ticker(ticker, conn)

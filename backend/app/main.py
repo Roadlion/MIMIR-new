@@ -1,7 +1,7 @@
 # backend/app/main.py
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import os
 
@@ -40,6 +40,10 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # --- Templates ---
 TEMPLATES_DIR = os.path.join(BASE_DIR, "frontend", "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(os.path.join(STATIC_DIR, "img", "mimir_logo.png"))
 
 # --- HTML Pages (served from templates) ---
 @app.get("/", response_class=HTMLResponse)

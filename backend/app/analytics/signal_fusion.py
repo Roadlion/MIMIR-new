@@ -161,7 +161,8 @@ def get_ticker_parameters(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
     cur = conn.cursor()
     try:
         cur.execute(f"""
-            SELECT optimal_rsi_buy, optimal_rsi_sell, optimal_sentiment, optimal_vol_ratio, optimal_hold_days, win_rate, avg_pnl
+            SELECT optimal_rsi_buy, optimal_rsi_sell, optimal_sentiment, optimal_vol_ratio, optimal_hold_days, 
+                   win_rate, avg_pnl, optimal_prob_buy, optimal_prob_sell
             FROM {settings.mimir_schema}.mimir_ticker_parameters
             WHERE ticker = %s
         """, (ticker,))
@@ -174,7 +175,9 @@ def get_ticker_parameters(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
                 "vol_ratio": float(row[3]),
                 "hold_days": int(row[4]),
                 "win_rate": float(row[5]) if row[5] is not None else None,
-                "avg_pnl": float(row[6]) if row[6] is not None else None
+                "avg_pnl": float(row[6]) if row[6] is not None else None,
+                "prob_buy": float(row[7]) if row[7] is not None else 0.55,
+                "prob_sell": float(row[8]) if row[8] is not None else 0.55
             }
         return None
     except Exception:
@@ -211,64 +214,231 @@ def get_ticker_live_feedback(ticker: str, conn=None) -> Optional[float]:
         if close_conn:
             conn.close()
 
+def get_daily_sentiment_history(ticker: str, days: int = 20, conn=None) -> pd.DataFrame:
+    """Fetches a DataFrame of daily average sentiment scores for a single ticker,
+    timezone-aligned to prevent lookahead leakage.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+    cur = conn.cursor()
+    
+    start_date = (datetime.now() - timedelta(days=days)).date()
+    
+    sql = f"""
+        WITH adjusted_sentiment AS (
+            SELECT 
+                   CASE 
+                       -- Crypto (closes at 00:00 UTC)
+                       WHEN si.ticker LIKE '%%-USD' THEN 
+                           (a.published_ts AT TIME ZONE 'UTC')::date
+                       
+                       -- Forex / Commodity (settles at 17:00 NY)
+                       WHEN si.ticker LIKE '%%=X' OR si.ticker LIKE '%%=F' THEN
+                           CASE 
+                               WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'America/New_York')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'America/New_York')) >= 1020 THEN
+                                   ((a.published_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
+                               ELSE
+                                   (a.published_ts AT TIME ZONE 'America/New_York')::date
+                           END
+
+                       -- China (closes at 15:00 Shanghai)
+                       WHEN si.ticker LIKE '%%.SS' OR si.ticker LIKE '%%.SZ' THEN
+                           CASE 
+                               WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Shanghai')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Shanghai')) >= 900 THEN
+                                   ((a.published_ts AT TIME ZONE 'Asia/Shanghai') + INTERVAL '1 day')::date
+                               ELSE
+                                   (a.published_ts AT TIME ZONE 'Asia/Shanghai')::date
+                           END
+
+                       -- Korea (closes at 15:30 Seoul)
+                       WHEN si.ticker LIKE '%%.KS' THEN
+                           CASE 
+                               WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Seoul')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Seoul')) >= 930 THEN
+                                   ((a.published_ts AT TIME ZONE 'Asia/Seoul') + INTERVAL '1 day')::date
+                               ELSE
+                                   (a.published_ts AT TIME ZONE 'Asia/Seoul')::date
+                           END
+
+                       -- Japan (closes at 15:00 Tokyo)
+                       WHEN si.ticker LIKE '%%.T' THEN
+                           CASE 
+                               WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'Asia/Tokyo')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'Asia/Tokyo')) >= 900 THEN
+                                   ((a.published_ts AT TIME ZONE 'Asia/Tokyo') + INTERVAL '1 day')::date
+                               ELSE
+                                   (a.published_ts AT TIME ZONE 'Asia/Tokyo')::date
+                           END
+
+                       -- US (closes at 16:00 NY)
+                       ELSE
+                           CASE 
+                               WHEN EXTRACT(HOUR FROM (a.published_ts AT TIME ZONE 'America/New_York')) * 60 + EXTRACT(MINUTE FROM (a.published_ts AT TIME ZONE 'America/New_York')) >= 960 THEN
+                                   ((a.published_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
+                               ELSE
+                                   (a.published_ts AT TIME ZONE 'America/New_York')::date
+                           END
+                   END as date,
+                   si.sentiment_score
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+            WHERE si.ticker = %s AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s
+        )
+        SELECT date, AVG(sentiment_score) as sentiment
+        FROM adjusted_sentiment
+        GROUP BY date
+        ORDER BY date ASC
+    """
+    try:
+        cur.execute(sql, (ticker, start_date))
+        rows = cur.fetchall()
+        if not rows:
+            return pd.DataFrame(columns=['date', 'sentiment'])
+        df_sent = pd.DataFrame(rows, columns=['date', 'sentiment'])
+        df_sent['date'] = pd.to_datetime(df_sent['date']).dt.date
+        return df_sent
+    except Exception as e:
+        print(f"[SIGNAL_FUSION] Error fetching sentiment history for {ticker}: {e}")
+        return pd.DataFrame(columns=['date', 'sentiment'])
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+def get_xgb_prediction(ticker: str, features: pd.DataFrame, side: str) -> float:
+    """Loads ticker-specific or global fallback XGBoost model to predict signal probability."""
+    import xgboost as xgb
+    from pathlib import Path
+    
+    # Models are saved in backend/app/analytics/models/
+    models_dir = Path(__file__).parent / "models"
+    
+    ticker_model_path = models_dir / f"{ticker.lower()}_{side}.json"
+    global_model_path = models_dir / f"global_{side}.json"
+    
+    model_path = None
+    if ticker_model_path.exists():
+        model_path = ticker_model_path
+    elif global_model_path.exists():
+        model_path = global_model_path
+        
+    if model_path is None:
+        return 0.50
+        
+    try:
+        booster = xgb.Booster()
+        booster.load_model(str(model_path))
+        dmat = xgb.DMatrix(features)
+        pred = booster.predict(dmat)
+        return float(pred[0])
+    except Exception as e:
+        print(f"[SIGNAL_FUSION] Error predicting with XGBoost model for {ticker} ({side}): {e}")
+        return 0.50
+
 def scan_ticker_for_signals(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
     """Scans a single ticker and returns a signal dict if triggered and inserted."""
     ticker = ticker.strip().upper()
-    df = get_recent_prices(ticker, conn=conn)
+    df = get_recent_prices(ticker, days=120, conn=conn)
     if df.empty or len(df) < 20:
         return None
         
-    sentiment = get_recent_sentiment(ticker, conn=conn)
-    if sentiment is None:
-        # If no sentiment is recorded, fall back to neutral sentiment (0.0) or skip
-        sentiment = 0.0
-        
-    analysis = analyze_technical_indicators(df)
-    current_price = float(df['close'].iloc[-1])
-    rsi = float(analysis['rsi'])
-    support = float(analysis['support'])
-    resistance = float(analysis['resistance'])
-    trend = analysis['trend']
+    df_sent = get_daily_sentiment_history(ticker, days=30, conn=conn)
     
-    # Load custom parameters or use global defaults
+    # Merge price and sentiment timezone-aligned
+    df['date_only'] = df.index.date
+    df_merged = pd.merge(df, df_sent, left_on='date_only', right_on='date', how='left')
+    df_merged['sentiment'] = df_merged['sentiment'].fillna(0.0)
+    
+    # Calculate feature columns exactly as constructed in training
+    def get_rsi(series, window=14):
+        delta = series.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=window, min_periods=window).mean()
+        avg_loss = loss.rolling(window=window, min_periods=window).mean()
+        rs = avg_gain / (avg_loss + 1e-15)
+        return 100 - (100 / (1 + rs))
+
+    df_merged['rsi'] = get_rsi(df_merged['close'])
+    df_merged['support'] = df_merged['low'].rolling(20).min()
+    df_merged['resistance'] = df_merged['high'].rolling(20).max()
+    df_merged['volume_ma'] = df_merged['volume'].rolling(20).mean()
+    df_merged['volume_ratio'] = df_merged['volume'] / (df_merged['volume_ma'] + 1e-15)
+    df_merged['close_to_support'] = (df_merged['close'] - df_merged['support']) / (df_merged['support'] + 1e-15)
+    df_merged['close_to_resistance'] = (df_merged['resistance'] - df_merged['close']) / (df_merged['resistance'] + 1e-15)
+    
+    df_merged['sentiment_1d'] = df_merged['sentiment']
+    df_merged['sentiment_3d'] = df_merged['sentiment'].rolling(3, min_periods=1).mean()
+    df_merged['sentiment_5d'] = df_merged['sentiment'].rolling(5, min_periods=1).mean()
+    
+    df_merged['price_momentum_5d'] = df_merged['close'].pct_change(5)
+    df_merged['price_momentum_10d'] = df_merged['close'].pct_change(10)
+    pct_change = df_merged['close'].pct_change()
+    df_merged['volatility_20d'] = pct_change.rolling(20).std()
+    
+    # Fundamentals
+    fundamentals = get_cached_fundamentals(ticker, conn=conn)
+    if fundamentals:
+        df_merged['pe_ratio'] = fundamentals.get("pe_ratio")
+        df_merged['debt_to_equity'] = fundamentals.get("debt_to_equity")
+        df_merged['eps_growth'] = fundamentals.get("eps_growth")
+        df_merged['operating_margin'] = fundamentals.get("operating_margin")
+    else:
+        for col in ['pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin']:
+            df_merged[col] = np.nan
+            
+    # Take the latest row (today)
+    today_row = df_merged.iloc[-1]
+    feature_cols = [
+        'rsi', 'volume_ratio', 'close_to_support', 'close_to_resistance',
+        'sentiment_1d', 'sentiment_3d', 'sentiment_5d',
+        'price_momentum_5d', 'price_momentum_10d', 'volatility_20d',
+        'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin'
+    ]
+    features_df = today_row[feature_cols].to_frame().T.astype(float)
+    
+    # Load custom optimal thresholds or defaults
     ticker_params = get_ticker_parameters(ticker, conn=conn)
     if ticker_params:
-        target_rsi_buy = ticker_params["rsi_buy"]
-        target_rsi_sell = ticker_params["rsi_sell"]
-        target_sentiment_buy = ticker_params["sentiment"]
-        target_sentiment_sell = -ticker_params["sentiment"]
-        target_vol_ratio = ticker_params["vol_ratio"]
-        p_hold_days = ticker_params["hold_days"]
+        target_prob_buy = ticker_params["prob_buy"]
+        target_prob_sell = ticker_params["prob_sell"]
         p_win_rate = ticker_params["win_rate"]
         p_avg_pnl = ticker_params["avg_pnl"]
+        p_hold_days = ticker_params["hold_days"]
         win_str = f"{p_win_rate:.1f}%" if p_win_rate is not None else "N/A"
         pnl_str = f"{p_avg_pnl:.2f}%" if p_avg_pnl is not None else "N/A"
         param_src = f"Tuned Profile (Hold: {p_hold_days}d, Est. Win Rate: {win_str}, Est. PnL: {pnl_str})"
     else:
-        target_rsi_buy = 30.0
-        target_rsi_sell = 65.0
-        target_sentiment_buy = 0.3
-        target_sentiment_sell = -0.2
-        target_vol_ratio = 1.0
-        p_hold_days = 10
-        param_src = "Global Backtested Default"
+        target_prob_buy = 0.55
+        target_prob_sell = 0.55
+        p_hold_days = 5
+        param_src = "Global Fallback Default"
         
-    # Check live feedback from recent evaluations to continuously learn
+    # Check live feedback to adjust thresholds
     feedback_note = ""
     live_success_rate = get_ticker_live_feedback(ticker, conn=conn)
     if live_success_rate is not None:
-        # If live success rate of last signals is low (<= 40%), tighten thresholds
         if live_success_rate <= 40.0:
-            target_rsi_buy = max(20.0, target_rsi_buy - 5.0)
-            target_sentiment_buy = min(0.5, target_sentiment_buy + 0.1)
-            feedback_note = f" | [LEARNING LOOP] Recent live success rate is low ({live_success_rate:.1f}%). Tightening BUY parameters (RSI <= {target_rsi_buy}, Sentiment >= {target_sentiment_buy}) to protect capital."
+            # If recent trade alert performance is poor, tighten probability boundaries to protect capital
+            target_prob_buy = min(0.70, target_prob_buy + 0.05)
+            target_prob_sell = min(0.70, target_prob_sell + 0.05)
+            feedback_note = f" | [LEARNING LOOP] Poor recent success rate ({live_success_rate:.1f}%). Tightening threshold to 70% max bounds."
             
+    # Run XGBoost inference
+    prob_buy = get_xgb_prediction(ticker, features_df, "buy")
+    prob_sell = get_xgb_prediction(ticker, features_df, "sell")
+    
     signal_type = None
     reason = []
     
-    # 1. Bullish Signals (BUY)
-    if sentiment >= target_sentiment_buy:
-        fundamentals = get_cached_fundamentals(ticker, conn=conn)
+    current_price = float(today_row['close'])
+    rsi = float(today_row['rsi'])
+    sentiment = float(today_row['sentiment'])
+    support = float(today_row['support']) if not pd.isna(today_row['support']) else current_price
+    resistance = float(today_row['resistance']) if not pd.isna(today_row['resistance']) else current_price
+    
+    # 1. BUY Signal check
+    if prob_buy >= target_prob_buy:
         passes_fundamentals = True
         fund_fail_reason = ""
         
@@ -290,45 +460,16 @@ def scan_ticker_for_signals(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
         if not passes_fundamentals:
             print(f"[SIGNAL_FUSION] {ticker} rejected by fundamentals overlay: {fund_fail_reason}")
         else:
-            volume_ratio = float(analysis.get("volume_ratio", 1.0))
-            if volume_ratio >= target_vol_ratio:
-                vol_suffix = ""
-                if volume_ratio >= 1.3:
-                    vol_suffix = f" confirmed by anomalous volume of {volume_ratio:.2f}x average"
-                    if volume_ratio >= 2.0:
-                        vol_suffix += " [HIGH VOLUME BREAKOUT]"
-                
-                if rsi <= target_rsi_buy:
-                    signal_type = 'BUY'
-                    reason.append(f"Bullish sentiment ({sentiment:.2f}) aligned with oversold RSI ({rsi:.1f}){vol_suffix}. [Params: {param_src}{feedback_note}]")
-                elif current_price <= support * 1.02:
-                    signal_type = 'BUY'
-                    reason.append(f"Bullish sentiment ({sentiment:.2f}) bouncing off support ({support:.2f}){vol_suffix}. [Params: {param_src}{feedback_note}]")
-            else:
-                print(f"[SIGNAL_FUSION] {ticker} rejected: volume ratio ({volume_ratio:.2f}) lacks tuned breakout expansion (<{target_vol_ratio})")
+            signal_type = 'BUY'
+            reason.append(f"XGBoost BUY prediction prob ({prob_buy * 100.0:.1f}%) >= threshold ({target_prob_buy * 100.0:.1f}%). [Params: {param_src}{feedback_note}]")
             
-    # 2. Bearish Signals (SELL)
-    elif sentiment <= target_sentiment_sell:
-        volume_ratio = float(analysis.get("volume_ratio", 1.0))
-        if volume_ratio >= target_vol_ratio:
-            vol_suffix = ""
-            if volume_ratio >= 1.3:
-                vol_suffix = f" with volume expansion of {volume_ratio:.2f}x average"
-                if volume_ratio >= 2.0:
-                    vol_suffix += " [HIGH VOLUME BREAKOUT]"
-                    
-            if rsi >= target_rsi_sell:
-                signal_type = 'SELL'
-                reason.append(f"Bearish sentiment ({sentiment:.2f}) aligned with overbought RSI ({rsi:.1f}){vol_suffix}. [Params: {param_src}]")
-            elif current_price >= resistance * 0.98:
-                signal_type = 'SELL'
-                reason.append(f"Bearish sentiment ({sentiment:.2f}) hitting resistance ({resistance:.2f}){vol_suffix}. [Params: {param_src}]")
-        else:
-            print(f"[SIGNAL_FUSION] {ticker} rejected: sell volume ratio ({volume_ratio:.2f}) lacks tuned expansion (<{target_vol_ratio})")
-            
+    # 2. SELL Signal check
+    elif prob_sell >= target_prob_sell:
+        signal_type = 'SELL'
+        reason.append(f"XGBoost SELL prediction prob ({prob_sell * 100.0:.1f}%) >= threshold ({target_prob_sell * 100.0:.1f}%). [Params: {param_src}{feedback_note}]")
+        
     if signal_type:
         reason_str = " | ".join(reason)
-        # Avoid duplicate PENDING alerts
         if not check_duplicate_signal(ticker, signal_type, conn=conn):
             success = insert_trade_signal(ticker, signal_type, current_price, rsi, sentiment, support, resistance, reason_str, conn=conn)
             if success:

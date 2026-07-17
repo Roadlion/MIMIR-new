@@ -102,6 +102,26 @@
                     const signalColor = isBuy ? "#00E676" : "#FF5252";
                     const signalBg = isBuy ? "rgba(0, 230, 118, 0.1)" : "rgba(255, 82, 82, 0.1)";
 
+                    // Parse out bracketed [Params: ...]
+                    let mainReason = alert.reason || "No analysis details provided.";
+                    let paramsText = "";
+                    let profileText = "";
+                    let learningLoopText = "";
+                    
+                    const paramsMatch = mainReason.match(/\[Params:\s*(.*)\]\s*$/);
+                    if (paramsMatch) {
+                        paramsText = paramsMatch[1];
+                        mainReason = mainReason.replace(/\[Params:\s*(.*)\]\s*$/, "").trim();
+                        
+                        if (paramsText.includes(" | ")) {
+                            const parts = paramsText.split(" | ");
+                            profileText = parts[0];
+                            learningLoopText = parts.slice(1).join(" | ");
+                        } else {
+                            profileText = paramsText;
+                        }
+                    }
+
                     card.innerHTML = `
                         <div class="flex flex-col lg:flex-row justify-between gap-6">
                             <!-- Left: Signal Details -->
@@ -115,8 +135,22 @@
                                 </div>
                                 
                                 <p class="text-[#D6E5E3] text-sm font-mono border-l-2 border-[#00A6B2] pl-3 py-1">
-                                    ${alert.reason || "No analysis details provided."}
+                                    ${mainReason}
                                 </p>
+
+                                ${profileText ? `
+                                <div class="flex flex-wrap items-center gap-2 text-xs font-mono">
+                                    <span class="text-[#4A6A70]">Parameters:</span>
+                                    <span class="px-2 py-0.5 rounded bg-[#0A161C] border border-[#1A2A30] text-[#00E5F2] font-semibold">${profileText}</span>
+                                </div>
+                                ` : ''}
+
+                                ${learningLoopText ? `
+                                <div class="p-3 bg-[rgba(0,166,178,0.08)] border border-[rgba(0,166,178,0.2)] rounded text-xs text-[#8BA4A8] font-mono flex items-start gap-2">
+                                    <i class="fas fa-robot text-[#00E5F2] mt-0.5"></i>
+                                    <span>${learningLoopText}</span>
+                                </div>
+                                ` : ''}
 
                                 <!-- Stats Bar -->
                                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 bg-[#081115] border border-[#142228] rounded p-3 text-xs font-mono">

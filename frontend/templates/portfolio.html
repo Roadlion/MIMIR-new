@@ -117,6 +117,21 @@
                         <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Order Time</label>
                         <input type="datetime-local" id="txDate" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
+                    <!-- Fee Fields (Dynamic for SELL) -->
+                    <div id="feeFieldsContainer" class="hidden sm:col-span-5 grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-[#1A2A30]/30 pt-4 mt-2">
+                        <div>
+                            <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Brokerage Fee ($)</label>
+                            <input type="number" step="any" id="txBrokerageFee" value="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Regulatory / Exchange Fee ($)</label>
+                            <input type="number" step="any" id="txRegulatoryFee" value="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Taxes / Other Fees ($)</label>
+                            <input type="number" step="any" id="txOtherFee" value="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
+                        </div>
+                    </div>
                     <div class="sm:col-span-5 flex justify-end">
                         <button type="submit" id="txSubmitBtn" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]">
                             Log Purchase
@@ -138,6 +153,7 @@
                                 <th class="px-5 py-3">Type</th>
                                 <th class="px-5 py-3">Price</th>
                                 <th class="px-5 py-3">Quantity</th>
+                                <th class="px-5 py-3">Fees</th>
                                 <th class="px-5 py-3">Order Date</th>
                                 <th class="px-5 py-3 text-right">Action</th>
                             </tr>
@@ -208,6 +224,72 @@
             </div>
         </div>
     </div>
+    
+    <!-- Edit Transaction Modal -->
+    <div id="editModal" class="fixed inset-0 z-50 flex items-center justify-center hidden bg-black/60 backdrop-blur-sm">
+        <div class="card bg-[#111C21] border border-[#1A2A30] w-full max-w-lg p-6 space-y-4">
+            <div class="flex justify-between items-center border-b border-[#1A2A30] pb-3">
+                <h3 class="text-base font-mono text-[#00A6B2] uppercase font-bold"><i class="fas fa-edit mr-1"></i> Edit Order</h3>
+                <button onclick="closeEditModal()" class="text-[#4A6A70] hover:text-[#E8F1F0] transition-colors"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="editTxForm" class="space-y-4 font-mono text-sm">
+                <input type="hidden" id="editTxId">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] uppercase mb-1.5">Action</label>
+                        <select id="editTxType" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                            <option value="BUY">BUY (Long)</option>
+                            <option value="SELL">SELL (Close)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] uppercase mb-1.5">Ticker</label>
+                        <input type="text" id="editTxTicker" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label id="editTxPriceLabel" class="block text-xs text-[#4A6A70] uppercase mb-1.5">Price ($)</label>
+                        <input type="number" step="any" id="editTxPrice" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] uppercase mb-1.5">Quantity</label>
+                        <input type="number" step="any" id="editTxQty" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-[#4A6A70] uppercase mb-1.5">Order Time</label>
+                    <input type="datetime-local" id="editTxDate" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                </div>
+                <!-- Edit Fee Fields (shown conditionally if SELL) -->
+                <div id="editFeeFieldsContainer" class="hidden border-t border-[#1A2A30]/50 pt-4 space-y-4">
+                    <h4 class="text-xs font-bold text-[#E8F1F0] uppercase">Fees (SELL Order)</h4>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div>
+                            <label class="block text-[10px] text-[#4A6A70] uppercase mb-1">Brokerage ($)</label>
+                            <input type="number" step="any" id="editTxBrokerageFee" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-2 py-1 text-xs text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] text-[#4A6A70] uppercase mb-1">Regulatory ($)</label>
+                            <input type="number" step="any" id="editTxRegulatoryFee" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-2 py-1 text-xs text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] text-[#4A6A70] uppercase mb-1">Other/Tax ($)</label>
+                            <input type="number" step="any" id="editTxOtherFee" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-2 py-1 text-xs text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" onclick="closeEditModal()" class="px-4 py-2 bg-transparent border border-[#1A2A30] hover:bg-[#1A2A30] text-[#D6E5E3] rounded transition-colors text-xs font-bold">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] rounded transition-colors text-xs font-bold shadow-[0_0_15px_rgba(0,166,178,0.2)]">
+                        Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -233,6 +315,7 @@
         const txTypeSelect = document.getElementById("txType");
         const txPriceLabel = document.getElementById("txPriceLabel");
         const txSubmitBtn = document.getElementById("txSubmitBtn");
+        const feeFieldsContainer = document.getElementById("feeFieldsContainer");
         
         txTypeSelect.addEventListener("change", () => {
             const isBuy = txTypeSelect.value === "BUY";
@@ -240,8 +323,14 @@
             txSubmitBtn.innerText = isBuy ? "Log Purchase" : "Log Sale";
             if (isBuy) {
                 txSubmitBtn.className = "px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]";
+                feeFieldsContainer.classList.add("hidden");
+                // Reset fees when switching back to BUY
+                document.getElementById("txBrokerageFee").value = "0.00";
+                document.getElementById("txRegulatoryFee").value = "0.00";
+                document.getElementById("txOtherFee").value = "0.00";
             } else {
                 txSubmitBtn.className = "px-4 py-2 bg-[#FF5252] hover:bg-[#d32f2f] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(255,82,82,0.2)]";
+                feeFieldsContainer.classList.remove("hidden");
             }
         });
 
@@ -275,11 +364,15 @@
             const transaction_type = document.getElementById("txType").value;
             const order_date = document.getElementById("txDate").value; 
             
+            const brokerage_fee = parseFloat(document.getElementById("txBrokerageFee").value) || 0.0;
+            const regulatory_fee = parseFloat(document.getElementById("txRegulatoryFee").value) || 0.0;
+            const other_fee = parseFloat(document.getElementById("txOtherFee").value) || 0.0;
+            
             try {
                 const res = await fetch("/api/v1/portfolio", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ticker, buy_price, quantity, transaction_type, order_date })
+                    body: JSON.stringify({ ticker, buy_price, quantity, transaction_type, order_date, brokerage_fee, regulatory_fee, other_fee })
                 });
                 
                 if (!res.ok) {
@@ -290,6 +383,9 @@
                 document.getElementById("txTicker").value = "";
                 document.getElementById("txPrice").value = "";
                 document.getElementById("txQty").value = "";
+                document.getElementById("txBrokerageFee").value = "0.00";
+                document.getElementById("txRegulatoryFee").value = "0.00";
+                document.getElementById("txOtherFee").value = "0.00";
                 
                 invalidateAdviceCache();
                 loadPortfolio();
@@ -324,6 +420,57 @@
         document.getElementById("nextPageBtn").addEventListener("click", () => {
             currentLedgerPage++;
             renderLedger();
+        });
+
+        // Edit form type dropdown and submit event listeners
+        const editTxType = document.getElementById("editTxType");
+        const editTxPriceLabel = document.getElementById("editTxPriceLabel");
+        const editFeeFieldsContainer = document.getElementById("editFeeFieldsContainer");
+        
+        editTxType.addEventListener("change", () => {
+            const isBuy = editTxType.value === "BUY";
+            editTxPriceLabel.innerText = isBuy ? "Buy Price ($)" : "Sell Price ($)";
+            if (isBuy) {
+                editFeeFieldsContainer.classList.add("hidden");
+                document.getElementById("editTxBrokerageFee").value = "0.00";
+                document.getElementById("editTxRegulatoryFee").value = "0.00";
+                document.getElementById("editTxOtherFee").value = "0.00";
+            } else {
+                editFeeFieldsContainer.classList.remove("hidden");
+            }
+        });
+        
+        document.getElementById("editTxForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const txId = document.getElementById("editTxId").value;
+            const ticker = document.getElementById("editTxTicker").value.trim().toUpperCase();
+            const buy_price = parseFloat(document.getElementById("editTxPrice").value);
+            const quantity = parseFloat(document.getElementById("editTxQty").value);
+            const transaction_type = document.getElementById("editTxType").value;
+            const order_date = document.getElementById("editTxDate").value;
+            
+            const brokerage_fee = parseFloat(document.getElementById("editTxBrokerageFee").value) || 0.0;
+            const regulatory_fee = parseFloat(document.getElementById("editTxRegulatoryFee").value) || 0.0;
+            const other_fee = parseFloat(document.getElementById("editTxOtherFee").value) || 0.0;
+            
+            try {
+                const res = await fetch(`/api/v1/portfolio/${txId}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ticker, buy_price, quantity, transaction_type, order_date, brokerage_fee, regulatory_fee, other_fee })
+                });
+                
+                if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.detail || "Failed to update transaction");
+                }
+                
+                closeEditModal();
+                invalidateAdviceCache();
+                loadPortfolio();
+            } catch (err) {
+                alert(err.message);
+            }
         });
     });
 
@@ -659,6 +806,7 @@
         
         if (allTx.length === 0) {
             ledgerSection.classList.add("hidden");
+            window.currentLedgerTx = [];
             return;
         }
         
@@ -666,6 +814,7 @@
         
         // Sort by order date descending
         allTx.sort((a, b) => new Date(b.order_date) - new Date(a.order_date));
+        window.currentLedgerTx = allTx;
         
         const totalItems = allTx.length;
         const totalPages = Math.ceil(totalItems / ledgerPageSize);
@@ -687,6 +836,13 @@
             const typeStr = (tx.transaction_type || "BUY").toUpperCase();
             const typeColor = typeStr === "BUY" ? "text-[#00E676] bg-[#00E676]/10" : "text-[#FF5252] bg-[#FF5252]/10";
             
+            // Calculate fees total
+            const bFee = parseFloat(tx.brokerage_fee) || 0;
+            const rFee = parseFloat(tx.regulatory_fee) || 0;
+            const oFee = parseFloat(tx.other_fee) || 0;
+            const totalFees = bFee + rFee + oFee;
+            const feesStr = totalFees > 0 ? formatCurrency(totalFees) : "—";
+            
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
             tr.innerHTML = `
@@ -696,11 +852,17 @@
                 </td>
                 <td class="px-5 py-3">${formatCurrency(tx.buy_price)}</td>
                 <td class="px-5 py-3">${tx.quantity}</td>
+                <td class="px-5 py-3 text-xs text-[#E8F1F0]">${feesStr}</td>
                 <td class="px-5 py-3 text-[#4A6A70] text-xs">${dateStr}</td>
                 <td class="px-5 py-3 text-right">
-                    <button onclick="deleteTx(${tx.id})" class="text-xs text-[#FF5252] hover:text-[#ff7575] border border-[#FF5252]/20 hover:border-[#FF5252]/60 px-2 py-0.5 rounded transition-all duration-200">
-                        <i class="fas fa-trash mr-1"></i> Delete
-                    </button>
+                    <div class="inline-flex gap-2">
+                        <button onclick="openEditModal(${tx.id})" class="text-xs text-[#00A6B2] hover:text-[#00E5F2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/60 px-2 py-0.5 rounded transition-all duration-200">
+                            <i class="fas fa-edit mr-1"></i> Edit
+                        </button>
+                        <button onclick="deleteTx(${tx.id})" class="text-xs text-[#FF5252] hover:text-[#ff7575] border border-[#FF5252]/20 hover:border-[#FF5252]/60 px-2 py-0.5 rounded transition-all duration-200">
+                            <i class="fas fa-trash mr-1"></i> Delete
+                        </button>
+                    </div>
                 </td>
             `;
             tbody.appendChild(tr);
@@ -719,6 +881,41 @@
 
     function formatCurrency(val) {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+    }
+
+    function openEditModal(txId) {
+        const tx = (window.currentLedgerTx || []).find(t => t.id === txId);
+        if (!tx) return;
+        
+        document.getElementById("editTxId").value = tx.id;
+        document.getElementById("editTxType").value = tx.transaction_type;
+        document.getElementById("editTxTicker").value = tx.ticker;
+        document.getElementById("editTxPrice").value = tx.buy_price;
+        document.getElementById("editTxQty").value = tx.quantity;
+        
+        const dateObj = new Date(tx.order_date);
+        const offset = dateObj.getTimezoneOffset();
+        const localTime = new Date(dateObj.getTime() - offset * 60 * 1000);
+        document.getElementById("editTxDate").value = localTime.toISOString().slice(0, 16);
+        
+        document.getElementById("editTxBrokerageFee").value = tx.brokerage_fee !== undefined ? tx.brokerage_fee : "0.00";
+        document.getElementById("editTxRegulatoryFee").value = tx.regulatory_fee !== undefined ? tx.regulatory_fee : "0.00";
+        document.getElementById("editTxOtherFee").value = tx.other_fee !== undefined ? tx.other_fee : "0.00";
+        
+        const isBuy = tx.transaction_type === "BUY";
+        document.getElementById("editTxPriceLabel").innerText = isBuy ? "Buy Price ($)" : "Sell Price ($)";
+        const editFeeFieldsContainer = document.getElementById("editFeeFieldsContainer");
+        if (isBuy) {
+            editFeeFieldsContainer.classList.add("hidden");
+        } else {
+            editFeeFieldsContainer.classList.remove("hidden");
+        }
+        
+        document.getElementById("editModal").classList.remove("hidden");
+    }
+
+    function closeEditModal() {
+        document.getElementById("editModal").classList.add("hidden");
     }
 </script>
 {% endblock %}

@@ -21,6 +21,9 @@ class TransactionCreate(BaseModel):
     buy_price: float
     quantity: float
     transaction_type: str = "BUY"
+    brokerage_fee: Optional[float] = 0.0
+    regulatory_fee: Optional[float] = 0.0
+    other_fee: Optional[float] = 0.0
 
 class TransactionResponse(BaseModel):
     id: int
@@ -30,6 +33,19 @@ class TransactionResponse(BaseModel):
     quantity: float
     transaction_type: str
     created_at: datetime
+    brokerage_fee: float = 0.0
+    regulatory_fee: float = 0.0
+    other_fee: float = 0.0
+
+class TransactionUpdate(BaseModel):
+    ticker: str
+    order_date: datetime
+    buy_price: float
+    quantity: float
+    transaction_type: str
+    brokerage_fee: Optional[float] = 0.0
+    regulatory_fee: Optional[float] = 0.0
+    other_fee: Optional[float] = 0.0
 
 class HoldingDetail(BaseModel):
     ticker: str
@@ -116,7 +132,7 @@ def get_portfolio():
     
     # Fetch all transactions
     cur.execute(f"""
-        SELECT id, ticker, order_date, buy_price, quantity, created_at, transaction_type
+        SELECT id, ticker, order_date, buy_price, quantity, created_at, transaction_type, brokerage_fee, regulatory_fee, other_fee
         FROM {settings.mimir_schema}.mimir_portfolio
         ORDER BY order_date DESC
     """)
@@ -166,14 +182,22 @@ def get_portfolio():
             tx_price = float(tx["buy_price"])
             tx_type = tx.get("transaction_type", "BUY").upper()
             
+            tx_brokerage = float(tx.get("brokerage_fee") or 0.0)
+            tx_regulatory = float(tx.get("regulatory_fee") or 0.0)
+            tx_other = float(tx.get("other_fee") or 0.0)
+            total_tx_fees = tx_brokerage + tx_regulatory + tx_other
+            
             if tx_type == "BUY":
+                # For BUY, fees increase the cost basis
+                tx_cost = tx_qty * tx_price + total_tx_fees
                 if qty_sum + tx_qty > 0:
-                    avg_buy = (qty_sum * avg_buy + tx_qty * tx_price) / (qty_sum + tx_qty)
+                    avg_buy = (qty_sum * avg_buy + tx_cost) / (qty_sum + tx_qty)
                 else:
                     avg_buy = 0.0
                 qty_sum += tx_qty
             elif tx_type == "SELL":
-                realized_pl += tx_qty * (tx_price - avg_buy)
+                # For SELL, fees decrease the realized P&L / proceeds
+                realized_pl += tx_qty * (tx_price - avg_buy) - total_tx_fees
                 qty_sum -= tx_qty
                 if qty_sum <= 0:
                     qty_sum = 0.0
@@ -215,7 +239,10 @@ def get_portfolio():
                     "buy_price": float(tx["buy_price"]),
                     "quantity": float(tx["quantity"]),
                     "transaction_type": tx.get("transaction_type", "BUY"),
-                    "created_at": tx["created_at"]
+                    "created_at": tx["created_at"],
+                    "brokerage_fee": float(tx.get("brokerage_fee") or 0.0),
+                    "regulatory_fee": float(tx.get("regulatory_fee") or 0.0),
+                    "other_fee": float(tx.get("other_fee") or 0.0)
                 }
                 for tx in txs
             ]
@@ -276,13 +303,133 @@ def add_transaction(tx: TransactionCreate):
     cur = conn.cursor()
     try:
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at
-        """, (tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper()))
+            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type, brokerage_fee, regulatory_fee, other_fee)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at, brokerage_fee, regulatory_fee, other_fee
+        """, (tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(), tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0))
         new_tx = cur.fetchone()
         conn.commit()
         return new_tx
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+@router.put("/portfolio/{tx_id}", response_model=TransactionResponse)
+def edit_transaction(tx_id: int, tx: TransactionUpdate):
+    from datetime import timezone, timedelta
+    gmt_plus_7 = timezone(timedelta(hours=7))
+    if tx.order_date.tzinfo is None:
+        localized_date = tx.order_date.replace(tzinfo=gmt_plus_7)
+    else:
+        localized_date = tx.order_date.astimezone(gmt_plus_7)
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        # 1. Fetch existing transaction to get old ticker
+        cur.execute(f"SELECT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE id = %s", (tx_id,))
+        old_tx = cur.fetchone()
+        if not old_tx:
+            raise HTTPException(status_code=404, detail="Transaction not found.")
+        old_ticker = old_tx["ticker"].upper().strip()
+        new_ticker = tx.ticker.upper().strip()
+
+        # 2. Check running inventory for old_ticker (excluding the edited transaction)
+        cur.execute(f"""
+            SELECT id, transaction_type, quantity, order_date
+            FROM {settings.mimir_schema}.mimir_portfolio
+            WHERE ticker = %s AND id != %s
+        """, (old_ticker, tx_id))
+        old_ticker_txs = cur.fetchall()
+
+        if old_ticker == new_ticker:
+            # Add the proposed edited transaction to validate the new state of this ticker
+            proposed_tx = {
+                "id": tx_id,
+                "transaction_type": tx.transaction_type.upper(),
+                "quantity": tx.quantity,
+                "order_date": localized_date
+            }
+            all_proposed = old_ticker_txs + [proposed_tx]
+            all_proposed_sorted = sorted(all_proposed, key=lambda x: x["order_date"])
+            
+            qty_running = 0.0
+            for item in all_proposed_sorted:
+                itype = item["transaction_type"].upper()
+                iqty = float(item["quantity"])
+                if itype == "BUY":
+                    qty_running += iqty
+                elif itype == "SELL":
+                    qty_running -= iqty
+                if qty_running < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Proposed changes would result in a negative holding quantity ({qty_running}) for {old_ticker} at {item['order_date']}."
+                    )
+        else:
+            # Validate old ticker's inventory (excluding edited transaction)
+            old_sorted = sorted(old_ticker_txs, key=lambda x: x["order_date"])
+            qty_running_old = 0.0
+            for item in old_sorted:
+                itype = item["transaction_type"].upper()
+                iqty = float(item["quantity"])
+                if itype == "BUY":
+                    qty_running_old += iqty
+                elif itype == "SELL":
+                    qty_running_old -= iqty
+                if qty_running_old < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Removing this transaction would result in negative holding quantity ({qty_running_old}) for {old_ticker} at {item['order_date']}."
+                    )
+
+            # Validate new ticker's inventory (including proposed transaction)
+            cur.execute(f"""
+                SELECT id, transaction_type, quantity, order_date
+                FROM {settings.mimir_schema}.mimir_portfolio
+                WHERE ticker = %s
+            """, (new_ticker,))
+            new_ticker_txs = cur.fetchall()
+            proposed_tx = {
+                "id": tx_id,
+                "transaction_type": tx.transaction_type.upper(),
+                "quantity": tx.quantity,
+                "order_date": localized_date
+            }
+            all_proposed_new = new_ticker_txs + [proposed_tx]
+            new_sorted = sorted(all_proposed_new, key=lambda x: x["order_date"])
+            qty_running_new = 0.0
+            for item in new_sorted:
+                itype = item["transaction_type"].upper()
+                iqty = float(item["quantity"])
+                if itype == "BUY":
+                    qty_running_new += iqty
+                elif itype == "SELL":
+                    qty_running_new -= iqty
+                if qty_running_new < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Proposed changes would result in a negative holding quantity ({qty_running_new}) for {new_ticker} at {item['order_date']}."
+                    )
+
+        # 3. Perform the update
+        cur.execute(f"""
+            UPDATE {settings.mimir_schema}.mimir_portfolio
+            SET ticker = %s, order_date = %s, buy_price = %s, quantity = %s, transaction_type = %s,
+                brokerage_fee = %s, regulatory_fee = %s, other_fee = %s
+            WHERE id = %s
+            RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at, brokerage_fee, regulatory_fee, other_fee
+        """, (new_ticker, localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(),
+              tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0, tx_id))
+        updated_tx = cur.fetchone()
+        conn.commit()
+        return updated_tx
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
