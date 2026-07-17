@@ -31,7 +31,7 @@ def get_db():
 def list_sessions(db = Depends(get_db)):
     cur = db.cursor()
     cur.execute("SELECT id, title, created_at, updated_at FROM yggdrasil.mimir_chat_sessions ORDER BY updated_at DESC")
-    sessions = cur.fetchall()
+    sessions = [dict(row) for row in cur.fetchall()]
     cur.close()
     return {"sessions": sessions}
 
@@ -55,7 +55,7 @@ def get_messages(session_id: str, db = Depends(get_db)):
         "SELECT id, role, content, metadata, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
         (session_id,)
     )
-    messages = cur.fetchall()
+    messages = [dict(row) for row in cur.fetchall()]
     cur.close()
     return {"messages": messages}
 
@@ -100,21 +100,24 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
         messages.append({"role": h["role"], "content": h["content"]})
         
     # 3. Call LLM with tools
-    # Loop to handle up to 3 tool calls in a row
-    MAX_ITERATIONS = 3
+    # Loop to handle up to 15 tool calls in a row
+    MAX_ITERATIONS = 15
     final_message = ""
     chart_data = None
     
-    for _ in range(MAX_ITERATIONS):
+    for i in range(MAX_ITERATIONS):
+        # Force final response on last iteration by omitting tools
+        current_tools = ORACLE_TOOLS if i < MAX_ITERATIONS - 1 else None
+        
         response_msg = send_chat_completion(
             messages=messages,
             temperature=0.3,
-            tools=ORACLE_TOOLS,
+            tools=current_tools,
             return_full_message=True
         )
         
         tool_calls = response_msg.get("tool_calls")
-        if tool_calls:
+        if tool_calls and current_tools:
             messages.append(response_msg) # append the assistant's tool call request
             
             for tool_call in tool_calls:

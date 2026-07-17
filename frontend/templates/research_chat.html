@@ -361,7 +361,7 @@
                 </div>`;
             } else {
                 data.messages.forEach(msg => {
-                    appendMessage(msg[1], msg[2]);
+                    appendMessage(msg.role, msg.content);
                 });
             }
         } catch (e) {
