@@ -35,9 +35,10 @@ class Settings(BaseSettings):
     # Redis (later)
     redis_url: str = "redis://localhost:6379/0"
     
-    # News API keys
+    # Search API keys
     newsapi_key: str = ""
     gnews_api_key: str = ""
+    tavily_api_key: str = ""
     
     # Mode - map from MIMIR_MODE env var
     mode: str = Field(default="standalone", alias="MIMIR_MODE")

@@ -11,6 +11,8 @@ def send_chat_completion(
     messages: List[Dict[str, str]],
     temperature: float = 0.2,
     response_format: Optional[Dict] = None,
+    tools: Optional[List[Dict]] = None,
+    return_full_message: bool = False,
     timeout: int = 60
 ) -> str:
     """
@@ -87,6 +89,9 @@ def send_chat_completion(
             "temperature": temperature
         }
         
+        if tools:
+            payload["tools"] = tools
+            
         # Include response_format if specified (and if the provider supports it)
         # Note: Groq, DeepSeek, OpenRouter generally support JSON Mode via response_format.
         if response_format:
@@ -108,7 +113,8 @@ def send_chat_completion(
                 resp.raise_for_status()
                 
             data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content", "")
             
             # Log token usage and cost
             try:
@@ -122,6 +128,8 @@ def send_chat_completion(
                 
             # Log successful provider and exit fallback loop
             logger.info(f"[SUCCESS] Completion received from {provider['name']}.")
+            if return_full_message:
+                return message
             return content
 
         except Exception as e:

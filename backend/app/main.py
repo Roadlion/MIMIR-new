@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest, trade_alerts
+from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest, trade_alerts, research
 from .config import get_settings
 
 settings = get_settings()
@@ -30,6 +30,7 @@ app.include_router(taxonomy.router, prefix="/api/v1", tags=["taxonomy"])
 app.include_router(niche.router, prefix="/api/v1", tags=["niche"])
 app.include_router(portfolio.router, prefix="/api/v1", tags=["portfolio"])
 app.include_router(trade_alerts.router, prefix="/api/v1", tags=["alerts"])
+app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
 app.include_router(backtest.router)
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,6 +94,10 @@ async def backtest_page(request: Request):
 @app.get("/alphas", response_class=HTMLResponse)
 async def alphas_page(request: Request):
     return templates.TemplateResponse(request, "alphas.html")
+
+@app.get("/oracle", response_class=HTMLResponse)
+async def oracle_page(request: Request):
+    return templates.TemplateResponse(request, "research_chat.html")
 
 @app.get("/health")
 async def health():
