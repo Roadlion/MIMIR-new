@@ -55,6 +55,32 @@ def clean_html(raw_html):
     clean_text = re.sub(r'\s+', ' ', clean_text).strip()
     return clean_text
 
+def is_high_quality_post(title, summary):
+    """Heuristic filter to drop homework questions, non-market noise, and short memes."""
+    text = (title + " " + summary).lower()
+    
+    # 1. Length constraint (too short = likely a meme or just a link)
+    words = text.split()
+    if len(words) < 5:
+        return False
+        
+    # 2. Blacklist constraint (homework / basic questions)
+    blacklist = [
+        "homework", "help me with", "assignment", "essay", "noob", 
+        "dumb question", "school", "project for", "explain like i'm", 
+        "exam", "quiz", "class", "my professor", "textbook"
+    ]
+    for bad_phrase in blacklist:
+        if bad_phrase in text:
+            return False
+            
+    # 3. Excessive Emoji spam (basic check)
+    emoji_count = len(re.findall(r'[^\w\s,\.\?!\-\'\"\$\%\(\)\[\]\{\}\:\;]', text))
+    if emoji_count > 15:
+        return False
+        
+    return True
+
 def get_known_tickers():
     """Load known tickers from asset_mapper and database dynamic tickers."""
     tickers = {}
@@ -200,6 +226,9 @@ def scrape_feeds():
                         except Exception:
                             pass
                     
+                    if not is_high_quality_post(title, summary):
+                        continue
+                        
                     posts.append({
                         "platform": "reddit",
                         "channel": channel,

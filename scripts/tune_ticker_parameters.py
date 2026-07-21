@@ -116,7 +116,7 @@ def load_data():
             JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
             WHERE a.published_ts >= '2025-01-01' AND si.ticker IS NOT NULL
         )
-        SELECT ticker, date, AVG(sentiment_score) as sentiment
+        SELECT ticker, date, AVG(sentiment_score) as sentiment, COUNT(article_id) as sent_vol
         FROM adjusted_sentiment
         GROUP BY ticker, date
     """
@@ -140,6 +140,7 @@ def load_data():
     # Merge datasets
     df = pd.merge(df_prices, df_sent, on=['ticker', 'date'], how='left')
     df['sentiment'] = df['sentiment'].fillna(0.0)
+    df['sent_vol'] = df['sent_vol'].fillna(0.0)
     
     # Merge fundamentals
     df = pd.merge(df, df_fund, on=['ticker'], how='left')
@@ -176,10 +177,18 @@ def calculate_features_and_targets(df, holding_period=5, slippage_bps=5.0):
     df['close_to_support'] = (df['close'] - df['support']) / (df['support'] + 1e-15)
     df['close_to_resistance'] = (df['resistance'] - df['close']) / (df['resistance'] + 1e-15)
     
-    # Lagged news sentiment rolling averages
+    # Lagged news sentiment rolling averages and CARVS
     df['sentiment_1d'] = df['sentiment']
     df['sentiment_3d'] = df.groupby('ticker')['sentiment'].transform(lambda x: x.rolling(3, min_periods=1).mean())
     df['sentiment_5d'] = df.groupby('ticker')['sentiment'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+    
+    df['sent_vol_1d'] = df['sent_vol']
+    df['sent_vol_30d'] = df.groupby('ticker')['sent_vol'].transform(lambda x: x.rolling(30, min_periods=1).mean())
+    df['relative_volume'] = df['sent_vol_1d'] / (df['sent_vol_30d'] + 1e-5)
+    
+    df['carvs_1d'] = df['sentiment_1d'] * df['relative_volume']
+    df['carvs_3d'] = df['sentiment_3d'] * df['relative_volume']
+    df['carvs_5d'] = df['sentiment_5d'] * df['relative_volume']
     
     # Momentum & Volatility
     df['price_momentum_5d'] = df.groupby('ticker')['close'].transform(lambda x: x.pct_change(5))
@@ -257,6 +266,7 @@ def calculate_features_and_targets(df, holding_period=5, slippage_bps=5.0):
 FEATURE_COLS = [
     'rsi', 'volume_ratio', 'close_to_support', 'close_to_resistance',
     'sentiment_1d', 'sentiment_3d', 'sentiment_5d',
+    'relative_volume', 'carvs_1d', 'carvs_3d', 'carvs_5d',
     'price_momentum_5d', 'price_momentum_10d', 'volatility_20d',
     'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin',
     'ma20_ma50_ratio', 'macd', 'macd_signal', 'macd_hist',

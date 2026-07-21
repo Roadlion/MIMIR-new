@@ -23,14 +23,15 @@ from backend.app.routers.prices import DEFAULT_TICKERS
 
 settings = get_settings()
 
-# Curated financial handles
+# Curated financial handles (Expanded to increase global macro & stock volume)
 TWITTER_HANDLES = [
-    "unusual_whales",
-    "zerohedge",
-    "KobeissiLetter",
-    "charliebilello",
-    "SvenHenrich",
-    "federalreserve"
+    "unusual_whales", "zerohedge", "KobeissiLetter", "charliebilello", "SvenHenrich",
+    "federalreserve", "DeItaone", "SquawkCNBC", "YahooFinance", "MarketWatch",
+    "bespokeinvest", "Fxhedgers", "Tier10k", "Stocktwits", "SubstackInc",
+    "CNBC", "WSJmarkets", "BloombergTV", "FinancialTimes", "ReutersBiz",
+    "jimcramer", "LizAnnSonders", "elerianm", "Schuldensuehner", "NorthmanTrader",
+    "NateGeraci", "EricBalchunas", "CiovaccoCapital", "MacroAlf", "AndreasSteno",
+    "LynAldenContact", "Gurgavin", "OptionsAction", "OptionsHawk", "SpotGamma"
 ]
 
 def clean_html(text):
@@ -38,6 +39,32 @@ def clean_html(text):
         return ""
     text = re.sub(r'<[^>]+>', '', text)
     return text.strip()
+
+def is_high_quality_post(text):
+    """Heuristic filter to drop homework questions, non-market noise, and short memes."""
+    text_lower = text.lower()
+    
+    # 1. Length constraint (too short = likely a meme or just a link)
+    words = text_lower.split()
+    if len(words) < 5:
+        return False
+        
+    # 2. Blacklist constraint
+    blacklist = [
+        "homework", "help me with", "assignment", "essay", "noob", 
+        "dumb question", "school", "project for", "explain like i'm", 
+        "exam", "quiz", "class", "my professor", "textbook"
+    ]
+    for bad_phrase in blacklist:
+        if bad_phrase in text_lower:
+            return False
+            
+    # 3. Excessive Emoji spam (basic check)
+    emoji_count = len(re.findall(r'[^\w\s,\.\?!\-\'\"\$\%\(\)\[\]\{\}\:\;\#\@]', text_lower))
+    if emoji_count > 15:
+        return False
+        
+    return True
 
 def get_known_tickers():
     conn = get_db_connection()
@@ -132,6 +159,9 @@ def scrape_tweets():
                 
                 text = clean_html(tweet.get("text", ""))
                 if not text:
+                    continue
+                    
+                if not is_high_quality_post(text):
                     continue
                     
                 # Parse Twitter timestamp: "Thu Jul 02 12:30:00 +0000 2026"

@@ -287,7 +287,7 @@ def get_daily_sentiment_history(ticker: str, days: int = 20, conn=None) -> pd.Da
             JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
             WHERE si.ticker = %s AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s
         )
-        SELECT date, AVG(sentiment_score) as sentiment
+        SELECT date, AVG(sentiment_score) as sentiment, COUNT(article_id) as sent_vol
         FROM adjusted_sentiment
         GROUP BY date
         ORDER BY date ASC
@@ -296,8 +296,8 @@ def get_daily_sentiment_history(ticker: str, days: int = 20, conn=None) -> pd.Da
         cur.execute(sql, (ticker, start_date))
         rows = cur.fetchall()
         if not rows:
-            return pd.DataFrame(columns=['date', 'sentiment'])
-        df_sent = pd.DataFrame(rows, columns=['date', 'sentiment'])
+            return pd.DataFrame(columns=['date', 'sentiment', 'sent_vol'])
+        df_sent = pd.DataFrame(rows, columns=['date', 'sentiment', 'sent_vol'])
         df_sent['date'] = pd.to_datetime(df_sent['date']).dt.date
         return df_sent
     except Exception as e:
@@ -403,6 +403,19 @@ def scan_ticker_for_signals(
     df_merged['sentiment_3d'] = df_merged['sentiment'].rolling(3, min_periods=1).mean()
     df_merged['sentiment_5d'] = df_merged['sentiment'].rolling(5, min_periods=1).mean()
     
+    if 'sent_vol' not in df_merged.columns:
+        df_merged['sent_vol'] = 0.0
+    else:
+        df_merged['sent_vol'] = df_merged['sent_vol'].fillna(0.0)
+        
+    df_merged['sent_vol_1d'] = df_merged['sent_vol']
+    df_merged['sent_vol_30d'] = df_merged['sent_vol'].rolling(30, min_periods=1).mean()
+    df_merged['relative_volume'] = df_merged['sent_vol_1d'] / (df_merged['sent_vol_30d'] + 1e-5)
+    
+    df_merged['carvs_1d'] = df_merged['sentiment_1d'] * df_merged['relative_volume']
+    df_merged['carvs_3d'] = df_merged['sentiment_3d'] * df_merged['relative_volume']
+    df_merged['carvs_5d'] = df_merged['sentiment_5d'] * df_merged['relative_volume']
+    
     df_merged['price_momentum_5d'] = df_merged['close'].pct_change(5)
     df_merged['price_momentum_10d'] = df_merged['close'].pct_change(10)
     pct_change = df_merged['close'].pct_change()
@@ -451,6 +464,7 @@ def scan_ticker_for_signals(
     feature_cols = [
         'rsi', 'volume_ratio', 'close_to_support', 'close_to_resistance',
         'sentiment_1d', 'sentiment_3d', 'sentiment_5d',
+        'relative_volume', 'carvs_1d', 'carvs_3d', 'carvs_5d',
         'price_momentum_5d', 'price_momentum_10d', 'volatility_20d',
         'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin',
         'ma20_ma50_ratio', 'macd', 'macd_signal', 'macd_hist',
@@ -633,17 +647,17 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
                 JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
                 WHERE (a.published_ts AT TIME ZONE 'UTC')::date >= %s AND si.ticker IS NOT NULL
             )
-            SELECT ticker, date, AVG(sentiment_score) as sentiment
+            SELECT ticker, date, AVG(sentiment_score) as sentiment, COUNT(article_id) as sent_vol
             FROM adjusted_sentiment
             GROUP BY ticker, date
             ORDER BY ticker, date ASC
         """, (sent_start_date,))
         sent_rows = cur.fetchall()
         if sent_rows:
-            df_sent_all = pd.DataFrame(sent_rows, columns=['ticker', 'date', 'sentiment'])
+            df_sent_all = pd.DataFrame(sent_rows, columns=['ticker', 'date', 'sentiment', 'sent_vol'])
             df_sent_all['date'] = pd.to_datetime(df_sent_all['date']).dt.date
             for t, grp in df_sent_all.groupby('ticker'):
-                sentiment_by_ticker[t.strip().upper()] = grp[['date', 'sentiment']].reset_index(drop=True)
+                sentiment_by_ticker[t.strip().upper()] = grp[['date', 'sentiment', 'sent_vol']].reset_index(drop=True)
     except Exception as e:
         print(f"[SIGNAL_FUSION] Bulk sentiment fetch warning: {e}")
 
