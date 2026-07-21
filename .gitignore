@@ -1,21 +1,61 @@
-# Environment
+# Environment & Virtual Envs
 .env
+.env.*
+!.env.example
 .venv/
 venv/
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
+ENV/
+env/
 
-# IDE
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Databases & Local Data
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / Frontend Build
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.next/
+dist/
+build/
+
+# IDEs & Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
-# OS
+# OS / System
 .DS_Store
 Thumbs.db
+ehthumbs.db
 
-# Claude
+# AI / Tooling
 .claude/
+.gemini/
+
+# Images & Dynamic Assets
+frontend/static/img/logos/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.ico
+
+

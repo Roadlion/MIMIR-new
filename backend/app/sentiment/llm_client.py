@@ -80,6 +80,8 @@ def send_chat_completion(
         raise ValueError("No LLM provider keys (DeepSeek, Groq, NVIDIA, OpenRouter) configured in environment.")
 
     last_error = None
+    max_retries_per_provider = 3
+
     for provider in providers:
         logger.info(f"Attempting chat completion via {provider['name']} using model {provider['model']}...")
         
@@ -97,45 +99,60 @@ def send_chat_completion(
         if response_format:
             payload["response_format"] = response_format
 
-        try:
-            url = f"{provider['base_url']}/chat/completions"
-            resp = requests.post(
-                url,
-                headers=provider["headers"],
-                json=payload,
-                timeout=timeout,
-                verify=False
-            )
-            
-            # If rate limit or other server issues, fall back
-            if resp.status_code != 200:
-                logger.warning(f"{provider['name']} returned error status {resp.status_code}: {resp.text}")
-                resp.raise_for_status()
-                
-            data = resp.json()
-            message = data["choices"][0]["message"]
-            content = message.get("content", "")
-            
-            # Log token usage and cost
+        for attempt in range(max_retries_per_provider):
             try:
-                usage = data.get("usage", {})
-                prompt_t = usage.get("prompt_tokens", 0)
-                completion_t = usage.get("completion_tokens", 0)
-                if prompt_t > 0 or completion_t > 0:
-                    log_api_cost(provider["name"], prompt_t, completion_t)
-            except Exception as ex:
-                logger.warning(f"Failed to log API cost details: {ex}")
-                
-            # Log successful provider and exit fallback loop
-            logger.info(f"[SUCCESS] Completion received from {provider['name']}.")
-            if return_full_message:
-                return message
-            return content
+                url = f"{provider['base_url']}/chat/completions"
+                # Add Connection: close to avoid TCP socket resets (WinError 10054) on stale keep-alive connections
+                headers = dict(provider["headers"])
+                headers["Connection"] = "close"
 
-        except Exception as e:
-            logger.warning(f"Failed to get response from {provider['name']}: {str(e)}")
-            last_error = e
-            # Continue to next provider in loop
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                    verify=False
+                )
+                
+                # If invalid API key (401) or forbidden (403), skip retries for this provider
+                if resp.status_code in (401, 403):
+                    logger.warning(f"[LLM Router] {provider['name']} returned error status {resp.status_code}: {resp.text[:150]}. Invalid or expired API Key.")
+                    last_error = f"{provider['name']} status {resp.status_code}: {resp.text[:150]}"
+                    break
+                    
+                # If rate limit or server error, log and raise to trigger attempt retry
+                if resp.status_code != 200:
+                    logger.warning(f"[LLM Router] {provider['name']} returned error status {resp.status_code} (Attempt {attempt + 1}/{max_retries_per_provider}): {resp.text[:150]}")
+                    resp.raise_for_status()
+                    
+                data = resp.json()
+                message = data["choices"][0]["message"]
+                content = message.get("content", "")
+                
+                # Log token usage and cost
+                try:
+                    usage = data.get("usage", {})
+                    prompt_t = usage.get("prompt_tokens", 0)
+                    completion_t = usage.get("completion_tokens", 0)
+                    if prompt_t > 0 or completion_t > 0:
+                        log_api_cost(provider["name"], prompt_t, completion_t)
+                except Exception as ex:
+                    logger.warning(f"Failed to log API cost details: {ex}")
+                    
+                # Log successful provider and exit fallback loop
+                logger.info(f"[SUCCESS] Completion received from {provider['name']}.")
+                if return_full_message:
+                    return message
+                return content
+
+            except Exception as e:
+                logger.warning(f"[LLM Router] Attempt {attempt + 1}/{max_retries_per_provider} failed for {provider['name']}: {str(e)}")
+                last_error = e
+                if attempt < max_retries_per_provider - 1:
+                    import time
+                    time.sleep(1.0 * (attempt + 1))
+                else:
+                    logger.warning(f"[LLM Router] Exhausted retries for provider {provider['name']}. Moving to next fallback provider.")
 
     raise RuntimeError(f"All configured LLM providers failed. Last error: {str(last_error)}")
 

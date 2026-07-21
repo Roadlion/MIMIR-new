@@ -19,7 +19,10 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     from .pipeline.background_worker import start_background_worker
+    from .utils.logo_downloader import preseed_portfolio_logos
+    import threading
     start_background_worker()
+    threading.Thread(target=preseed_portfolio_logos, daemon=True).start()
 
 # --- API Routes ---
 app.include_router(articles.router, prefix="/api/v1", tags=["articles"])

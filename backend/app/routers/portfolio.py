@@ -57,6 +57,7 @@ class HoldingDetail(BaseModel):
     profit_loss: float
     profit_loss_pct: float
     realized_pl: float
+    dividends_received: float = 0.0
     transactions: List[Dict]
 
 class PortfolioSummary(BaseModel):
@@ -66,6 +67,7 @@ class PortfolioSummary(BaseModel):
     total_profit_loss: float
     total_profit_loss_pct: float
     total_realized_pl: float
+    total_dividends: float = 0.0
     grand_total_pl: float
     total_api_costs: float = 0.0
 
@@ -148,6 +150,7 @@ def get_portfolio():
             "total_profit_loss": 0.0,
             "total_profit_loss_pct": 0.0,
             "total_realized_pl": 0.0,
+            "total_dividends": 0.0,
             "grand_total_pl": 0.0,
             "total_api_costs": total_api_costs
         }
@@ -168,6 +171,7 @@ def get_portfolio():
     total_cost = 0.0
     total_value = 0.0
     total_realized_pl = 0.0
+    total_dividends = 0.0
     
     for ticker, txs in raw_holdings.items():
         # Sort chronologically to compute weighted average cost basis and realized P&L
@@ -176,6 +180,7 @@ def get_portfolio():
         qty_sum = 0.0
         avg_buy = 0.0
         realized_pl = 0.0
+        dividends_received = 0.0
         
         for tx in txs_sorted:
             tx_qty = float(tx["quantity"])
@@ -202,6 +207,10 @@ def get_portfolio():
                 if qty_sum <= 0:
                     qty_sum = 0.0
                     avg_buy = 0.0
+            elif tx_type == "DIVIDEND":
+                # For DIVIDEND, fees reduce the payout received
+                div_net = (tx_qty * tx_price) - total_tx_fees
+                dividends_received += div_net
 
         curr_price = current_prices.get(ticker, 0.0)
         
@@ -221,6 +230,7 @@ def get_portfolio():
         total_cost += cost_sum
         total_value += curr_val
         total_realized_pl += realized_pl
+        total_dividends += dividends_received
         
         holdings[ticker] = {
             "ticker": ticker,
@@ -232,6 +242,7 @@ def get_portfolio():
             "profit_loss": pl,
             "profit_loss_pct": pl_pct,
             "realized_pl": realized_pl,
+            "dividends_received": dividends_received,
             "transactions": [
                 {
                     "id": tx["id"],
@@ -250,7 +261,7 @@ def get_portfolio():
         
     total_pl = total_value - total_cost
     total_pl_pct = (total_pl / total_cost * 100) if total_cost > 0 else 0.0
-    grand_total = total_pl + total_realized_pl
+    grand_total = total_pl + total_realized_pl + total_dividends
     
     return {
         "holdings": holdings,
@@ -259,6 +270,7 @@ def get_portfolio():
         "total_profit_loss": total_pl,
         "total_profit_loss_pct": total_pl_pct,
         "total_realized_pl": total_realized_pl,
+        "total_dividends": total_dividends,
         "grand_total_pl": grand_total,
         "total_api_costs": total_api_costs
     }

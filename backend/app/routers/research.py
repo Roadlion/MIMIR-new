@@ -109,12 +109,17 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
         # Force final response on last iteration by omitting tools
         current_tools = ORACLE_TOOLS if i < MAX_ITERATIONS - 1 else None
         
-        response_msg = send_chat_completion(
-            messages=messages,
-            temperature=0.3,
-            tools=current_tools,
-            return_full_message=True
-        )
+        try:
+            response_msg = send_chat_completion(
+                messages=messages,
+                temperature=0.3,
+                tools=current_tools,
+                return_full_message=True
+            )
+        except Exception as err:
+            print(f"[Oracle] Error during chat completion: {err}")
+            final_message = f"⚠️ **Service Disruption**: Failed to generate a response. Details: {err}. Please try again shortly."
+            break
         
         tool_calls = response_msg.get("tool_calls")
         if tool_calls and current_tools:

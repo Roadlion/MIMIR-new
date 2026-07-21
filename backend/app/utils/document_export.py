@@ -1,7 +1,4 @@
 import io
-from docx import Document
-from docx.shared import Pt, RGBColor
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 import re
 
 def markdown_to_docx(markdown_text: str) -> io.BytesIO:
@@ -9,6 +6,13 @@ def markdown_to_docx(markdown_text: str) -> io.BytesIO:
     Very basic markdown to docx converter.
     Handles headers, bold, and basic paragraphs.
     """
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+        from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+    except ImportError:
+        raise RuntimeError("python-docx is not installed. Please install python-docx to export DOCX files.")
+
     doc = Document()
     
     # Title

@@ -2,6 +2,16 @@
 
 {% block title %}MIMIR — Shadow Portfolio & AI Advisor{% endblock %}
 
+{% block head_extra %}
+<style>
+    /* Invert calendar picker indicator icon to white for dark theme datetime boxes */
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+        filter: invert(1);
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="px-8 py-6 max-w-7xl mx-auto space-y-6">
     <!-- Header -->
@@ -18,7 +28,7 @@
     </div>
 
     <!-- Stats Row -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+    <div class="grid grid-cols-1 sm:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
             <span class="text-xs font-mono text-[#4A6A70] uppercase">Portfolio Value</span>
             <span id="kpiValue" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
@@ -34,6 +44,10 @@
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
             <span class="text-xs font-mono text-[#4A6A70] uppercase">Realized P&L</span>
             <span id="kpiRealizedPL" class="text-2xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+        </div>
+        <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24">
+            <span class="text-xs font-mono text-[#4A6A70] uppercase">Dividends</span>
+            <span id="kpiDividends" class="text-2xl font-bold text-[#E040FB] font-mono mt-1">$0.00</span>
         </div>
         <div class="card bg-[#111C21] p-4 flex flex-col justify-between h-24 border border-[#00A6B2]/30 shadow-[0_0_10px_rgba(0,166,178,0.1)] flex flex-col justify-between h-24">
             <span class="text-xs font-mono text-[#4A6A70] uppercase">Grand Total P&L</span>
@@ -79,11 +93,12 @@
                                 <th class="px-5 py-3">Total Cost</th>
                                 <th class="px-5 py-3">Current Value</th>
                                 <th class="px-5 py-3">Unrealized P&L</th>
+                                <th class="px-5 py-3">Dividends</th>
                             </tr>
                         </thead>
                         <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                             <tr>
-                                <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -99,6 +114,7 @@
                         <select id="txType" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                             <option value="BUY">BUY (Long)</option>
                             <option value="SELL">SELL (Close)</option>
+                            <option value="DIVIDEND">DIVIDEND (Cash)</option>
                         </select>
                     </div>
                     <div>
@@ -109,7 +125,7 @@
                         <label id="txPriceLabel" class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Buy Price ($)</label>
                         <input type="number" step="any" id="txPrice" required placeholder="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
-                    <div>
+                    <div id="txQtyContainer">
                         <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Quantity</label>
                         <input type="number" step="any" id="txQty" required placeholder="0" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
@@ -117,8 +133,8 @@
                         <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Order Time</label>
                         <input type="datetime-local" id="txDate" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
                     </div>
-                    <!-- Fee Fields (Dynamic for SELL) -->
-                    <div id="feeFieldsContainer" class="hidden sm:col-span-5 grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-[#1A2A30]/30 pt-4 mt-2">
+                    <!-- Fee Fields (Exposed for BUY and SELL) -->
+                    <div id="feeFieldsContainer" class="sm:col-span-5 grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-[#1A2A30]/30 pt-4 mt-2">
                         <div>
                             <label class="block text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Brokerage Fee ($)</label>
                             <input type="number" step="any" id="txBrokerageFee" value="0.00" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-sm text-[#D6E5E3] font-mono focus:border-[#00A6B2] focus:outline-none">
@@ -240,6 +256,7 @@
                         <select id="editTxType" class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
                             <option value="BUY">BUY (Long)</option>
                             <option value="SELL">SELL (Close)</option>
+                            <option value="DIVIDEND">DIVIDEND (Cash)</option>
                         </select>
                     </div>
                     <div>
@@ -252,7 +269,7 @@
                         <label id="editTxPriceLabel" class="block text-xs text-[#4A6A70] uppercase mb-1.5">Price ($)</label>
                         <input type="number" step="any" id="editTxPrice" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
                     </div>
-                    <div>
+                    <div id="editTxQtyContainer">
                         <label class="block text-xs text-[#4A6A70] uppercase mb-1.5">Quantity</label>
                         <input type="number" step="any" id="editTxQty" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
                     </div>
@@ -261,9 +278,9 @@
                     <label class="block text-xs text-[#4A6A70] uppercase mb-1.5">Order Time</label>
                     <input type="datetime-local" id="editTxDate" required class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded px-3 py-2 text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
                 </div>
-                <!-- Edit Fee Fields (shown conditionally if SELL) -->
-                <div id="editFeeFieldsContainer" class="hidden border-t border-[#1A2A30]/50 pt-4 space-y-4">
-                    <h4 class="text-xs font-bold text-[#E8F1F0] uppercase">Fees (SELL Order)</h4>
+                <!-- Edit Fee Fields -->
+                <div id="editFeeFieldsContainer" class="border-t border-[#1A2A30]/50 pt-4 space-y-4">
+                    <h4 class="text-xs font-bold text-[#E8F1F0] uppercase">Fees & Taxes</h4>
                     <div class="grid grid-cols-3 gap-2">
                         <div>
                             <label class="block text-[10px] text-[#4A6A70] uppercase mb-1">Brokerage ($)</label>
@@ -318,19 +335,28 @@
         const feeFieldsContainer = document.getElementById("feeFieldsContainer");
         
         txTypeSelect.addEventListener("change", () => {
-            const isBuy = txTypeSelect.value === "BUY";
-            txPriceLabel.innerText = isBuy ? "Buy Price ($)" : "Sell Price ($)";
-            txSubmitBtn.innerText = isBuy ? "Log Purchase" : "Log Sale";
-            if (isBuy) {
+            const val = txTypeSelect.value;
+            const qtyContainer = document.getElementById("txQtyContainer");
+            const qtyInput = document.getElementById("txQty");
+            
+            if (val === "BUY") {
+                txPriceLabel.innerText = "Buy Price ($)";
+                txSubmitBtn.innerText = "Log Purchase";
                 txSubmitBtn.className = "px-4 py-2 bg-[#00A6B2] hover:bg-[#008A94] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(0,166,178,0.2)]";
-                feeFieldsContainer.classList.add("hidden");
-                // Reset fees when switching back to BUY
-                document.getElementById("txBrokerageFee").value = "0.00";
-                document.getElementById("txRegulatoryFee").value = "0.00";
-                document.getElementById("txOtherFee").value = "0.00";
-            } else {
+                qtyContainer.classList.remove("hidden");
+                if (qtyInput.value === "1") qtyInput.value = "";
+            } else if (val === "SELL") {
+                txPriceLabel.innerText = "Sell Price ($)";
+                txSubmitBtn.innerText = "Log Sale";
                 txSubmitBtn.className = "px-4 py-2 bg-[#FF5252] hover:bg-[#d32f2f] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(255,82,82,0.2)]";
-                feeFieldsContainer.classList.remove("hidden");
+                qtyContainer.classList.remove("hidden");
+                if (qtyInput.value === "1") qtyInput.value = "";
+            } else if (val === "DIVIDEND") {
+                txPriceLabel.innerText = "Dividend Amount ($)";
+                txSubmitBtn.innerText = "Log Dividend";
+                txSubmitBtn.className = "px-4 py-2 bg-[#E040FB] hover:bg-[#b92bcf] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(224,64,251,0.2)]";
+                qtyContainer.classList.add("hidden");
+                qtyInput.value = "1";
             }
         });
 
@@ -428,15 +454,22 @@
         const editFeeFieldsContainer = document.getElementById("editFeeFieldsContainer");
         
         editTxType.addEventListener("change", () => {
-            const isBuy = editTxType.value === "BUY";
-            editTxPriceLabel.innerText = isBuy ? "Buy Price ($)" : "Sell Price ($)";
-            if (isBuy) {
-                editFeeFieldsContainer.classList.add("hidden");
-                document.getElementById("editTxBrokerageFee").value = "0.00";
-                document.getElementById("editTxRegulatoryFee").value = "0.00";
-                document.getElementById("editTxOtherFee").value = "0.00";
-            } else {
-                editFeeFieldsContainer.classList.remove("hidden");
+            const val = editTxType.value;
+            const qtyContainer = document.getElementById("editTxQtyContainer");
+            const qtyInput = document.getElementById("editTxQty");
+            
+            if (val === "BUY") {
+                editTxPriceLabel.innerText = "Buy Price ($)";
+                qtyContainer.classList.remove("hidden");
+                if (qtyInput.value === "1") qtyInput.value = "";
+            } else if (val === "SELL") {
+                editTxPriceLabel.innerText = "Sell Price ($)";
+                qtyContainer.classList.remove("hidden");
+                if (qtyInput.value === "1") qtyInput.value = "";
+            } else if (val === "DIVIDEND") {
+                editTxPriceLabel.innerText = "Dividend Amount ($)";
+                qtyContainer.classList.add("hidden");
+                qtyInput.value = "1";
             }
         });
         
@@ -513,22 +546,23 @@
             cachedHoldings = data.holdings;
             updateKPIs(data);
             
-            // Fetch logos
-            const activeTickers = Object.keys(data.holdings).filter(t => data.holdings[t].quantity > 0);
-            if (activeTickers.length > 0) {
-                try {
-                    const logoRes = await fetch(`/api/v1/prices/logos?tickers=${activeTickers.join(",")}`);
-                    if (logoRes.ok) {
-                        const logoData = await logoRes.json();
-                        window.portfolioLogos = logoData.tickers || {};
-                    }
-                } catch (logoErr) {
-                    console.error("Error loading portfolio logos:", logoErr);
-                }
-            }
-            
+            // Render holdings table and ledger immediately (instant local render)
             renderHoldingsTable(data.holdings);
             renderLedger();
+            
+            // Fetch/update logos in background
+            const activeTickers = Object.keys(data.holdings).filter(t => data.holdings[t].quantity > 0);
+            if (activeTickers.length > 0) {
+                fetch(`/api/v1/prices/logos?tickers=${activeTickers.join(",")}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(logoData => {
+                        if (logoData && logoData.tickers) {
+                            window.portfolioLogos = logoData.tickers;
+                            renderHoldingsTable(data.holdings);
+                        }
+                    })
+                    .catch(logoErr => console.error("Error loading portfolio logos:", logoErr));
+            }
         } catch (err) {
             console.error(err);
         }
@@ -618,6 +652,9 @@
             realizedEl.className = "text-xl lg:text-2xl font-bold text-[#FF5252] font-mono mt-1";
         }
 
+        const dividends = data.total_dividends || 0.0;
+        document.getElementById("kpiDividends").innerText = formatCurrency(dividends);
+
         const grand = data.grand_total_pl || 0.0;
         const grandEl = document.getElementById("kpiGrandPL");
         grandEl.innerText = formatCurrency(grand);
@@ -651,9 +688,10 @@
             const h = holdings[ticker];
             const plColor = h.profit_loss >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
             
+            const cleanTicker = ticker.replace(/-USD$/, '');
             const logoInfo = window.portfolioLogos[ticker] || {};
-            const logoUrl = logoInfo.logo_url || `https://finance-logo.perplexity.ai/ticker/${ticker}?format=png&fallback=404&size=40&theme=dark`;
-            const logoImg = logoUrl ? `<img src="${logoUrl}" alt="${ticker}" class="w-6 h-6 rounded object-contain bg-[#111A20] mr-2 inline" onerror="this.style.display='none'">` : '';
+            const logoUrl = logoInfo.logo_url || `/static/img/logos/${cleanTicker}.png`;
+            const logoImg = `<img src="${logoUrl}" alt="${ticker}" class="w-6 h-6 rounded object-contain bg-[#111A20] mr-2 inline" onerror="if(!this.src.endsWith('.svg')){this.src='/static/img/logos/${cleanTicker}.svg';}else{this.style.display='none';}">`;
             
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
@@ -668,6 +706,7 @@
                 <td class="px-5 py-3 text-[#4A6A70]">${formatCurrency(h.total_cost)}</td>
                 <td class="px-5 py-3">${formatCurrency(h.current_value)}</td>
                 <td class="px-5 py-3 font-bold ${plColor}">${formatCurrency(h.profit_loss)} (${h.profit_loss_pct.toFixed(2)}%)</td>
+                <td class="px-5 py-3 font-bold text-[#E040FB]">${h.dividends_received > 0 ? formatCurrency(h.dividends_received) : "-"}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -834,7 +873,12 @@
         paginatedTx.forEach(tx => {
             const dateStr = new Date(tx.order_date).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }) + ' (GMT+7)';
             const typeStr = (tx.transaction_type || "BUY").toUpperCase();
-            const typeColor = typeStr === "BUY" ? "text-[#00E676] bg-[#00E676]/10" : "text-[#FF5252] bg-[#FF5252]/10";
+            let typeColor = "text-[#00E676] bg-[#00E676]/10";
+            if (typeStr === "SELL") {
+                typeColor = "text-[#FF5252] bg-[#FF5252]/10";
+            } else if (typeStr === "DIVIDEND") {
+                typeColor = "text-[#E040FB] bg-[#E040FB]/10";
+            }
             
             // Calculate fees total
             const bFee = parseFloat(tx.brokerage_fee) || 0;
@@ -902,14 +946,20 @@
         document.getElementById("editTxRegulatoryFee").value = tx.regulatory_fee !== undefined ? tx.regulatory_fee : "0.00";
         document.getElementById("editTxOtherFee").value = tx.other_fee !== undefined ? tx.other_fee : "0.00";
         
-        const isBuy = tx.transaction_type === "BUY";
-        document.getElementById("editTxPriceLabel").innerText = isBuy ? "Buy Price ($)" : "Sell Price ($)";
-        const editFeeFieldsContainer = document.getElementById("editFeeFieldsContainer");
-        if (isBuy) {
-            editFeeFieldsContainer.classList.add("hidden");
-        } else {
-            editFeeFieldsContainer.classList.remove("hidden");
+        const val = tx.transaction_type;
+        let label = "Price ($)";
+        const qtyContainer = document.getElementById("editTxQtyContainer");
+        if (val === "BUY") {
+            label = "Buy Price ($)";
+            qtyContainer.classList.remove("hidden");
+        } else if (val === "SELL") {
+            label = "Sell Price ($)";
+            qtyContainer.classList.remove("hidden");
+        } else if (val === "DIVIDEND") {
+            label = "Dividend Amount ($)";
+            qtyContainer.classList.add("hidden");
         }
+        document.getElementById("editTxPriceLabel").innerText = label;
         
         document.getElementById("editModal").classList.remove("hidden");
     }

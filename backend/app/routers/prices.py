@@ -22,6 +22,7 @@ from curl_cffi.requests import Session
 from psycopg2.extras import execute_values, RealDictCursor
 from ..database import get_db_connection_dict, get_db_connection
 from ..config import get_settings
+from ..utils.logo_downloader import ensure_local_logo
 import asyncio
 import time
 
@@ -688,44 +689,23 @@ _ticker_info_cache = {}
 def get_ticker_logos(tickers: str = Query(...)):
     """
     Get logo URLs and short names for the given comma-separated tickers.
-    Results are cached in memory to avoid redundant yfinance calls.
+    Uses local logo cache/storage to eliminate yfinance delays and external network calls.
     """
     ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
-    print(f"[DEBUG LOGOS] Ticker list: {ticker_list}")
     result = {}
 
-    for ticker_symbol in ticker_list:
-        print(f"[DEBUG LOGOS] Processing {ticker_symbol}, in cache: {ticker_symbol in _ticker_info_cache}")
-        if ticker_symbol in _ticker_info_cache:
-            result[ticker_symbol] = _ticker_info_cache[ticker_symbol]
-            continue
+    def resolve_ticker(t_sym):
+        if t_sym in _ticker_info_cache and _ticker_info_cache[t_sym].get("logo_url"):
+            return t_sym, _ticker_info_cache[t_sym]
+        logo_url = ensure_local_logo(t_sym)
+        entry = {"logo_url": logo_url, "long_name": t_sym}
+        return t_sym, entry
 
-        try:
-            session = Session(impersonate="chrome", verify=False)
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9"
-            })
-            ticker = yf.Ticker(ticker_symbol, session=session)
-            info = ticker.info
-            if not isinstance(info, dict):
-                info = {}
-            logo_url = f"https://finance-logo.perplexity.ai/ticker/{ticker_symbol}?format=png&fallback=404&size=50&theme=dark"
-            print(f"[DEBUG LOGOS] set perplexity logo url for {ticker_symbol}: {logo_url}")
-
-            entry = {
-                "logo_url": logo_url,
-                "long_name": info.get("longName", "")
-            }
-            _ticker_info_cache[ticker_symbol] = entry
-            result[ticker_symbol] = entry
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"[TICKER_INFO] Error fetching info for {ticker_symbol}: {e}")
-            entry = {"logo_url": "", "long_name": ""}
-            _ticker_info_cache[ticker_symbol] = entry
-            result[ticker_symbol] = entry
+    workers = min(10, max(1, len(ticker_list)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for t_sym, entry in executor.map(resolve_ticker, ticker_list):
+            _ticker_info_cache[t_sym] = entry
+            result[t_sym] = entry
 
     return {"tickers": result}
 
@@ -1328,7 +1308,7 @@ def search_tickers(q: str = Query(..., min_length=1)):
             if not ticker or ticker in seen:
                 continue
             seen.add(ticker)
-            logo_url = f"https://finance-logo.perplexity.ai/ticker/{ticker}?format=png&fallback=404&size=50&theme=dark"
+            logo_url = ensure_local_logo(ticker)
             results.append({
                 "ticker": ticker,
                 "long_name": quote.get('longname') or quote.get('shortname') or ticker,

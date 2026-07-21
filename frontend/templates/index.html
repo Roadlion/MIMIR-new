@@ -743,8 +743,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const cached = getTickerInfoCache();
         const uncached = list.filter(t => 
             !(t in cached) || 
-            !('long_name' in cached[t]) || 
-            (cached[t].logo_url && !cached[t].logo_url.includes('perplexity.ai'))
+            !('long_name' in cached[t])
         );
         if (uncached.length === 0) return;
 
