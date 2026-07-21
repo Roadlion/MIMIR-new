@@ -221,12 +221,12 @@ Use this directory map to understand exactly where features live and what each s
 * [tune_ticker_parameters.py](file:///scripts/tune_ticker_parameters.py)
   * **Role**: Trading strategy parameters optimizer.
   * **Key Functions**: Tunes asset indicators (e.g. RSI lookback periods or Z-score limits) using historical performance feedback.
-* [test_wq_operators.py](file:///scripts/test_wq_operators.py)
-  * **Role**: Unit tests for parser math operators.
-* [test_backtest.py](file:///scripts/test_backtest.py)
-  * **Role**: Backtest engine validator tests.
-* [test_portfolio_advice.py](file:///scripts/test_portfolio_advice.py)
-  * **Role**: Portfolio validation and ledger unit tests.
+* [mt5_price_fetcher.py](file:///scripts/mt5_price_fetcher.py)
+  * **Role**: MT5 real-time 1-minute price ingestion service.
+  * **Key Functions**: Fetches live price data via MetaTrader 5 API for real-time asset feeds.
+* [test_ml_signals.py](file:///scripts/test_ml_signals.py)
+  * **Role**: Machine Learning signal generator tests.
+  * **Key Functions**: Validates XGBoost signal models and data extraction logic.
 
 ---
 
@@ -292,14 +292,30 @@ All tables reside within the `yggdrasil` schema of PostgreSQL:
 
 ---
 
-## ⚡ Tech Stack
+## ⚡ Tech Stack & Architecture
 
-* **Backend**: FastAPI (Python 3.10+) served via Uvicorn.
-* **Database**: PostgreSQL (using TimescaleDB extensions for compressed time-series candle tables).
-* **Data Access**: High-performance raw SQL queries via `psycopg2` using connection pooling.
-* **Math / Vectorization**: Pandas, NumPy, and Statsmodels.
-* **Scraping Clients**: Resilient `curl_cffi` HTTP client sessions to spoof browser parameters and bypass rate-limiting.
-* **Frontend**: Jinja2 HTML templates, styled with Tailwind CSS and Vanilla CSS, dynamic visualizations via Chart.js, and real-time updates via Server-Sent Events (SSE).
+* **Backend**: FastAPI (Python 3.10+) served via Uvicorn with asynchronous event loops.
+* **Database**: PostgreSQL (using TimescaleDB hypertable extensions for compressed time-series candle & orderbook data) via `psycopg2` connection pooling.
+* **Machine Learning & Predictive Signals**:
+  * **XGBoost**: Gradient boosted decision trees for real-time signal generation and predictive trade alert scoring (`scripts/test_ml_signals.py`).
+  * **WorldQuant AST Parser**: Custom Abstract Syntax Tree vectorizer (`backend/app/analytics/expression_parser.py`) supporting cross-sectional operators, rolling math, and decay functions.
+* **LLM Engine & NLP**: DeepSeek, OpenRouter, Groq, NVIDIA API integration for entity sentiment extraction, automated portfolio advice, and interactive AI market chat research (`backend/app/routers/research.py`).
+* **Live Ingestion & Execution**:
+  * **MetaTrader 5 (MT5)**: Real-time tick and 1-minute OHLCV price streamer (`scripts/mt5_price_fetcher.py`).
+  * **Yahoo Finance & News Scraping**: Resilient `curl_cffi` client sessions to spoof browser parameters and bypass rate limits.
+* **Frontend**: Responsive UI built with Vanilla HTML5, Vanilla CSS / Tailwind CSS design system, Chart.js visualizations, and real-time Server-Sent Events (SSE) status streams.
+
+---
+
+## ✨ Key Features & Capabilities
+
+1. **Real-Time Market & MT5 Price Ingestion**: Dedicated MT5 client engine streaming 1-minute live price candles into TimescaleDB tables alongside Yahoo Finance fallback pollers.
+2. **LLM News & Social Sentiment Pipeline**: Automated ingestion of RSS news and Reddit subreddits via `scrape_social.py`, entity mapping with `asset_mapper.py`, and graph network spillover calculations using `spillover_engine.py`.
+3. **Machine Learning Signal Fusion**: XGBoost ML predictive signal pipelines combining technical analysis (RSI, EMA, Bollinger Bands), sentiment dynamics, and fundamental metrics into conviction scores.
+4. **Vectorized Quant Strategy Backtester**: Full WorldQuant-style expression parser engine calculating Sharpe ratios, win rates, drawdown stats, and Information Coefficient (IC) metrics over aligned pricing and sentiment matrices.
+5. **Interactive AI Market Research & Chat Assistant**: Multi-session persistent chat interface backed by PostgreSQL `mimir_chat_sessions` and `mimir_chat_messages` tables for deep asset analysis.
+6. **Shadow Portfolio Ledger & Dividend Tracker**: Transaction tracking for Buy, Sell, and Dividend executions with real-time unrealized/realized P&L metrics and automated AI portfolio optimization advice.
+7. **Cointegration & Guerilla Quant Engine**: Automated spread z-score cointegration modeling (`cointegration.py`) for statistical arbitrage pair trading overlayed with LLM sentiment signals.
 
 ---
 
