@@ -293,14 +293,18 @@ def split_chronological_with_purging(df_ticker, val_ratio=0.15, test_ratio=0.15,
     
     return df_train, df_val, df_test
 
-def train_xgb_model(X_train, y_train, X_val, y_val, model_name="model"):
+def train_xgb_model(X_train, y_train, X_val, y_val, model_name="model", fast=False):
     """Trains a regularized XGBoost model, tuning depth and estimators."""
     best_model = None
     best_score = -1.0
     
     # Micro grid search for depth & trees to prevent overfitting and stay fast
-    depths = [3, 4]
-    n_est = [50, 100]
+    if fast:
+        depths = [3]
+        n_est = [50]
+    else:
+        depths = [3, 4]
+        n_est = [50, 100]
     
     for d in depths:
         for n in n_est:
@@ -314,6 +318,7 @@ def train_xgb_model(X_train, y_train, X_val, y_val, model_name="model"):
                 subsample=0.8,
                 colsample_bytree=0.8,
                 random_state=42,
+                n_jobs=-1,
                 eval_metric="logloss"
             )
             model.fit(X_train, y_train)
@@ -333,6 +338,7 @@ def train_xgb_model(X_train, y_train, X_val, y_val, model_name="model"):
             max_depth=3,
             n_estimators=50,
             learning_rate=0.05,
+            n_jobs=-1,
             eval_metric="logloss"
         )
         best_model.fit(X_train, y_train)
@@ -340,34 +346,38 @@ def train_xgb_model(X_train, y_train, X_val, y_val, model_name="model"):
     return best_model
 
 def recursive_feature_elimination(df_train, df_val, target_col, side="buy"):
-    """Iteratively removes the least important feature to maximize validation win rate & PnL."""
+    """Iteratively removes the least important features to maximize validation win rate & PnL."""
     current_features = list(FEATURE_COLS)
     best_overall_score = -float('inf')
-    best_overall_model = None
     best_overall_features = list(current_features)
     best_overall_metrics = (0.55, 0.0, 0.0, 0)
     
+    # Baseline check
+    model = train_xgb_model(
+        df_train[current_features], df_train[target_col],
+        df_val[current_features], df_val[target_col],
+        fast=True
+    )
+    opt_thresh, win_rate, pnl, trades = optimize_threshold(model, df_val[current_features], df_val, side=side)
+    if trades == 0:
+        return model, current_features, (opt_thresh, win_rate, pnl, trades)
+        
     while len(current_features) >= 5: # Keep at least 5 features
         # Train current model
         model = train_xgb_model(
             df_train[current_features], df_train[target_col],
-            df_val[current_features], df_val[target_col]
+            df_val[current_features], df_val[target_col],
+            fast=True
         )
         
         # Optimize threshold & get metrics
         opt_thresh, win_rate, pnl, trades = optimize_threshold(model, df_val[current_features], df_val, side=side)
         
-        if best_overall_model is None:
-            best_overall_model = model
-            best_overall_features = list(current_features)
-            best_overall_metrics = (opt_thresh, win_rate, pnl, trades)
-            
         # Scoring function: PnL is most important, then win rate
         score = pnl * trades if trades > 0 else -999999.0
         
         if score > best_overall_score:
             best_overall_score = score
-            best_overall_model = model
             best_overall_features = list(current_features)
             best_overall_metrics = (opt_thresh, win_rate, pnl, trades)
             
@@ -375,11 +385,26 @@ def recursive_feature_elimination(df_train, df_val, target_col, side="buy"):
         importances = model.feature_importances_
         if len(importances) == 0:
             break
-        least_important_idx = np.argmin(importances)
-        least_important_feature = current_features[least_important_idx]
-        current_features.remove(least_important_feature)
+            
+        # Drop the 3 least important features, or fewer if close to limit
+        drop_count = min(3, len(current_features) - 4)
+        if drop_count <= 0:
+            break
+            
+        least_important_indices = np.argsort(importances)[:drop_count]
+        features_to_drop = [current_features[i] for i in least_important_indices]
+        for f in features_to_drop:
+            current_features.remove(f)
+            
+    # Retrain final model with full grid search on best features
+    final_model = train_xgb_model(
+        df_train[best_overall_features], df_train[target_col],
+        df_val[best_overall_features], df_val[target_col],
+        fast=False
+    )
+    final_metrics = optimize_threshold(final_model, df_val[best_overall_features], df_val, side=side)
         
-    return best_overall_model, best_overall_features, best_overall_metrics
+    return final_model, best_overall_features, final_metrics
 
 def optimize_threshold(model, X_val, df_val, side="buy"):
     """Simulates trading at various probability thresholds on validation set

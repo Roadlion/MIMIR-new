@@ -27,12 +27,12 @@
 {% block content %}
 <div class="max-w-6xl mx-auto">
     <!-- Header Panel -->
-    <div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
+    <div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
         <div>
             <h1 class="text-3xl font-extrabold text-[#D6E5E3] tracking-tight">
                 ⚡ <span class="bg-clip-text text-transparent bg-gradient-to-r from-[#00A6B2] to-[#00E5F2]">Trade Alerts Queue</span>
             </h1>
-            <p class="text-[#8BA4A8] text-sm mt-1">Human-in-the-loop signal fusion engine combining Technical Indicators (RSI, Support/Resistance) with Sentiment Catalysts.</p>
+            <p class="text-[#8BA4A8] text-sm mt-1">High-conviction signal fusion engine combining Technical Indicators with Sentiment Catalysts & ML Pruned Features.</p>
         </div>
         <div class="flex gap-3">
             <button id="triggerScanBtn" class="px-4 py-2 bg-[#0A161C] border border-[#1A2A30] hover:border-[#00E5F2] hover:text-[#00E5F2] text-[#D6E5E3] rounded text-sm font-mono transition-all flex items-center gap-2">
@@ -44,12 +44,47 @@
         </div>
     </div>
 
+    <!-- Controls Toolbar: Search, Sort, Filter, Bulk Actions -->
+    <div class="glass-card rounded-lg border border-[#1A2A30] p-4 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <!-- Search Input -->
+            <div class="relative flex-grow md:flex-grow-0">
+                <i class="fas fa-search absolute left-3 top-2.5 text-[#4A6A70] text-xs"></i>
+                <input type="text" id="searchInput" placeholder="Search Ticker..." 
+                    class="bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] pl-8 pr-3 py-1.5 rounded text-xs font-mono focus:outline-none focus:border-[#00A6B2] w-full md:w-44">
+            </div>
+
+            <!-- Filter Dropdown -->
+            <select id="filterSelect" class="bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] px-3 py-1.5 rounded text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
+                <option value="all">Filter: All Alerts</option>
+                <option value="high_conviction">🏆 High Conviction Only (Win Rate >= 60%)</option>
+                <option value="buy">BUY Signals Only</option>
+                <option value="sell">SELL Signals Only</option>
+            </select>
+
+            <!-- Sort Dropdown -->
+            <select id="sortSelect" class="bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] px-3 py-1.5 rounded text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
+                <option value="newest">Sort: Newest First</option>
+                <option value="oldest">Sort: Oldest First</option>
+                <option value="win_rate">Sort: Highest Win Rate</option>
+                <option value="pnl">Sort: Highest Est. PnL</option>
+            </select>
+        </div>
+
+        <div class="flex items-center gap-3 w-full md:w-auto justify-end">
+            <span id="alertCountBadge" class="text-xs font-mono text-[#8BA4A8]">0 Pending</span>
+            <button id="bulkDismissBtn" class="px-3 py-1.5 bg-[#FF5252]/10 border border-[#FF5252]/40 hover:bg-[#FF5252]/20 text-[#FF5252] font-semibold rounded text-xs font-mono transition-all flex items-center gap-1.5">
+                <i class="fas fa-broom"></i> Purge Low Conviction (<55%)
+            </button>
+        </div>
+    </div>
+
     <!-- Alert List Container -->
     <div id="alertsContainer" class="space-y-6">
         <!-- Loading State -->
         <div id="alertsLoading" class="glass-card rounded-lg border border-[#1A2A30] p-12 text-center">
             <i class="fas fa-circle-notch fa-spin text-3xl text-[#00A6B2] mb-4"></i>
-            <p class="text-[#8BA4A8] font-mono text-sm">Scanning Valhalla for trading opportunities...</p>
+            <p class="text-[#8BA4A8] font-mono text-sm">Evaluating market signals and historical win rates...</p>
         </div>
 
         <!-- Empty State -->
@@ -58,7 +93,7 @@
                 <i class="fas fa-check-double text-2xl text-[#00E676]"></i>
             </div>
             <h3 class="text-lg font-bold text-[#D6E5E3] mb-1">Queue is Clear</h3>
-            <p class="text-[#8BA4A8] text-sm max-w-md mx-auto">No pending trade signals detected. MIMIR is scanning in the background, or you can trigger a manual scan above.</p>
+            <p class="text-[#8BA4A8] text-sm max-w-md mx-auto">No pending trade signals match your filter criteria. MIMIR is scanning in the background.</p>
         </div>
 
         <!-- Alert Items list -->
@@ -68,12 +103,44 @@
 
 <script>
     document.addEventListener("DOMContentLoaded", () => {
-        const container = document.getElementById("alertsContainer");
         const loadingEl = document.getElementById("alertsLoading");
         const emptyEl = document.getElementById("alertsEmpty");
         const listEl = document.getElementById("alertsList");
         const refreshBtn = document.getElementById("refreshAlertsBtn");
         const scanBtn = document.getElementById("triggerScanBtn");
+        const bulkDismissBtn = document.getElementById("bulkDismissBtn");
+
+        const searchInput = document.getElementById("searchInput");
+        const filterSelect = document.getElementById("filterSelect");
+        const sortSelect = document.getElementById("sortSelect");
+        const alertCountBadge = document.getElementById("alertCountBadge");
+
+        let rawAlerts = [];
+
+        function formatTimestamp(isoStr) {
+            if (!isoStr) return { formatted: 'N/A', relative: '' };
+            const date = new Date(isoStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMins / 60);
+
+            let relative = '';
+            if (diffMins < 1) relative = 'Just now';
+            else if (diffMins < 60) relative = `${diffMins}m ago`;
+            else if (diffHours < 24) relative = `${diffHours}h ago`;
+            else relative = `${Math.floor(diffHours / 24)}d ago`;
+
+            const hours = String(date.getHours()).padStart(2, '0');
+            const mins = String(date.getMinutes()).padStart(2, '0');
+            const secs = String(date.getSeconds()).padStart(2, '0');
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+
+            const formatted = `${year}-${month}-${day} ${hours}:${mins}:${secs}`;
+            return { formatted, relative };
+        }
 
         async function fetchAlerts() {
             loadingEl.classList.remove("hidden");
@@ -82,50 +149,107 @@
 
             try {
                 const res = await fetch("/api/v1/alerts/pending");
-                const alerts = await res.json();
-                
+                rawAlerts = await res.json();
                 loadingEl.classList.add("hidden");
+                applyFilterAndSort();
+            } catch (err) {
+                console.error("Error fetching signals:", err);
+                loadingEl.classList.add("hidden");
+                emptyEl.classList.remove("hidden");
+            }
+        }
 
-                if (!alerts || alerts.length === 0) {
-                    emptyEl.classList.remove("hidden");
-                    return;
+        function applyFilterAndSort() {
+            let alerts = [...rawAlerts];
+
+            // 1. Search filter
+            const searchVal = searchInput.value.trim().toUpperCase();
+            if (searchVal) {
+                alerts = alerts.filter(a => a.ticker.includes(searchVal));
+            }
+
+            // 2. Filter dropdown
+            const filterVal = filterSelect.value;
+            if (filterVal === "high_conviction") {
+                alerts = alerts.filter(a => a.win_rate && a.win_rate >= 60.0);
+            } else if (filterVal === "buy") {
+                alerts = alerts.filter(a => a.signal_type.toUpperCase() === "BUY");
+            } else if (filterVal === "sell") {
+                alerts = alerts.filter(a => a.signal_type.toUpperCase() === "SELL");
+            }
+
+            // 3. Sort dropdown
+            const sortVal = sortSelect.value;
+            if (sortVal === "newest") {
+                alerts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            } else if (sortVal === "oldest") {
+                alerts.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            } else if (sortVal === "win_rate") {
+                alerts.sort((a, b) => (b.win_rate || 0) - (a.win_rate || 0));
+            } else if (sortVal === "pnl") {
+                alerts.sort((a, b) => (b.avg_pnl || 0) - (a.avg_pnl || 0));
+            }
+
+            renderAlerts(alerts);
+        }
+
+        function renderAlerts(alerts) {
+            alertCountBadge.innerText = `${alerts.length} Pending Signals`;
+
+            if (!alerts || alerts.length === 0) {
+                listEl.classList.add("hidden");
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+
+            emptyEl.classList.add("hidden");
+            listEl.innerHTML = "";
+            listEl.classList.remove("hidden");
+
+            alerts.forEach(alert => {
+                const card = document.createElement("div");
+                card.className = "glass-card rounded-lg border border-[#1A2A30] p-6 transition-all hover:border-[#2A4048]";
+                
+                const isBuy = alert.signal_type.toUpperCase() === "BUY";
+                const signalColor = isBuy ? "#00E676" : "#FF5252";
+                const signalBg = isBuy ? "rgba(0, 230, 118, 0.1)" : "rgba(255, 82, 82, 0.1)";
+
+                const winRate = alert.win_rate ? parseFloat(alert.win_rate) : null;
+                const avgPnl = alert.avg_pnl ? parseFloat(alert.avg_pnl) : null;
+                const ts = formatTimestamp(alert.created_at);
+
+                let convictionBadge = '';
+                if (winRate && winRate >= 65) {
+                    convictionBadge = `<span class="px-2.5 py-0.5 rounded text-[11px] font-extrabold bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-400/50 text-amber-300 flex items-center gap-1"><i class="fas fa-trophy"></i> S-TIER CONVICTION</span>`;
+                } else if (winRate && winRate >= 55) {
+                    convictionBadge = `<span class="px-2.5 py-0.5 rounded text-[11px] font-bold bg-[#00A6B2]/20 border border-[#00E5F2]/40 text-[#00E5F2] flex items-center gap-1"><i class="fas fa-bolt"></i> HIGH CONVICTION</span>`;
                 }
 
-                listEl.innerHTML = "";
-                listEl.classList.remove("hidden");
-
-                alerts.forEach(alert => {
-                    const card = document.createElement("div");
-                    card.className = "glass-card rounded-lg border border-[#1A2A30] p-6 transition-all hover:border-[#2A4048]";
+                // Parse out bracketed [Params: ...]
+                let mainReason = alert.reason || "No analysis details provided.";
+                let paramsText = "";
+                let profileText = "";
+                let learningLoopText = "";
+                
+                const paramsMatch = mainReason.match(/\[Params:\s*(.*)\]\s*$/);
+                if (paramsMatch) {
+                    paramsText = paramsMatch[1];
+                    mainReason = mainReason.replace(/\[Params:\s*(.*)\]\s*$/, "").trim();
                     
-                    const isBuy = alert.signal_type.upper === "BUY" || alert.signal_type === "BUY";
-                    const signalColor = isBuy ? "#00E676" : "#FF5252";
-                    const signalBg = isBuy ? "rgba(0, 230, 118, 0.1)" : "rgba(255, 82, 82, 0.1)";
-
-                    // Parse out bracketed [Params: ...]
-                    let mainReason = alert.reason || "No analysis details provided.";
-                    let paramsText = "";
-                    let profileText = "";
-                    let learningLoopText = "";
-                    
-                    const paramsMatch = mainReason.match(/\[Params:\s*(.*)\]\s*$/);
-                    if (paramsMatch) {
-                        paramsText = paramsMatch[1];
-                        mainReason = mainReason.replace(/\[Params:\s*(.*)\]\s*$/, "").trim();
-                        
-                        if (paramsText.includes(" | ")) {
-                            const parts = paramsText.split(" | ");
-                            profileText = parts[0];
-                            learningLoopText = parts.slice(1).join(" | ");
-                        } else {
-                            profileText = paramsText;
-                        }
+                    if (paramsText.includes(" | ")) {
+                        const parts = paramsText.split(" | ");
+                        profileText = parts[0];
+                        learningLoopText = parts.slice(1).join(" | ");
+                    } else {
+                        profileText = paramsText;
                     }
+                }
 
-                    card.innerHTML = `
-                        <div class="flex flex-col lg:flex-row justify-between gap-6">
-                            <!-- Left: Signal Details -->
-                            <div class="flex-grow space-y-4">
+                card.innerHTML = `
+                    <div class="flex flex-col lg:flex-row justify-between gap-6">
+                        <!-- Left: Signal Details -->
+                        <div class="flex-grow space-y-4">
+                            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#142228] pb-3">
                                 <div class="flex items-center gap-3">
                                     <span class="px-3 py-1 rounded text-sm font-extrabold font-mono" style="background-color: ${signalBg}; color: ${signalColor}">
                                         ${alert.signal_type}
@@ -134,70 +258,86 @@
                                     <span class="text-sm text-[#4A6A70] font-mono">Trigger Price: $${parseFloat(alert.trigger_price).toFixed(2)}</span>
                                 </div>
                                 
-                                <p class="text-[#D6E5E3] text-sm font-mono border-l-2 border-[#00A6B2] pl-3 py-1">
-                                    ${mainReason}
-                                </p>
-
-                                ${profileText ? `
-                                <div class="flex flex-wrap items-center gap-2 text-xs font-mono">
-                                    <span class="text-[#4A6A70]">Parameters:</span>
-                                    <span class="px-2 py-0.5 rounded bg-[#0A161C] border border-[#1A2A30] text-[#00E5F2] font-semibold">${profileText}</span>
-                                </div>
-                                ` : ''}
-
-                                ${learningLoopText ? `
-                                <div class="p-3 bg-[rgba(0,166,178,0.08)] border border-[rgba(0,166,178,0.2)] rounded text-xs text-[#8BA4A8] font-mono flex items-start gap-2">
-                                    <i class="fas fa-robot text-[#00E5F2] mt-0.5"></i>
-                                    <span>${learningLoopText}</span>
-                                </div>
-                                ` : ''}
-
-                                <!-- Stats Bar -->
-                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 bg-[#081115] border border-[#142228] rounded p-3 text-xs font-mono">
-                                    <div>
-                                        <span class="text-[#4A6A70] block">RSI (14)</span>
-                                        <span class="text-[#D6E5E3] font-semibold">${alert.rsi_value ? parseFloat(alert.rsi_value).toFixed(1) : "N/A"}</span>
-                                    </div>
-                                    <div>
-                                        <span class="text-[#4A6A70] block">Sentiment Score</span>
-                                        <span class="text-[#D6E5E3] font-semibold">${alert.sentiment_score ? parseFloat(alert.sentiment_score).toFixed(2) : "0.00"}</span>
-                                    </div>
-                                    <div>
-                                        <span class="text-[#4A6A70] block">Nearest Support</span>
-                                        <span class="text-[#D6E5E3] font-semibold">$${alert.support_level ? parseFloat(alert.support_level).toFixed(2) : "N/A"}</span>
-                                    </div>
-                                    <div>
-                                        <span class="text-[#4A6A70] block">Nearest Resistance</span>
-                                        <span class="text-[#D6E5E3] font-semibold">$${alert.resistance_level ? parseFloat(alert.resistance_level).toFixed(2) : "N/A"}</span>
+                                <div class="flex items-center gap-3">
+                                    ${convictionBadge}
+                                    <div class="text-right text-xs font-mono text-[#8BA4A8]">
+                                        <i class="far fa-clock text-[#00A6B2]"></i> ${ts.relative}
+                                        <span class="text-[#4A6A70] text-[10px] block">${ts.formatted}</span>
                                     </div>
                                 </div>
                             </div>
+                            
+                            <p class="text-[#D6E5E3] text-sm font-mono border-l-2 border-[#00A6B2] pl-3 py-1">
+                                ${mainReason}
+                            </p>
 
-                            <!-- Right: Actions -->
-                            <div class="flex flex-row lg:flex-col items-center justify-end gap-3 lg:w-48 border-t lg:border-t-0 lg:border-l border-[#1A2A30] pt-4 lg:pt-0 lg:pl-6">
-                                <div class="w-full">
-                                    <label class="text-[10px] text-[#4A6A70] font-mono block mb-1">Execution Qty</label>
-                                    <input type="number" id="qty-${alert.id}" value="10" min="1" step="1"
-                                        class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-1 text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
+                            ${profileText ? `
+                            <div class="flex flex-wrap items-center gap-2 text-xs font-mono">
+                                <span class="text-[#4A6A70]">Parameters:</span>
+                                <span class="px-2 py-0.5 rounded bg-[#0A161C] border border-[#1A2A30] text-[#00E5F2] font-semibold">${profileText}</span>
+                            </div>
+                            ` : ''}
+
+                            ${learningLoopText ? `
+                            <div class="p-3 bg-[rgba(0,166,178,0.08)] border border-[rgba(0,166,178,0.2)] rounded text-xs text-[#8BA4A8] font-mono flex items-start gap-2">
+                                <i class="fas fa-robot text-[#00E5F2] mt-0.5"></i>
+                                <span>${learningLoopText}</span>
+                            </div>
+                            ` : ''}
+
+                            <!-- Stats Bar -->
+                            <div class="grid grid-cols-2 md:grid-cols-6 gap-3 bg-[#081115] border border-[#142228] rounded p-3 text-xs font-mono">
+                                <div>
+                                    <span class="text-[#4A6A70] block">Est. Win Rate</span>
+                                    <span class="font-bold ${winRate && winRate >= 60 ? 'text-[#00E676]' : 'text-[#D6E5E3]'}">
+                                        ${winRate !== null ? winRate.toFixed(1) + '%' : 'N/A'}
+                                    </span>
                                 </div>
-                                <div class="flex gap-2 w-full">
-                                    <button onclick="approveSignal(${alert.id})" class="flex-grow py-2 bg-[#00E676] hover:bg-[#00c564] text-[#060A0D] font-bold rounded text-xs font-mono transition-all">
-                                        Approve
-                                    </button>
-                                    <button onclick="rejectSignal(${alert.id})" class="px-3 py-2 border border-[#FF5252] text-[#FF5252] hover:bg-[rgba(255,82,82,0.1)] rounded text-xs font-mono transition-all">
-                                        Dismiss
-                                    </button>
+                                <div>
+                                    <span class="text-[#4A6A70] block">Est. Avg PnL</span>
+                                    <span class="font-bold ${avgPnl && avgPnl > 0 ? 'text-[#00E676]' : 'text-[#D6E5E3]'}">
+                                        ${avgPnl !== null ? (avgPnl > 0 ? '+' : '') + avgPnl.toFixed(2) + '%' : 'N/A'}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="text-[#4A6A70] block">RSI (14)</span>
+                                    <span class="text-[#D6E5E3] font-semibold">${alert.rsi_value ? parseFloat(alert.rsi_value).toFixed(1) : "N/A"}</span>
+                                </div>
+                                <div>
+                                    <span class="text-[#4A6A70] block">Sentiment</span>
+                                    <span class="text-[#D6E5E3] font-semibold">${alert.sentiment_score ? parseFloat(alert.sentiment_score).toFixed(2) : "0.00"}</span>
+                                </div>
+                                <div>
+                                    <span class="text-[#4A6A70] block">Support</span>
+                                    <span class="text-[#D6E5E3] font-semibold">$${alert.support_level ? parseFloat(alert.support_level).toFixed(2) : "N/A"}</span>
+                                </div>
+                                <div>
+                                    <span class="text-[#4A6A70] block">Resistance</span>
+                                    <span class="text-[#D6E5E3] font-semibold">$${alert.resistance_level ? parseFloat(alert.resistance_level).toFixed(2) : "N/A"}</span>
                                 </div>
                             </div>
                         </div>
-                    `;
-                    listEl.appendChild(card);
-                });
-            } catch (err) {
-                console.error("Error fetching signals:", err);
-                loadingEl.classList.add("hidden");
-                emptyEl.classList.remove("hidden");
-            }
+
+                        <!-- Right: Actions -->
+                        <div class="flex flex-row lg:flex-col items-center justify-end gap-3 lg:w-48 border-t lg:border-t-0 lg:border-l border-[#1A2A30] pt-4 lg:pt-0 lg:pl-6">
+                            <div class="w-full">
+                                <label class="text-[10px] text-[#4A6A70] font-mono block mb-1">Execution Qty</label>
+                                <input type="number" id="qty-${alert.id}" value="10" min="1" step="1"
+                                    class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-1 text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
+                            </div>
+                            <div class="flex gap-2 w-full">
+                                <button onclick="approveSignal(${alert.id})" class="flex-grow py-2 bg-[#00E676] hover:bg-[#00c564] text-[#060A0D] font-bold rounded text-xs font-mono transition-all shadow-lg">
+                                    Approve
+                                </button>
+                                <button onclick="rejectSignal(${alert.id})" class="px-3 py-2 border border-[#FF5252] text-[#FF5252] hover:bg-[rgba(255,82,82,0.1)] rounded text-xs font-mono transition-all">
+                                    Dismiss
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
         }
 
         window.approveSignal = async (id) => {
@@ -210,7 +350,6 @@
                     body: JSON.stringify({ quantity: qty })
                 });
                 if (res.ok) {
-                    alert("Signal approved and shadow trade executed.");
                     fetchAlerts();
                 } else {
                     const errData = await res.json();
@@ -236,20 +375,39 @@
             }
         };
 
+        bulkDismissBtn.addEventListener("click", async () => {
+            if (!confirm("Are you sure you want to dismiss all pending alerts with Win Rate below 55%?")) return;
+            bulkDismissBtn.disabled = true;
+            try {
+                const res = await fetch("/api/v1/alerts/bulk-dismiss", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ min_win_rate: 55.0 })
+                });
+                const data = await res.json();
+                alert(data.message || "Low conviction signals purged.");
+                fetchAlerts();
+            } catch (err) {
+                alert("Bulk dismiss failed: " + err);
+            } finally {
+                bulkDismissBtn.disabled = false;
+            }
+        });
+
         scanBtn.addEventListener("click", async () => {
             scanBtn.disabled = true;
             scanBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Scanning...`;
             try {
-                // Trigger manual pipeline run in backend or directly execute scan endpoint if available.
-                // We'll run a quick backend SSE trigger or simple fetch depending on needs.
-                alert("Starting a manual market scan. This might take a few moments...");
-                // Just fetch alerts after brief delay
                 setTimeout(fetchAlerts, 1000);
             } finally {
                 scanBtn.disabled = false;
                 scanBtn.innerHTML = `<i class="fas fa-search-dollar"></i> Scan Now`;
             }
         });
+
+        searchInput.addEventListener("input", applyFilterAndSort);
+        filterSelect.addEventListener("change", applyFilterAndSort);
+        sortSelect.addEventListener("change", applyFilterAndSort);
 
         refreshBtn.addEventListener("click", fetchAlerts);
 

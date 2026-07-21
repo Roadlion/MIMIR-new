@@ -23,6 +23,8 @@ class TradeSignalResponse(BaseModel):
     status: str
     created_at: datetime
     acted_at: Optional[datetime]
+    win_rate: Optional[float] = None
+    avg_pnl: Optional[float] = None
 
 class ActionPayload(BaseModel):
     quantity: float = 10.0  # Default to 10 shares
@@ -32,12 +34,22 @@ def get_pending_alerts():
     conn = get_db_connection_dict()
     cur = conn.cursor()
     try:
+        # Auto-expire signals older than 24 hours to keep the queue clean
         cur.execute(f"""
-            SELECT id, ticker, signal_type, trigger_price, rsi_value, sentiment_score, 
-                   support_level, resistance_level, reason, status, created_at, acted_at
-            FROM {settings.mimir_schema}.mimir_trade_signals
-            WHERE status = 'PENDING'
-            ORDER BY created_at DESC
+            UPDATE {settings.mimir_schema}.mimir_trade_signals
+            SET status = 'EXPIRED'
+            WHERE status = 'PENDING' AND created_at < NOW() - INTERVAL '24 hours'
+        """)
+        conn.commit()
+
+        cur.execute(f"""
+            SELECT s.id, s.ticker, s.signal_type, s.trigger_price, s.rsi_value, s.sentiment_score, 
+                   s.support_level, s.resistance_level, s.reason, s.status, s.created_at, s.acted_at,
+                   p.win_rate, p.avg_pnl
+            FROM {settings.mimir_schema}.mimir_trade_signals s
+            LEFT JOIN {settings.mimir_schema}.mimir_ticker_parameters p ON s.ticker = p.ticker
+            WHERE s.status = 'PENDING'
+            ORDER BY s.created_at DESC
         """)
         rows = cur.fetchall()
         return rows
@@ -154,6 +166,36 @@ def reject_alert(alert_id: int):
         cur.close()
         conn.close()
 
+class BulkDismissPayload(BaseModel):
+    min_win_rate: float = 55.0
+
+@router.post("/alerts/bulk-dismiss")
+def bulk_dismiss_low_conviction_alerts(payload: BulkDismissPayload):
+    """Dismisses all pending signals that have estimated win rates below min_win_rate or no profile."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        gmt_plus_7 = timezone(timedelta(hours=7))
+        now_local = datetime.now(gmt_plus_7)
+        
+        cur.execute(f"""
+            UPDATE {settings.mimir_schema}.mimir_trade_signals s
+            SET status = 'REJECTED', acted_at = %s
+            FROM {settings.mimir_schema}.mimir_ticker_parameters p
+            WHERE s.ticker = p.ticker 
+              AND s.status = 'PENDING'
+              AND (p.win_rate IS NULL OR p.win_rate < %s)
+        """, (now_local, payload.min_win_rate))
+        dismissed_count = cur.rowcount
+        conn.commit()
+        return {"message": f"Successfully dismissed {dismissed_count} low-conviction signals.", "dismissed": dismissed_count}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
 def evaluate_tick_technicals(price_cache):
     """Event-driven technical analysis evaluation over the live 1-min in-memory cache."""
     import pandas as pd
@@ -178,26 +220,26 @@ def evaluate_tick_technicals(price_cache):
             signal_type = None
             reason = ""
             
-            # Simple 1-min breakout/reversion logic
-            if current_price >= resistance and rsi > 55:
+            # Simple 1-min breakout/reversion logic (higher conviction bounds)
+            if current_price >= resistance and rsi > 65:
                 signal_type = "BUY"
-                reason = f"Resistance breakout ({resistance}) with bullish RSI ({rsi})"
-            elif rsi <= 25:
+                reason = f"Strong Resistance breakout ({resistance}) with bullish RSI ({rsi})"
+            elif rsi <= 20:
                 signal_type = "BUY"
-                reason = f"Oversold extreme (RSI {rsi})"
-            elif current_price <= support and rsi < 45:
+                reason = f"Extreme oversold reversion (RSI {rsi})"
+            elif current_price <= support and rsi < 35:
                 signal_type = "SELL"
-                reason = f"Support breakdown ({support}) with bearish RSI"
-            elif rsi >= 75:
+                reason = f"Support breakdown ({support}) with bearish RSI ({rsi})"
+            elif rsi >= 80:
                 signal_type = "SELL"
-                reason = f"Overbought extreme (RSI {rsi})"
+                reason = f"Extreme overbought reversion (RSI {rsi})"
                 
             if signal_type:
-                # Prevent spam: limit 1 alert per ticker every 15 minutes
+                # Prevent spam: limit 1 alert per ticker every 60 minutes
                 cur.execute(f"""
                     SELECT id FROM {settings.mimir_schema}.mimir_trade_signals 
                     WHERE ticker = %s AND status = 'PENDING' 
-                    AND created_at >= NOW() - INTERVAL '15 minutes'
+                    AND created_at >= NOW() - INTERVAL '60 minutes'
                 """, (ticker,))
                 
                 if not cur.fetchone():

@@ -51,13 +51,87 @@ def query_asset_pricing(ticker: str, days_back: int = 7) -> str:
     except Exception as e:
         return f"Error querying pricing: {e}"
 
-def query_portfolio() -> str:
-    """Retrieve the user's current portfolio holdings and recent trades."""
-    query = """
-        SELECT ticker, transaction_type, quantity, buy_price, order_date
+def query_portfolio(ticker: str = None, days_back: int = None, limit: int = None) -> str:
+    """Retrieve the user's complete portfolio transaction history and holdings ledger. If limit is not specified, returns ALL records."""
+    where_clauses = []
+    params = []
+    
+    if ticker:
+        where_clauses.append("ticker = %s")
+        params.append(ticker.upper())
+    if days_back and int(days_back) > 0:
+        where_clauses.append("order_date >= NOW() - (%s || ' days')::INTERVAL")
+        params.append(int(days_back))
+        
+    where_str = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    limit_clause = f"LIMIT {int(limit)}" if (limit is not None and int(limit) > 0) else ""
+    
+    query = f"""
+        SELECT id, ticker, transaction_type, quantity, buy_price, order_date, brokerage_fee, regulatory_fee, other_fee
         FROM yggdrasil.mimir_portfolio
+        {where_str}
         ORDER BY order_date DESC
-        LIMIT 20
+        {limit_clause}
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(query, params)
+        results = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not results:
+            return "Portfolio is currently empty or no matching transactions found."
+        return json.dumps([dict(r) for r in results], default=str)
+    except Exception as e:
+        return f"Error querying portfolio: {e}"
+
+def query_trade_signals(ticker: str = None, status: str = None, days_back: int = None, limit: int = None) -> str:
+    """Retrieve history of generated trade signals, trade alert execution logs, and alert statuses."""
+    where_clauses = []
+    params = []
+    
+    if ticker:
+        where_clauses.append("ticker = %s")
+        params.append(ticker.upper())
+    if status:
+        where_clauses.append("status = %s")
+        params.append(status.upper())
+    if days_back and int(days_back) > 0:
+        where_clauses.append("created_at >= NOW() - (%s || ' days')::INTERVAL")
+        params.append(int(days_back))
+        
+    where_str = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    limit_clause = f"LIMIT {int(limit)}" if (limit is not None and int(limit) > 0) else ""
+    
+    query = f"""
+        SELECT id, ticker, signal_type, trigger_price, rsi_value, sentiment_score, support_level, resistance_level, reason, status, created_at, acted_at
+        FROM yggdrasil.mimir_trade_signals
+        {where_str}
+        ORDER BY created_at DESC
+        {limit_clause}
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(query, params)
+        results = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not results:
+            return "No matching trade signals or trade alert logs found."
+        return json.dumps([dict(r) for r in results], default=str)
+    except Exception as e:
+        return f"Error querying trade signals: {e}"
+
+def query_backtest_history(limit: int = None) -> str:
+    """Retrieve historical quantitative backtest execution logs and strategy performance metrics."""
+    limit_clause = f"LIMIT {int(limit)}" if (limit is not None and int(limit) > 0) else ""
+    query = f"""
+        SELECT id, formula, universe, style, start_date, end_date, holding_period, slippage_bps, portfolio_size, markets, sharpe, annualized_return, max_drawdown, turnover, fitness, win_rate, ic, created_at
+        FROM yggdrasil.mimir_backtest_history
+        ORDER BY created_at DESC
+        {limit_clause}
     """
     try:
         conn = get_db_connection()
@@ -67,10 +141,10 @@ def query_portfolio() -> str:
         cur.close()
         conn.close()
         if not results:
-            return "Portfolio is currently empty."
+            return "No historical backtests found."
         return json.dumps([dict(r) for r in results], default=str)
     except Exception as e:
-        return f"Error querying portfolio: {e}"
+        return f"Error querying backtest history: {e}"
 
 def screen_assets(min_sentiment: float = 0.5, limit: int = 10) -> str:
     """Screen for assets with high recent sentiment scores."""
@@ -140,10 +214,43 @@ ORACLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "query_portfolio",
-            "description": "Retrieve the user's active portfolio holdings, transaction history, and cost basis.",
+            "description": "Retrieve the user's complete portfolio transaction history, trading logs, holdings, and cost basis. Returns ALL records by default unless limit is specified.",
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "ticker": {"type": "string", "description": "Optional ticker to filter transactions (e.g. AAPL)"},
+                    "days_back": {"type": "integer", "description": "Optional number of days to look back"},
+                    "limit": {"type": "integer", "description": "Optional limit on number of transactions to return. If omitted, retrieves ALL transactions."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_trade_signals",
+            "description": "Retrieve history of generated trade signals, automated/manual trade execution logs, and alert statuses (PENDING, APPROVED, REJECTED). Returns ALL records by default unless limit is specified.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Optional ticker to filter trade signals"},
+                    "status": {"type": "string", "description": "Optional signal status filter (e.g. PENDING, APPROVED, REJECTED)"},
+                    "days_back": {"type": "integer", "description": "Optional number of days to look back"},
+                    "limit": {"type": "integer", "description": "Optional limit on number of signals returned. Defaults to returning all if omitted."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_backtest_history",
+            "description": "Retrieve historical quantitative backtest execution logs and strategy performance results.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Optional limit on number of backtest logs returned."}
+                }
             }
         }
     },
@@ -184,9 +291,14 @@ def execute_oracle_tool(name: str, args: dict) -> str:
     elif name == "query_asset_pricing":
         return query_asset_pricing(args.get("ticker"), args.get("days_back", 7))
     elif name == "query_portfolio":
-        return query_portfolio()
+        return query_portfolio(args.get("ticker"), args.get("days_back"), args.get("limit"))
+    elif name == "query_trade_signals":
+        return query_trade_signals(args.get("ticker"), args.get("status"), args.get("days_back"), args.get("limit"))
+    elif name == "query_backtest_history":
+        return query_backtest_history(args.get("limit"))
     elif name == "screen_assets":
         return screen_assets(args.get("min_sentiment", 0.5), args.get("limit", 10))
     elif name == "search_web_tool":
         return search_web_tool(args.get("query"))
     return f"Unknown tool: {name}"
+
