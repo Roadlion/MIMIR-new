@@ -153,3 +153,67 @@ def reject_alert(alert_id: int):
     finally:
         cur.close()
         conn.close()
+
+def evaluate_tick_technicals(price_cache):
+    """Event-driven technical analysis evaluation over the live 1-min in-memory cache."""
+    import pandas as pd
+    from ..analytics.technical_analysis import analyze_technical_indicators
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        signals_generated = 0
+        for ticker, ticks in price_cache.items():
+            if len(ticks) < 50:
+                continue
+                
+            df = pd.DataFrame(list(ticks))
+            current_price = df.iloc[-1]['close']
+            
+            techs = analyze_technical_indicators(df)
+            
+            resistance = techs["resistance"]
+            support = techs["support"]
+            rsi = round(techs["rsi"], 2)
+            
+            signal_type = None
+            reason = ""
+            
+            # Simple 1-min breakout/reversion logic
+            if current_price >= resistance and rsi > 55:
+                signal_type = "BUY"
+                reason = f"Resistance breakout ({resistance}) with bullish RSI ({rsi})"
+            elif rsi <= 25:
+                signal_type = "BUY"
+                reason = f"Oversold extreme (RSI {rsi})"
+            elif current_price <= support and rsi < 45:
+                signal_type = "SELL"
+                reason = f"Support breakdown ({support}) with bearish RSI"
+            elif rsi >= 75:
+                signal_type = "SELL"
+                reason = f"Overbought extreme (RSI {rsi})"
+                
+            if signal_type:
+                # Prevent spam: limit 1 alert per ticker every 15 minutes
+                cur.execute(f"""
+                    SELECT id FROM {settings.mimir_schema}.mimir_trade_signals 
+                    WHERE ticker = %s AND status = 'PENDING' 
+                    AND created_at >= NOW() - INTERVAL '15 minutes'
+                """, (ticker,))
+                
+                if not cur.fetchone():
+                    cur.execute(f"""
+                        INSERT INTO {settings.mimir_schema}.mimir_trade_signals
+                        (ticker, signal_type, trigger_price, rsi_value, support_level, resistance_level, reason, status, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW())
+                    """, (ticker, signal_type, current_price, rsi, support, resistance, reason))
+                    signals_generated += 1
+                    
+        conn.commit()
+        if signals_generated > 0:
+            print(f"[TECHNICAL ALERTS] Generated {signals_generated} real-time technical alerts.")
+    except Exception as e:
+        conn.rollback()
+        print(f"[TECHNICAL ALERTS ERROR] {e}")
+    finally:
+        cur.close()
+        conn.close()

@@ -436,8 +436,16 @@ class BacktestEngine:
         weight_changes = weights - weights.shift(1).fillna(0.0)
         daily_turnover = weight_changes.abs().sum(axis=1)
         
-        slippage_fee = slippage_bps / 10000.0  # 1 bps = 0.0001
-        daily_slippage_cost = daily_turnover * slippage_fee
+        # Intra-day Dynamic Slippage Simulation:
+        # Instead of flat BPS, use the day's normalized High-Low spread to simulate 1-minute tick variance
+        # If the asset was highly volatile that day, execution slippage is worse.
+        normalized_spread = (self.dfs['high'] - self.dfs['low']) / self.dfs['close']
+        normalized_spread = normalized_spread.clip(upper=0.05).fillna(0.0)
+        
+        base_fee = slippage_bps / 10000.0
+        # Dynamic slippage = flat base fee + 5% of the daily price spread to simulate minute-level entry variance
+        dynamic_slippage_matrix = weight_changes.abs() * (base_fee + (normalized_spread * 0.05))
+        daily_slippage_cost = dynamic_slippage_matrix.sum(axis=1)
         
         net_returns = strategy_returns - daily_slippage_cost
         

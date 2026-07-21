@@ -34,13 +34,19 @@ def test_xgb_prediction_fallback():
         'rsi', 'volume_ratio', 'close_to_support', 'close_to_resistance',
         'sentiment_1d', 'sentiment_3d', 'sentiment_5d',
         'price_momentum_5d', 'price_momentum_10d', 'volatility_20d',
-        'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin'
+        'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin',
+        'ma20_ma50_ratio', 'macd', 'macd_signal', 'macd_hist',
+        'bb_upper', 'bb_lower', 'bb_width', 'obv',
+        'ichimoku_tenkan', 'ichimoku_kijun', 'ichimoku_senkou_a', 'ichimoku_senkou_b'
     ]
     df_features = pd.DataFrame([[
         35.0, 1.2, 0.01, 0.05,
         0.4, 0.3, 0.2,
         -0.02, -0.05, 0.015,
-        18.5, 80.0, 0.12, 0.22
+        18.5, 80.0, 0.12, 0.22,
+        1.05, 0.5, 0.4, 0.1,
+        150.0, 140.0, 0.07, 10000.0,
+        145.0, 142.0, 140.0, 141.0
     ]], columns=feature_cols)
     
     # Run prediction for a random dummy ticker

@@ -155,8 +155,23 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load sliding ticker data
     fetchTickerData();
-    // Refresh every 2 minutes (120000ms)
-    setInterval(fetchTickerData, 120000);
+    
+    // Setup Real-Time Server-Sent Events (SSE) for prices
+    const priceSource = new EventSource('/api/v1/prices/stream');
+    priceSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'price_update') {
+                console.log("[Prices] Real-time update received, re-fetching...");
+                fetchTickerData();
+            }
+        } catch (e) {
+            // ping or parse error, ignore
+        }
+    };
+    priceSource.onerror = function() {
+        console.warn("[Prices] Stream disconnected, attempting to reconnect...");
+    };
 });
 
 async function fetchTickerData() {

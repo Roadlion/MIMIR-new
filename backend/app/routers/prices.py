@@ -297,6 +297,39 @@ def get_ticker_price_data(ticker_symbol: str, conn):
         "change_percent": round(change_percent, 2)
     }
 
+@router.get("/prices/stream")
+async def stream_prices():
+    from fastapi.responses import StreamingResponse
+    import json
+    import select
+    import psycopg2.extensions
+    
+    def event_generator():
+        conn = get_db_connection()
+        try:
+            # Get underlying psycopg2 connection for set_isolation_level
+            real_conn = conn._conn
+            real_conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            cur = real_conn.cursor()
+            cur.execute("LISTEN price_updates;")
+            while True:
+                # 5 second timeout to send a keep-alive ping
+                if select.select([real_conn], [], [], 5.0) == ([], [], []):
+                    yield "data: {\"type\": \"ping\"}\n\n"
+                else:
+                    real_conn.poll()
+                    while real_conn.notifies:
+                        notify = real_conn.notifies.pop(0)
+                        yield f"data: {json.dumps({'type': 'price_update', 'payload': notify.payload})}\n\n"
+        except Exception as e:
+            print(f"[SSE ERROR] {e}")
+        finally:
+            if 'cur' in locals():
+                cur.close()
+            conn.close()
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @router.get("/prices/ticker-changes")
 def get_ticker_changes(tickers: Optional[str] = Query(None)):
     """

@@ -6,6 +6,7 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import xgboost as xgb
+import json
 from sklearn.metrics import precision_score, recall_score, accuracy_score
 
 # Adjust path to import backend
@@ -28,7 +29,9 @@ def check_and_migrate_db():
         cur.execute(f"""
             ALTER TABLE {settings.mimir_schema}.mimir_ticker_parameters
             ADD COLUMN IF NOT EXISTS optimal_prob_buy NUMERIC DEFAULT 0.55,
-            ADD COLUMN IF NOT EXISTS optimal_prob_sell NUMERIC DEFAULT 0.55;
+            ADD COLUMN IF NOT EXISTS optimal_prob_sell NUMERIC DEFAULT 0.55,
+            ADD COLUMN IF NOT EXISTS selected_features_buy TEXT,
+            ADD COLUMN IF NOT EXISTS selected_features_sell TEXT;
         """)
         conn.commit()
         print("[OK] Database migration complete: optimal_prob_buy and optimal_prob_sell columns verified.")
@@ -185,6 +188,55 @@ def calculate_features_and_targets(df, holding_period=5, slippage_bps=5.0):
     df['volatility_20d'] = df.groupby('ticker')['pct_change'].transform(lambda x: x.rolling(20).std())
     df.drop(columns=['pct_change'], inplace=True)
     
+    # New Technicals
+    df['ma20'] = df.groupby('ticker')['close'].transform(lambda x: x.rolling(20).mean())
+    df['ma50'] = df.groupby('ticker')['close'].transform(lambda x: x.rolling(50).mean())
+    df['ma20_ma50_ratio'] = df['ma20'] / (df['ma50'] + 1e-15)
+    
+    def get_macd(series):
+        ema12 = series.ewm(span=12, adjust=False).mean()
+        ema26 = series.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+        macd_hist = macd_line - macd_signal
+        return pd.DataFrame({'macd': macd_line, 'macd_signal': macd_signal, 'macd_hist': macd_hist})
+
+    macd_dfs = []
+    for ticker, group in df.groupby('ticker'):
+        macd_res = get_macd(group['close'])
+        macd_res.index = group.index
+        macd_dfs.append(macd_res)
+    if macd_dfs:
+        macd_combined = pd.concat(macd_dfs)
+        df['macd'] = macd_combined['macd']
+        df['macd_signal'] = macd_combined['macd_signal']
+        df['macd_hist'] = macd_combined['macd_hist']
+    else:
+        df['macd'] = np.nan
+        df['macd_signal'] = np.nan
+        df['macd_hist'] = np.nan
+
+    df['bb_std'] = df.groupby('ticker')['close'].transform(lambda x: x.rolling(20).std())
+    df['bb_upper'] = df['ma20'] + (df['bb_std'] * 2)
+    df['bb_lower'] = df['ma20'] - (df['bb_std'] * 2)
+    df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / (df['ma20'] + 1e-15)
+    
+    def get_obv(group):
+        close_diff = group['close'].diff()
+        direction = np.where(close_diff > 0, 1, np.where(close_diff < 0, -1, 0))
+        obv = (direction * group['volume']).cumsum()
+        return pd.Series(obv, index=group.index)
+        
+    df['obv'] = df.groupby('ticker', group_keys=False).apply(get_obv)
+    
+    df['ichimoku_tenkan'] = df.groupby('ticker', group_keys=False).apply(lambda x: (x['high'].rolling(9).max() + x['low'].rolling(9).min()) / 2)
+    df['ichimoku_kijun'] = df.groupby('ticker', group_keys=False).apply(lambda x: (x['high'].rolling(26).max() + x['low'].rolling(26).min()) / 2)
+    df['ichimoku_senkou_a'] = ((df['ichimoku_tenkan'] + df['ichimoku_kijun']) / 2).groupby(df['ticker']).shift(26)
+    df['ichimoku_senkou_b'] = df.groupby('ticker', group_keys=False).apply(lambda x: (x['high'].rolling(52).max() + x['low'].rolling(52).min()) / 2).groupby(df['ticker']).shift(26)
+    
+    df.drop(columns=['ma20', 'ma50', 'bb_std'], inplace=True)
+
+    
     # Define targets
     # Shift open to represent entering at the next session's open
     df['open_next'] = df.groupby('ticker')['open'].shift(-1)
@@ -206,7 +258,10 @@ FEATURE_COLS = [
     'rsi', 'volume_ratio', 'close_to_support', 'close_to_resistance',
     'sentiment_1d', 'sentiment_3d', 'sentiment_5d',
     'price_momentum_5d', 'price_momentum_10d', 'volatility_20d',
-    'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin'
+    'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin',
+    'ma20_ma50_ratio', 'macd', 'macd_signal', 'macd_hist',
+    'bb_upper', 'bb_lower', 'bb_width', 'obv',
+    'ichimoku_tenkan', 'ichimoku_kijun', 'ichimoku_senkou_a', 'ichimoku_senkou_b'
 ]
 
 def split_chronological_with_purging(df_ticker, val_ratio=0.15, test_ratio=0.15, holding_period=5):
@@ -283,6 +338,48 @@ def train_xgb_model(X_train, y_train, X_val, y_val, model_name="model"):
         best_model.fit(X_train, y_train)
         
     return best_model
+
+def recursive_feature_elimination(df_train, df_val, target_col, side="buy"):
+    """Iteratively removes the least important feature to maximize validation win rate & PnL."""
+    current_features = list(FEATURE_COLS)
+    best_overall_score = -float('inf')
+    best_overall_model = None
+    best_overall_features = list(current_features)
+    best_overall_metrics = (0.55, 0.0, 0.0, 0)
+    
+    while len(current_features) >= 5: # Keep at least 5 features
+        # Train current model
+        model = train_xgb_model(
+            df_train[current_features], df_train[target_col],
+            df_val[current_features], df_val[target_col]
+        )
+        
+        # Optimize threshold & get metrics
+        opt_thresh, win_rate, pnl, trades = optimize_threshold(model, df_val[current_features], df_val, side=side)
+        
+        if best_overall_model is None:
+            best_overall_model = model
+            best_overall_features = list(current_features)
+            best_overall_metrics = (opt_thresh, win_rate, pnl, trades)
+            
+        # Scoring function: PnL is most important, then win rate
+        score = pnl * trades if trades > 0 else -999999.0
+        
+        if score > best_overall_score:
+            best_overall_score = score
+            best_overall_model = model
+            best_overall_features = list(current_features)
+            best_overall_metrics = (opt_thresh, win_rate, pnl, trades)
+            
+        # Get feature importances to drop the least important one
+        importances = model.feature_importances_
+        if len(importances) == 0:
+            break
+        least_important_idx = np.argmin(importances)
+        least_important_feature = current_features[least_important_idx]
+        current_features.remove(least_important_feature)
+        
+    return best_overall_model, best_overall_features, best_overall_metrics
 
 def optimize_threshold(model, X_val, df_val, side="buy"):
     """Simulates trading at various probability thresholds on validation set
@@ -395,8 +492,8 @@ def train_and_tune_all():
             cur.execute(f"""
                 INSERT INTO {settings.mimir_schema}.mimir_ticker_parameters (
                     ticker, optimal_rsi_buy, optimal_rsi_sell, optimal_sentiment, optimal_vol_ratio, optimal_hold_days, 
-                    win_rate, avg_pnl, total_trades, optimal_prob_buy, optimal_prob_sell, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    win_rate, avg_pnl, total_trades, optimal_prob_buy, optimal_prob_sell, selected_features_buy, selected_features_sell, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (ticker) DO UPDATE SET
                     optimal_rsi_buy = EXCLUDED.optimal_rsi_buy,
                     optimal_rsi_sell = EXCLUDED.optimal_rsi_sell,
@@ -408,8 +505,10 @@ def train_and_tune_all():
                     total_trades = EXCLUDED.total_trades,
                     optimal_prob_buy = EXCLUDED.optimal_prob_buy,
                     optimal_prob_sell = EXCLUDED.optimal_prob_sell,
+                    selected_features_buy = EXCLUDED.selected_features_buy,
+                    selected_features_sell = EXCLUDED.selected_features_sell,
                     updated_at = NOW();
-            """, (ticker, 30.0, 65.0, 0.3, 1.0, holding_period, None, None, 0, 0.55, 0.55))
+            """, (ticker, 30.0, 65.0, 0.3, 1.0, holding_period, None, None, 0, 0.55, 0.55, json.dumps(list(FEATURE_COLS)), json.dumps(list(FEATURE_COLS))))
             continue
             
         print(f"[{i}/{total_tickers}] Tuning parameters for {ticker}...")
@@ -420,32 +519,35 @@ def train_and_tune_all():
         sell_model = global_sell_model
         model_source = "Global Fallback"
         
+        buy_features_list = list(FEATURE_COLS)
+        sell_features_list = list(FEATURE_COLS)
+        
         # If we have enough ticker-specific samples, train ticker-specific models
         if len(df_train) >= 150:
             try:
-                ticker_buy = train_xgb_model(
-                    df_train[FEATURE_COLS], df_train['target_buy'],
-                    df_val[FEATURE_COLS], df_val['target_buy'],
-                    model_name=f"{ticker}_buy"
-                )
+                ticker_buy, buy_features_list, buy_metrics = recursive_feature_elimination(df_train, df_val, 'target_buy', side="buy")
                 ticker_buy.save_model(str(MODELS_DIR / f"{ticker.lower()}_buy.json"))
                 buy_model = ticker_buy
                 
-                ticker_sell = train_xgb_model(
-                    df_train[FEATURE_COLS], df_train['target_sell'],
-                    df_val[FEATURE_COLS], df_val['target_sell'],
-                    model_name=f"{ticker}_sell"
-                )
+                ticker_sell, sell_features_list, sell_metrics = recursive_feature_elimination(df_train, df_val, 'target_sell', side="sell")
                 ticker_sell.save_model(str(MODELS_DIR / f"{ticker.lower()}_sell.json"))
                 sell_model = ticker_sell
                 
-                model_source = "Individual Ticker XGBoost"
+                model_source = "Individual Ticker XGBoost RFE"
+                opt_buy_thresh, buy_win, buy_pnl, buy_trades = buy_metrics
+                opt_sell_thresh, sell_win, sell_pnl, sell_trades = sell_metrics
             except Exception as e:
                 print(f"  -> Error training individual model for {ticker}, falling back to global: {e}")
-                
-        # Optimize probability thresholds on the ticker-specific validation set
-        opt_buy_thresh, buy_win, buy_pnl, buy_trades = optimize_threshold(buy_model, df_val[FEATURE_COLS], df_val, side="buy")
-        opt_sell_thresh, sell_win, sell_pnl, sell_trades = optimize_threshold(sell_model, df_val[FEATURE_COLS], df_val, side="sell")
+                buy_model = global_buy_model
+                sell_model = global_sell_model
+                buy_features_list = list(FEATURE_COLS)
+                sell_features_list = list(FEATURE_COLS)
+                opt_buy_thresh, buy_win, buy_pnl, buy_trades = optimize_threshold(buy_model, df_val[FEATURE_COLS], df_val, side="buy")
+                opt_sell_thresh, sell_win, sell_pnl, sell_trades = optimize_threshold(sell_model, df_val[FEATURE_COLS], df_val, side="sell")
+        else:
+            # Optimize probability thresholds on the ticker-specific validation set
+            opt_buy_thresh, buy_win, buy_pnl, buy_trades = optimize_threshold(buy_model, df_val[FEATURE_COLS], df_val, side="buy")
+            opt_sell_thresh, sell_win, sell_pnl, sell_trades = optimize_threshold(sell_model, df_val[FEATURE_COLS], df_val, side="sell")
         
         overall_trades = buy_trades + sell_trades
         overall_win_rate = (buy_win * buy_trades + sell_win * sell_trades) / overall_trades if overall_trades > 0 else 0.0
@@ -459,8 +561,8 @@ def train_and_tune_all():
         cur.execute(f"""
             INSERT INTO {settings.mimir_schema}.mimir_ticker_parameters (
                 ticker, optimal_rsi_buy, optimal_rsi_sell, optimal_sentiment, optimal_vol_ratio, optimal_hold_days, 
-                win_rate, avg_pnl, total_trades, optimal_prob_buy, optimal_prob_sell, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                win_rate, avg_pnl, total_trades, optimal_prob_buy, optimal_prob_sell, selected_features_buy, selected_features_sell, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (ticker) DO UPDATE SET
                 optimal_rsi_buy = EXCLUDED.optimal_rsi_buy,
                 optimal_rsi_sell = EXCLUDED.optimal_rsi_sell,
@@ -472,6 +574,8 @@ def train_and_tune_all():
                 total_trades = EXCLUDED.total_trades,
                 optimal_prob_buy = EXCLUDED.optimal_prob_buy,
                 optimal_prob_sell = EXCLUDED.optimal_prob_sell,
+                selected_features_buy = EXCLUDED.selected_features_buy,
+                selected_features_sell = EXCLUDED.selected_features_sell,
                 updated_at = NOW();
         """, (
             ticker, 
@@ -480,11 +584,13 @@ def train_and_tune_all():
             float(overall_avg_pnl) if overall_trades > 0 else None, 
             int(overall_trades), 
             float(opt_buy_thresh), 
-            float(opt_sell_thresh)
+            float(opt_sell_thresh),
+            json.dumps(buy_features_list),
+            json.dumps(sell_features_list)
         ))
+        conn.commit()
         tuned_count += 1
         
-    conn.commit()
     cur.close()
     conn.close()
     print(f"\n[OK] Tuning complete. Successfully trained models and parameters for {tuned_count} tickers.")

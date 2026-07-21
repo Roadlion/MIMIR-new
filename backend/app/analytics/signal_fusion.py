@@ -162,12 +162,13 @@ def get_ticker_parameters(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
     try:
         cur.execute(f"""
             SELECT optimal_rsi_buy, optimal_rsi_sell, optimal_sentiment, optimal_vol_ratio, optimal_hold_days, 
-                   win_rate, avg_pnl, optimal_prob_buy, optimal_prob_sell
+                   win_rate, avg_pnl, optimal_prob_buy, optimal_prob_sell, selected_features_buy, selected_features_sell
             FROM {settings.mimir_schema}.mimir_ticker_parameters
             WHERE ticker = %s
         """, (ticker,))
         row = cur.fetchone()
         if row:
+            import json
             return {
                 "rsi_buy": float(row[0]),
                 "rsi_sell": float(row[1]),
@@ -177,7 +178,9 @@ def get_ticker_parameters(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
                 "win_rate": float(row[5]) if row[5] is not None else None,
                 "avg_pnl": float(row[6]) if row[6] is not None else None,
                 "prob_buy": float(row[7]) if row[7] is not None else 0.55,
-                "prob_sell": float(row[8]) if row[8] is not None else 0.55
+                "prob_sell": float(row[8]) if row[8] is not None else 0.55,
+                "selected_features_buy": json.loads(row[9]) if row[9] else None,
+                "selected_features_sell": json.loads(row[10]) if row[10] else None
             }
         return None
     except Exception:
@@ -376,6 +379,31 @@ def scan_ticker_for_signals(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
     pct_change = df_merged['close'].pct_change()
     df_merged['volatility_20d'] = pct_change.rolling(20).std()
     
+    # New Technicals
+    df_merged['ma20'] = df_merged['close'].rolling(20).mean()
+    df_merged['ma50'] = df_merged['close'].rolling(50).mean()
+    df_merged['ma20_ma50_ratio'] = df_merged['ma20'] / (df_merged['ma50'] + 1e-15)
+    
+    ema12 = df_merged['close'].ewm(span=12, adjust=False).mean()
+    ema26 = df_merged['close'].ewm(span=26, adjust=False).mean()
+    df_merged['macd'] = ema12 - ema26
+    df_merged['macd_signal'] = df_merged['macd'].ewm(span=9, adjust=False).mean()
+    df_merged['macd_hist'] = df_merged['macd'] - df_merged['macd_signal']
+    
+    bb_std = df_merged['close'].rolling(20).std()
+    df_merged['bb_upper'] = df_merged['ma20'] + (bb_std * 2)
+    df_merged['bb_lower'] = df_merged['ma20'] - (bb_std * 2)
+    df_merged['bb_width'] = (df_merged['bb_upper'] - df_merged['bb_lower']) / (df_merged['ma20'] + 1e-15)
+    
+    close_diff = df_merged['close'].diff()
+    direction = np.where(close_diff > 0, 1, np.where(close_diff < 0, -1, 0))
+    df_merged['obv'] = (direction * df_merged['volume']).cumsum()
+    
+    df_merged['ichimoku_tenkan'] = (df_merged['high'].rolling(9).max() + df_merged['low'].rolling(9).min()) / 2
+    df_merged['ichimoku_kijun'] = (df_merged['high'].rolling(26).max() + df_merged['low'].rolling(26).min()) / 2
+    df_merged['ichimoku_senkou_a'] = ((df_merged['ichimoku_tenkan'] + df_merged['ichimoku_kijun']) / 2).shift(26)
+    df_merged['ichimoku_senkou_b'] = ((df_merged['high'].rolling(52).max() + df_merged['low'].rolling(52).min()) / 2).shift(26)
+    
     # Fundamentals
     fundamentals = get_cached_fundamentals(ticker, conn=conn)
     if fundamentals:
@@ -393,18 +421,28 @@ def scan_ticker_for_signals(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
         'rsi', 'volume_ratio', 'close_to_support', 'close_to_resistance',
         'sentiment_1d', 'sentiment_3d', 'sentiment_5d',
         'price_momentum_5d', 'price_momentum_10d', 'volatility_20d',
-        'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin'
+        'pe_ratio', 'debt_to_equity', 'eps_growth', 'operating_margin',
+        'ma20_ma50_ratio', 'macd', 'macd_signal', 'macd_hist',
+        'bb_upper', 'bb_lower', 'bb_width', 'obv',
+        'ichimoku_tenkan', 'ichimoku_kijun', 'ichimoku_senkou_a', 'ichimoku_senkou_b'
     ]
     features_df = today_row[feature_cols].to_frame().T.astype(float)
     
     # Load custom optimal thresholds or defaults
     ticker_params = get_ticker_parameters(ticker, conn=conn)
+    buy_features = feature_cols
+    sell_features = feature_cols
+    
     if ticker_params:
         target_prob_buy = ticker_params["prob_buy"]
         target_prob_sell = ticker_params["prob_sell"]
         p_win_rate = ticker_params["win_rate"]
         p_avg_pnl = ticker_params["avg_pnl"]
         p_hold_days = ticker_params["hold_days"]
+        if ticker_params.get("selected_features_buy"):
+            buy_features = ticker_params["selected_features_buy"]
+        if ticker_params.get("selected_features_sell"):
+            sell_features = ticker_params["selected_features_sell"]
         win_str = f"{p_win_rate:.1f}%" if p_win_rate is not None else "N/A"
         pnl_str = f"{p_avg_pnl:.2f}%" if p_avg_pnl is not None else "N/A"
         param_src = f"Tuned Profile (Hold: {p_hold_days}d, Est. Win Rate: {win_str}, Est. PnL: {pnl_str})"
@@ -425,8 +463,10 @@ def scan_ticker_for_signals(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
             feedback_note = f" | [LEARNING LOOP] Poor recent success rate ({live_success_rate:.1f}%). Tightening threshold to 70% max bounds."
             
     # Run XGBoost inference
-    prob_buy = get_xgb_prediction(ticker, features_df, "buy")
-    prob_sell = get_xgb_prediction(ticker, features_df, "sell")
+    features_df_buy = features_df[buy_features] if all(col in features_df.columns for col in buy_features) else features_df
+    features_df_sell = features_df[sell_features] if all(col in features_df.columns for col in sell_features) else features_df
+    prob_buy = get_xgb_prediction(ticker, features_df_buy, "buy")
+    prob_sell = get_xgb_prediction(ticker, features_df_sell, "sell")
     
     signal_type = None
     reason = []
@@ -513,3 +553,55 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
         conn.close()
             
     return new_signals
+
+def validate_sentiment_with_price(price_cache):
+    """Event-driven hook to invalidate LLM sentiment signals if 1-minute price action strongly diverges."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        
+        # Find highly polarized sentiment impacts from the last 30 minutes
+        cur.execute(f"""
+            SELECT id, ticker, sentiment_score 
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts 
+            WHERE created_at >= NOW() - INTERVAL '30 minutes'
+            AND abs(sentiment_score) > 0.5
+        """)
+        recent_impacts = cur.fetchall()
+        
+        for impact in recent_impacts:
+            impact_id, ticker, score = impact
+            
+            if ticker not in price_cache or len(price_cache[ticker]) < 15:
+                continue
+                
+            ticks = list(price_cache[ticker])
+            start_price = ticks[-15]['close']
+            end_price = ticks[-1]['close']
+            pct_change = (end_price - start_price) / start_price
+            
+            # If Sentiment is very bullish (> 0.5) but price drops > 1% in 15m (Bull Trap)
+            if score > 0.5 and pct_change <= -0.01:
+                cur.execute(f"""
+                    UPDATE {settings.mimir_schema}.mimir_sentiment_impacts
+                    SET sentiment_score = 0.0
+                    WHERE id = %s
+                """, (impact_id,))
+                print(f"[SENTIMENT FILTER] Neutralized BULLISH sentiment for {ticker} (Price dropped {pct_change*100:.2f}%)")
+            
+            # If Sentiment is very bearish (< -0.5) but price pumps > 1% in 15m (Bear Trap)
+            elif score < -0.5 and pct_change >= 0.01:
+                cur.execute(f"""
+                    UPDATE {settings.mimir_schema}.mimir_sentiment_impacts
+                    SET sentiment_score = 0.0
+                    WHERE id = %s
+                """, (impact_id,))
+                print(f"[SENTIMENT FILTER] Neutralized BEARISH sentiment for {ticker} (Price surged {pct_change*100:.2f}%)")
+                
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[SENTIMENT FILTER ERROR] {e}")
+    finally:
+        cur.close()
+        conn.close()

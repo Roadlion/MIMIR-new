@@ -1097,3 +1097,62 @@ def get_portfolio_history():
         
     return history_data
 
+def evaluate_tick_stoploss(price_cache):
+    """Event-driven portfolio risk management using live 1-min data."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        
+        # 1. Fetch current open positions from the shadow portfolio
+        cur.execute(f"""
+            SELECT ticker, 
+                   SUM(CASE WHEN transaction_type = 'BUY' THEN quantity ELSE -quantity END) as net_qty
+            FROM {settings.mimir_schema}.mimir_portfolio
+            GROUP BY ticker
+            HAVING SUM(CASE WHEN transaction_type = 'BUY' THEN quantity ELSE -quantity END) > 0
+        """)
+        open_positions = cur.fetchall()
+        
+        alert_count = 0
+        for pos in open_positions:
+            ticker, qty = pos
+            if ticker not in price_cache or len(price_cache[ticker]) == 0:
+                continue
+                
+            current_price = price_cache[ticker][-1]['close']
+            
+            # Simple 2% trailing stop logic on the 50-min rolling high
+            ticks = list(price_cache[ticker])
+            window = ticks[-50:] if len(ticks) >= 50 else ticks
+            recent_high = max([t['high'] for t in window])
+            
+            trailing_stop = recent_high * 0.98  # 2% drop from the local high
+            
+            if current_price <= trailing_stop:
+                # To prevent spam, check if we already have a pending trailing stop alert for this ticker
+                cur.execute(f"""
+                    SELECT id FROM {settings.mimir_schema}.mimir_trade_signals 
+                    WHERE ticker = %s AND status = 'PENDING' AND reason LIKE '%%Trailing Stop%%'
+                """, (ticker,))
+                
+                if not cur.fetchone():
+                    print(f"[PORTFOLIO RISK] TRAILING STOP WARNING for {ticker}! Price {current_price} dropped below stop limit ({trailing_stop}). Generating alert.")
+                    
+                    reason = f"Trailing Stop Triggered: Price dropped below {trailing_stop:.2f} (2% trailing local high). Consider selling {qty} shares."
+                    
+                    cur.execute(f"""
+                        INSERT INTO {settings.mimir_schema}.mimir_trade_signals
+                        (ticker, signal_type, trigger_price, reason, status, created_at)
+                        VALUES (%s, 'SELL', %s, %s, 'PENDING', NOW())
+                    """, (ticker, current_price, reason))
+                    alert_count += 1
+                    
+        conn.commit()
+        if alert_count > 0:
+            print(f"[PORTFOLIO RISK] Generated {alert_count} Trailing Stop warning alerts.")
+    except Exception as e:
+        conn.rollback()
+        print(f"[PORTFOLIO RISK ERROR] {e}")
+    finally:
+        cur.close()
+        conn.close()
