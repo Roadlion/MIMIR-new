@@ -247,7 +247,7 @@ def evaluate_tick_technicals(price_cache):
                         INSERT INTO {settings.mimir_schema}.mimir_trade_signals
                         (ticker, signal_type, trigger_price, rsi_value, support_level, resistance_level, reason, status, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW())
-                    """, (ticker, signal_type, current_price, rsi, support, resistance, reason))
+                    """, (ticker, signal_type, float(current_price), float(rsi), float(support), float(resistance), reason))
                     signals_generated += 1
                     
         conn.commit()

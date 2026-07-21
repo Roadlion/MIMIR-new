@@ -282,7 +282,8 @@ def get_daily_sentiment_history(ticker: str, days: int = 20, conn=None) -> pd.Da
                                    (a.published_ts AT TIME ZONE 'America/New_York')::date
                            END
                    END as date,
-                   si.sentiment_score
+                   si.sentiment_score,
+                   si.article_id
             FROM {settings.mimir_schema}.mimir_sentiment_impacts si
             JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
             WHERE si.ticker = %s AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s
@@ -343,6 +344,13 @@ def get_xgb_prediction(ticker: str, features: pd.DataFrame, side: str) -> float:
             _MODEL_CACHE_MTIME[path_str] = mtime
         else:
             booster = _MODEL_CACHE[path_str]
+            
+        if booster.feature_names:
+            missing = [f for f in booster.feature_names if f not in features.columns]
+            if missing:
+                for m in missing:
+                    features[m] = np.nan
+            features = features[booster.feature_names]
             
         dmat = xgb.DMatrix(features)
         pred = booster.predict(dmat)
@@ -642,7 +650,8 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
                                     THEN ((a.published_ts AT TIME ZONE 'America/New_York') + INTERVAL '1 day')::date
                                     ELSE (a.published_ts AT TIME ZONE 'America/New_York')::date END
                        END as date,
-                       si.sentiment_score
+                       si.sentiment_score,
+                       si.article_id
                 FROM {settings.mimir_schema}.mimir_sentiment_impacts si
                 JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
                 WHERE (a.published_ts AT TIME ZONE 'UTC')::date >= %s AND si.ticker IS NOT NULL
