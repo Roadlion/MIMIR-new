@@ -104,32 +104,54 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
             print(f"[YFINANCE] No records parsed for {ticker_symbol}")
             return False
             
-        # Open DB connection ONLY when inserting
-        close_conn = False
-        if conn is None:
-            conn = get_db_connection()
-            close_conn = True
-        try:
-            cur = conn.cursor()
-            sql = f"""
-            INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
-            VALUES %s
-            ON CONFLICT (ticker, timestamp) DO UPDATE 
-            SET open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                scraped_at = NOW();
-            """
-            execute_values(cur, sql, records)
-            conn.commit()
-            cur.close()
-            print(f"[YFINANCE] Successfully cached {len(records)} OHLCV records for {ticker_symbol}")
-            return True
-        finally:
-            if close_conn and conn:
-                conn.close()
+        # Deduplicate and sort records by (ticker, timestamp) to enforce deterministic lock ordering
+        seen = set()
+        deduped = []
+        for r in records:
+            key = (r[0], r[1])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        sorted_records = sorted(deduped, key=lambda x: (x[0], x[1]))
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            close_conn = False
+            cur_conn = conn
+            if cur_conn is None:
+                cur_conn = get_db_connection()
+                close_conn = True
+            try:
+                cur = cur_conn.cursor()
+                sql = f"""
+                INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
+                VALUES %s
+                ON CONFLICT (ticker, timestamp) DO UPDATE 
+                SET open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    scraped_at = NOW();
+                """
+                execute_values(cur, sql, sorted_records)
+                cur_conn.commit()
+                cur.close()
+                if close_conn:
+                    cur_conn.close()
+                print(f"[YFINANCE] Successfully cached {len(sorted_records)} OHLCV records for {ticker_symbol}")
+                return True
+            except Exception as ex:
+                if close_conn and cur_conn:
+                    try:
+                        cur_conn.rollback()
+                        cur_conn.close()
+                    except Exception:
+                        pass
+                if "deadlock" in str(ex).lower() and attempt < max_retries - 1:
+                    time.sleep(0.2 * (attempt + 1))
+                else:
+                    raise ex
     except Exception as e:
         print(f"[YFINANCE] Error fetching/caching {ticker_symbol}: {e}")
         return False
@@ -164,32 +186,54 @@ def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
         if not records:
             return False
 
-        # Open DB connection ONLY when inserting
-        close_conn = False
-        if conn is None:
-            conn = get_db_connection()
-            close_conn = True
-        try:
-            cur = conn.cursor()
-            sql = f"""
-            INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
-            VALUES %s
-            ON CONFLICT (ticker, timestamp) DO UPDATE
-            SET open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                scraped_at = NOW();
-            """
-            execute_values(cur, sql, records)
-            conn.commit()
-            cur.close()
-            print(f"[YFINANCE] Cached {len(records)} daily records for {ticker_symbol}")
-            return True
-        finally:
-            if close_conn and conn:
-                conn.close()
+        # Deduplicate and sort records by (ticker, timestamp)
+        seen = set()
+        deduped = []
+        for r in records:
+            key = (r[0], r[1])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        sorted_records = sorted(deduped, key=lambda x: (x[0], x[1]))
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            close_conn = False
+            cur_conn = conn
+            if cur_conn is None:
+                cur_conn = get_db_connection()
+                close_conn = True
+            try:
+                cur = cur_conn.cursor()
+                sql = f"""
+                INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv (ticker, timestamp, open, high, low, close, volume)
+                VALUES %s
+                ON CONFLICT (ticker, timestamp) DO UPDATE
+                SET open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    scraped_at = NOW();
+                """
+                execute_values(cur, sql, sorted_records)
+                cur_conn.commit()
+                cur.close()
+                if close_conn:
+                    cur_conn.close()
+                print(f"[YFINANCE] Cached {len(sorted_records)} daily records for {ticker_symbol}")
+                return True
+            except Exception as ex:
+                if close_conn and cur_conn:
+                    try:
+                        cur_conn.rollback()
+                        cur_conn.close()
+                    except Exception:
+                        pass
+                if "deadlock" in str(ex).lower() and attempt < max_retries - 1:
+                    time.sleep(0.2 * (attempt + 1))
+                else:
+                    raise ex
     except Exception as e:
         print(f"[YFINANCE] Error fetching daily cache for {ticker_symbol}: {e}")
         return False

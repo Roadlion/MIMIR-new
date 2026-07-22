@@ -124,39 +124,62 @@ def fetch_and_log():
             print(f"[DATA ERROR] Could not get data for {b_symbol}. Error: {mt5.last_error()}")
             
     if batch_rows:
-        try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            
-            sql = f"""
-            INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv 
-            (ticker, timestamp, open, high, low, close, volume)
-            VALUES %s
-            ON CONFLICT (ticker, timestamp) DO UPDATE 
-            SET open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                scraped_at = NOW();
-            """
-            
-            execute_values(cur, sql, batch_rows)
-            
-            # Send notification for realtime SSE
-            cur.execute("NOTIFY price_updates, 'new_prices';")
-            
-            conn.commit()
-            cur.close()
-            
-            print(f"\n--- Logged Batch to DB at {log_time} ---")
-            print(f"Inserted {len(batch_rows)} rows.")
-            
-        except Exception as e:
-            print(f"[DB ERROR] {e}")
-        finally:
-            if 'conn' in locals() and conn:
+        # Deduplicate and sort batch_rows by (ticker, timestamp) to enforce deterministic PostgreSQL lock ordering
+        seen = set()
+        deduped_rows = []
+        for r in batch_rows:
+            key = (r[0], r[1])
+            if key not in seen:
+                seen.add(key)
+                deduped_rows.append(r)
+        sorted_rows = sorted(deduped_rows, key=lambda x: (x[0], x[1]))
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            conn = None
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                
+                sql = f"""
+                INSERT INTO {settings.mimir_schema}.mimir_hourly_ohlcv 
+                (ticker, timestamp, open, high, low, close, volume)
+                VALUES %s
+                ON CONFLICT (ticker, timestamp) DO UPDATE 
+                SET open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    scraped_at = NOW();
+                """
+                
+                execute_values(cur, sql, sorted_rows)
+                
+                # Send notification for realtime SSE
+                cur.execute("NOTIFY price_updates, 'new_prices';")
+                
+                conn.commit()
+                cur.close()
                 conn.close()
+                
+                print(f"\n--- Logged Batch to DB at {log_time} ---")
+                print(f"Inserted {len(sorted_rows)} rows.")
+                break
+                
+            except Exception as e:
+                if conn:
+                    try:
+                        conn.rollback()
+                        conn.close()
+                    except Exception:
+                        pass
+                if "deadlock" in str(e).lower() and attempt < max_retries - 1:
+                    time.sleep(0.2 * (attempt + 1))
+                    print(f"[DB RETRY] Deadlock detected, retrying batch insert (attempt {attempt + 2}/{max_retries})...")
+                else:
+                    print(f"[DB ERROR] {e}")
+                    break
 
 # --- 3. Run Instantly First ---
 print("\n[STARTING] Pulling initial batch immediately...")

@@ -77,12 +77,12 @@ def approve_alert(alert_id: int, payload: ActionPayload):
         signal_type = alert["signal_type"]
         price = float(alert["trigger_price"])
         
-        # 2. If it's a SELL, check quantity in portfolio
+        # 2. If it's a SELL, check quantity in paper portfolio
         if signal_type == "SELL":
-            # Check current position size
+            # Check current paper position size
             cur.execute(f"""
                 SELECT transaction_type, quantity
-                FROM {settings.mimir_schema}.mimir_portfolio
+                FROM {settings.mimir_schema}.mimir_paper_portfolio
                 WHERE ticker = %s
             """, (ticker,))
             existing_txs = cur.fetchall()
@@ -98,16 +98,16 @@ def approve_alert(alert_id: int, payload: ActionPayload):
             if payload.quantity > current_qty:
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"Cannot execute SELL for {payload.quantity} shares of {ticker}. You only own {current_qty} shares."
+                    detail=f"Cannot execute SELL for {payload.quantity} shares of {ticker}. You only own {current_qty} shares in paper portfolio."
                 )
                 
-        # 3. Create the Shadow Portfolio transaction
+        # 3. Create the Paper Portfolio transaction
         gmt_plus_7 = timezone(timedelta(hours=7))
         now_local = datetime.now(gmt_plus_7)
         
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type, source)
-            VALUES (%s, %s, %s, %s, %s, 'PAPER_ALERT')
+            INSERT INTO {settings.mimir_schema}.mimir_paper_portfolio (ticker, order_date, buy_price, quantity, transaction_type)
+            VALUES (%s, %s, %s, %s, %s)
         """, (ticker, now_local, price, payload.quantity, signal_type))
         
         cur.execute(f"""

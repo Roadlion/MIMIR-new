@@ -132,10 +132,11 @@ def get_portfolio():
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
-    # Fetch all transactions
+    # Fetch all real/manual transactions
     cur.execute(f"""
         SELECT id, ticker, order_date, buy_price, quantity, created_at, transaction_type, brokerage_fee, regulatory_fee, other_fee
         FROM {settings.mimir_schema}.mimir_portfolio
+        WHERE (source IS NULL OR source = 'MANUAL' OR source = '')
         ORDER BY order_date DESC
     """)
     transactions = cur.fetchall()

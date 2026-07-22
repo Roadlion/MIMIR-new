@@ -14,7 +14,7 @@ from backend.app.config import get_settings
 settings = get_settings()
 
 def init_paper_trading_db():
-    """Initializes paper trading configuration and log tables in the PostgreSQL database."""
+    """Initializes paper trading configuration, paper portfolio, and log tables in the PostgreSQL database."""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -29,8 +29,8 @@ def init_paper_trading_db():
                 min_win_rate FLOAT DEFAULT 55.0,
                 min_sentiment_score FLOAT DEFAULT 0.0,
                 position_size_type VARCHAR(20) DEFAULT 'FIXED_USD',
-                position_size_value FLOAT DEFAULT 1000.0,
-                initial_capital FLOAT DEFAULT 100000.0,
+                position_size_value FLOAT DEFAULT 20.0,
+                initial_capital FLOAT DEFAULT 200.0,
                 stop_loss_pct FLOAT DEFAULT 3.0,
                 take_profit_pct FLOAT DEFAULT 6.0,
                 auto_exit_on_hold_days BOOLEAN DEFAULT TRUE,
@@ -44,7 +44,7 @@ def init_paper_trading_db():
             cur.execute(f"""
                 INSERT INTO {schema}.mimir_paper_trading_config 
                 (is_enabled, execution_mode, min_win_rate, min_sentiment_score, position_size_type, position_size_value, initial_capital, stop_loss_pct, take_profit_pct, auto_exit_on_hold_days)
-                VALUES (TRUE, 'AUTO', 55.0, 0.0, 'FIXED_USD', 1000.0, 100000.0, 3.0, 6.0, TRUE)
+                VALUES (TRUE, 'AUTO', 55.0, 0.0, 'FIXED_USD', 20.0, 200.0, 3.0, 6.0, TRUE)
             """)
 
         # 2. Paper Trade Log Table
@@ -66,10 +66,17 @@ def init_paper_trading_db():
             )
         """)
 
-        # 3. Alter mimir_portfolio to include source column if missing
+        # 3. Dedicated Paper Portfolio Table (strictly isolated from real portfolio)
         cur.execute(f"""
-            ALTER TABLE {schema}.mimir_portfolio 
-            ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'MANUAL';
+            CREATE TABLE IF NOT EXISTS {schema}.mimir_paper_portfolio (
+                id SERIAL PRIMARY KEY,
+                ticker VARCHAR(50) NOT NULL,
+                order_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                buy_price FLOAT NOT NULL,
+                quantity FLOAT NOT NULL,
+                transaction_type VARCHAR(10) DEFAULT 'BUY',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         conn.commit()
@@ -103,8 +110,8 @@ def get_paper_config() -> Dict[str, Any]:
             "min_win_rate": 55.0,
             "min_sentiment_score": 0.0,
             "position_size_type": "FIXED_USD",
-            "position_size_value": 1000.0,
-            "initial_capital": 100000.0,
+            "position_size_value": 20.0,
+            "initial_capital": 200.0,
             "stop_loss_pct": 3.0,
             "take_profit_pct": 6.0,
             "auto_exit_on_hold_days": True
@@ -160,11 +167,14 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
 def auto_execute_pending_alerts() -> Dict[str, Any]:
     """
     Scans pending trade signals in mimir_trade_signals, checks paper trading rules,
-    and executes paper trades for qualifying alerts.
+    prevents duplicate position stacking, validates available cash against starting capital ($200 default),
+    and executes small/fractional paper trades.
     """
     config = get_paper_config()
     if not config.get("is_enabled"):
         return {"executed_count": 0, "message": "Paper trading is currently disabled in settings."}
+
+    initial_capital = float(config.get("initial_capital", 200.0))
 
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -173,7 +183,48 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
 
     try:
         schema = settings.mimir_schema
-        # Fetch pending alerts joined with ticker parameters for win rate
+
+        # Fetch active paper positions and compute current portfolio cash balance
+        cur.execute(f"""
+            SELECT ticker, transaction_type, quantity, buy_price
+            FROM {schema}.mimir_paper_portfolio
+            ORDER BY order_date ASC
+        """)
+        existing_txs = cur.fetchall()
+
+        active_qtys = {}
+        active_costs = {}
+        total_open_cost = 0.0
+        total_realized_pnl = 0.0
+
+        for tx in existing_txs:
+            t = tx["ticker"].upper()
+            q = float(tx["quantity"])
+            p = float(tx["buy_price"])
+            ttype = tx["transaction_type"].upper()
+
+            if t not in active_qtys:
+                active_qtys[t] = 0.0
+                active_costs[t] = 0.0
+
+            if ttype == "BUY":
+                if active_qtys[t] + q > 0:
+                    active_costs[t] = (active_qtys[t] * active_costs[t] + q * p) / (active_qtys[t] + q)
+                active_qtys[t] += q
+            elif ttype == "SELL":
+                total_realized_pnl += q * (p - active_costs[t])
+                active_qtys[t] -= q
+                if active_qtys[t] <= 0:
+                    active_qtys[t] = 0.0
+                    active_costs[t] = 0.0
+
+        for t, q in active_qtys.items():
+            if q > 0.0001:
+                total_open_cost += q * active_costs[t]
+
+        current_cash = initial_capital - total_open_cost + total_realized_pnl
+
+        # Fetch pending alerts joined with ticker parameters
         cur.execute(f"""
             SELECT s.id, s.ticker, s.signal_type, s.trigger_price, s.rsi_value, s.sentiment_score,
                    s.support_level, s.resistance_level, s.reason, s.created_at,
@@ -199,37 +250,86 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             win_rate = float(alert["win_rate"])
             sentiment = float(alert["sentiment_score"] or 0.0)
 
-            # Check filtering rules
+            # Filtering rules
             if win_rate < min_win_rate:
                 continue
             if sentiment < min_sentiment:
                 continue
 
-            # Compute trade quantity based on position sizing
-            pos_type = config.get("position_size_type", "FIXED_USD")
-            pos_val = float(config.get("position_size_value", 1000.0))
+            current_qty = active_qtys.get(ticker, 0.0)
+            avg_entry = active_costs.get(ticker, 0.0)
 
-            if pos_type == "FIXED_SHARES":
-                qty = pos_val
-            else:  # FIXED_USD
-                qty = round(pos_val / trigger_price, 4) if trigger_price > 0 else 10.0
+            if signal_type == "BUY":
+                # Prevent position stacking: skip if we already hold an open position in this ticker
+                if current_qty > 0.0001:
+                    continue
 
-            if qty <= 0:
-                qty = 1.0
+                # Check cash availability
+                if current_cash < 1.0:
+                    print(f"[PAPER_TRADER] Insufficient paper cash balance (${current_cash:.2f}) to buy {ticker}.")
+                    continue
 
-            # Execute transaction in mimir_portfolio
-            cur.execute(f"""
-                INSERT INTO {schema}.mimir_portfolio 
-                (ticker, order_date, buy_price, quantity, transaction_type, source)
-                VALUES (%s, %s, %s, %s, %s, 'PAPER_ALERT')
-            """, (ticker, now_local, trigger_price, qty, signal_type))
+                pos_type = config.get("position_size_type", "FIXED_USD")
+                pos_val = float(config.get("position_size_value", 20.0))
 
-            # Log paper trade execution
-            cur.execute(f"""
-                INSERT INTO {schema}.mimir_paper_trade_log
-                (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s)
-            """, (alert_id, ticker, signal_type, trigger_price, qty, now_local, alert.get("reason")))
+                if pos_type == "FIXED_SHARES":
+                    qty = pos_val
+                    trade_cost = qty * trigger_price
+                    if trade_cost > current_cash:
+                        qty = round(current_cash / trigger_price, 6)
+                else:  # FIXED_USD
+                    trade_alloc = min(pos_val, current_cash)
+                    qty = round(trade_alloc / trigger_price, 6) if trigger_price > 0 else 0.1
+
+                if qty <= 0.000001:
+                    continue
+
+                actual_cost = qty * trigger_price
+
+                # Execute BUY
+                cur.execute(f"""
+                    INSERT INTO {schema}.mimir_paper_portfolio 
+                    (ticker, order_date, buy_price, quantity, transaction_type)
+                    VALUES (%s, %s, %s, %s, 'BUY')
+                """, (ticker, now_local, trigger_price, qty))
+
+                cur.execute(f"""
+                    INSERT INTO {schema}.mimir_paper_trade_log
+                    (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
+                    VALUES (%s, %s, 'BUY', %s, %s, %s, 'ALERT_EXECUTION', %s)
+                """, (alert_id, ticker, trigger_price, qty, now_local, alert.get("reason")))
+
+                # Update local trackers
+                active_qtys[ticker] = qty
+                active_costs[ticker] = trigger_price
+                current_cash -= actual_cost
+
+            elif signal_type == "SELL":
+                # Only execute SELL if we currently hold an open position for this ticker
+                if current_qty <= 0.0001:
+                    continue
+
+                close_qty = current_qty  # Close existing open position
+                realized_pnl = close_qty * (trigger_price - avg_entry)
+                realized_pnl_pct = ((trigger_price - avg_entry) / avg_entry * 100.0) if avg_entry > 0 else 0.0
+
+                # Execute SELL
+                cur.execute(f"""
+                    INSERT INTO {schema}.mimir_paper_portfolio 
+                    (ticker, order_date, buy_price, quantity, transaction_type)
+                    VALUES (%s, %s, %s, %s, 'SELL')
+                """, (ticker, now_local, trigger_price, close_qty))
+
+                cur.execute(f"""
+                    INSERT INTO {schema}.mimir_paper_trade_log
+                    (signal_id, ticker, action, entry_price, exit_price, quantity, entry_time, exit_time, exit_reason, realized_pnl, realized_pnl_pct, notes)
+                    VALUES (%s, %s, 'SELL', %s, %s, %s, %s, %s, 'SIGNAL_EXIT', %s, %s, %s)
+                """, (alert_id, ticker, avg_entry, trigger_price, close_qty, now_local, now_local, realized_pnl, realized_pnl_pct, alert.get("reason")))
+
+                # Update local trackers
+                active_qtys[ticker] = 0.0
+                active_costs[ticker] = 0.0
+                current_cash += (close_qty * trigger_price)
 
             # Mark trade signal as APPROVED / AUTO_TRADED
             cur.execute(f"""
@@ -244,8 +344,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                 "ticker": ticker,
                 "signal_type": signal_type,
                 "trigger_price": trigger_price,
-                "quantity": qty,
-                "win_rate": win_rate
+                "quantity": qty if signal_type == 'BUY' else close_qty
             })
 
         conn.commit()
@@ -265,7 +364,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
 
 def process_paper_position_exits() -> Dict[str, Any]:
     """
-    Evaluates open paper positions against current real-time prices to enforce
+    Evaluates open paper positions in mimir_paper_portfolio against current real-time prices to enforce
     Stop Loss, Take Profit, and Hold Days Maturity exits.
     """
     config = get_paper_config()
@@ -280,11 +379,9 @@ def process_paper_position_exits() -> Dict[str, Any]:
 
     try:
         schema = settings.mimir_schema
-        # Get active paper trades from portfolio (where source = 'PAPER_ALERT' or all paper trades)
         cur.execute(f"""
             SELECT id, ticker, order_date, buy_price, quantity, transaction_type
-            FROM {schema}.mimir_portfolio
-            WHERE source = 'PAPER_ALERT'
+            FROM {schema}.mimir_paper_portfolio
             ORDER BY order_date ASC
         """)
         paper_txs = cur.fetchall()
@@ -292,7 +389,6 @@ def process_paper_position_exits() -> Dict[str, Any]:
         if not paper_txs:
             return {"closed_count": 0, "message": "No active paper trade transactions found."}
 
-        # Calculate current net positions per ticker
         holdings = {}
         for tx in paper_txs:
             t = tx["ticker"].upper()
@@ -300,7 +396,6 @@ def process_paper_position_exits() -> Dict[str, Any]:
                 holdings[t] = []
             holdings[t].append(tx)
 
-        # Get current prices from yfinance or live cache
         from backend.app.routers.portfolio import fetch_current_prices
         tickers = list(holdings.keys())
         current_prices = fetch_current_prices(tickers)
@@ -313,7 +408,6 @@ def process_paper_position_exits() -> Dict[str, Any]:
             if curr_price <= 0:
                 continue
 
-            # Calculate open quantity and avg price
             net_qty = 0.0
             avg_price = 0.0
             total_cost = 0.0
@@ -334,13 +428,12 @@ def process_paper_position_exits() -> Dict[str, Any]:
                     net_qty -= q
 
             if net_qty <= 0.0001:
-                continue  # Position is closed
+                continue
 
             avg_price = total_cost / net_qty if net_qty > 0 else 0.0
             if avg_price <= 0:
                 continue
 
-            # Calculate price movement %
             pnl_pct = ((curr_price - avg_price) / avg_price) * 100.0
 
             exit_reason = None
@@ -349,7 +442,6 @@ def process_paper_position_exits() -> Dict[str, Any]:
             elif sl_pct > 0 and pnl_pct <= -sl_pct:
                 exit_reason = "STOP_LOSS"
             elif auto_exit_hold and first_entry_date:
-                # Check hold days maturity
                 cur.execute(f"SELECT optimal_hold_days FROM {schema}.mimir_ticker_parameters WHERE ticker = %s", (ticker,))
                 row = cur.fetchone()
                 hold_days = int(row["optimal_hold_days"]) if row and row["optimal_hold_days"] else 10
@@ -357,17 +449,15 @@ def process_paper_position_exits() -> Dict[str, Any]:
                     exit_reason = "HOLD_EXPIRATION"
 
             if exit_reason:
-                # Close the paper position by inserting opposing SELL order
                 realized_pnl = net_qty * (curr_price - avg_price)
                 realized_pnl_pct = pnl_pct
 
                 cur.execute(f"""
-                    INSERT INTO {schema}.mimir_portfolio
-                    (ticker, order_date, buy_price, quantity, transaction_type, source)
-                    VALUES (%s, %s, %s, %s, 'SELL', 'PAPER_ALERT')
+                    INSERT INTO {schema}.mimir_paper_portfolio
+                    (ticker, order_date, buy_price, quantity, transaction_type)
+                    VALUES (%s, %s, %s, %s, 'SELL')
                 """, (ticker, now_local, curr_price, net_qty))
 
-                # Update paper trade log exit info
                 cur.execute(f"""
                     INSERT INTO {schema}.mimir_paper_trade_log
                     (ticker, action, entry_price, exit_price, quantity, entry_time, exit_time, exit_reason, realized_pnl, realized_pnl_pct, notes)
@@ -403,26 +493,23 @@ def process_paper_position_exits() -> Dict[str, Any]:
 def get_paper_trading_summary() -> Dict[str, Any]:
     """
     Returns full paper trading performance statistics, active positions,
-    and recent trade log history.
+    and recent trade log history from mimir_paper_portfolio and mimir_paper_trade_log.
     """
     config = get_paper_config()
-    initial_capital = float(config.get("initial_capital", 100000.0))
+    initial_capital = float(config.get("initial_capital", 200.0))
 
     conn = get_db_connection_dict()
     cur = conn.cursor()
     try:
         schema = settings.mimir_schema
 
-        # Fetch paper transactions
         cur.execute(f"""
-            SELECT id, ticker, order_date, buy_price, quantity, transaction_type, created_at, source
-            FROM {schema}.mimir_portfolio
-            WHERE source = 'PAPER_ALERT'
+            SELECT id, ticker, order_date, buy_price, quantity, transaction_type, created_at
+            FROM {schema}.mimir_paper_portfolio
             ORDER BY order_date ASC
         """)
         txs = cur.fetchall()
 
-        # Group transactions by ticker
         raw_holdings = {}
         for tx in txs:
             t = tx["ticker"].upper()
@@ -430,7 +517,6 @@ def get_paper_trading_summary() -> Dict[str, Any]:
                 raw_holdings[t] = []
             raw_holdings[t].append(tx)
 
-        # Get live current prices
         from backend.app.routers.portfolio import fetch_current_prices
         tickers = list(raw_holdings.keys())
         current_prices = fetch_current_prices(tickers)
@@ -475,7 +561,7 @@ def get_paper_trading_summary() -> Dict[str, Any]:
 
                 active_positions[ticker] = {
                     "ticker": ticker,
-                    "quantity": qty_sum,
+                    "quantity": round(qty_sum, 6),
                     "avg_entry_price": cost_basis,
                     "current_price": curr_price,
                     "total_cost": open_cost,
@@ -490,7 +576,6 @@ def get_paper_trading_summary() -> Dict[str, Any]:
         total_pnl = current_equity - initial_capital
         total_pnl_pct = (total_pnl / initial_capital * 100.0) if initial_capital > 0 else 0.0
 
-        # Fetch Paper Trade History Logs
         cur.execute(f"""
             SELECT id, signal_id, ticker, action, entry_price, exit_price, quantity,
                    entry_time, exit_time, exit_reason, realized_pnl, realized_pnl_pct, notes
@@ -500,7 +585,6 @@ def get_paper_trading_summary() -> Dict[str, Any]:
         """)
         logs = [dict(r) for r in cur.fetchall()]
 
-        # Compute win rate from closed trades log
         cur.execute(f"""
             SELECT COUNT(*) as total_closed,
                    COUNT(CASE WHEN realized_pnl > 0 THEN 1 END) as win_count
@@ -534,18 +618,17 @@ def get_paper_trading_summary() -> Dict[str, Any]:
 
 
 def close_paper_position(ticker: str) -> Dict[str, Any]:
-    """Manually closes an active paper position for a given ticker."""
+    """Manually closes an active paper position for a given ticker in mimir_paper_portfolio."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
     try:
         schema = settings.mimir_schema
         ticker_clean = ticker.upper().strip()
 
-        # Check existing paper position
         cur.execute(f"""
             SELECT transaction_type, quantity, buy_price, order_date
-            FROM {schema}.mimir_portfolio
-            WHERE ticker = %s AND source = 'PAPER_ALERT'
+            FROM {schema}.mimir_paper_portfolio
+            WHERE ticker = %s
             ORDER BY order_date ASC
         """, (ticker_clean,))
         txs = cur.fetchall()
@@ -569,7 +652,6 @@ def close_paper_position(ticker: str) -> Dict[str, Any]:
 
         avg_cost = total_cost / net_qty if net_qty > 0 else 0.0
 
-        # Fetch current price
         from backend.app.routers.portfolio import fetch_current_prices
         prices = fetch_current_prices([ticker_clean])
         curr_price = prices.get(ticker_clean, avg_cost)
@@ -580,14 +662,12 @@ def close_paper_position(ticker: str) -> Dict[str, Any]:
         realized_pnl = net_qty * (curr_price - avg_cost)
         realized_pnl_pct = ((curr_price - avg_cost) / avg_cost * 100.0) if avg_cost > 0 else 0.0
 
-        # Insert manual closing sell transaction
         cur.execute(f"""
-            INSERT INTO {schema}.mimir_portfolio
-            (ticker, order_date, buy_price, quantity, transaction_type, source)
-            VALUES (%s, %s, %s, %s, 'SELL', 'PAPER_ALERT')
+            INSERT INTO {schema}.mimir_paper_portfolio
+            (ticker, order_date, buy_price, quantity, transaction_type)
+            VALUES (%s, %s, %s, %s, 'SELL')
         """, (ticker_clean, now_local, curr_price, net_qty))
 
-        # Log manual exit
         cur.execute(f"""
             INSERT INTO {schema}.mimir_paper_trade_log
             (ticker, action, entry_price, exit_price, quantity, entry_time, exit_time, exit_reason, realized_pnl, realized_pnl_pct, notes)
@@ -610,15 +690,23 @@ def close_paper_position(ticker: str) -> Dict[str, Any]:
 
 
 def reset_paper_account() -> Dict[str, Any]:
-    """Resets paper portfolio transactions and trade logs back to default capital."""
+    """Resets paper portfolio transactions and trade logs back to default capital ($200.00)."""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
         schema = settings.mimir_schema
-        cur.execute(f"DELETE FROM {schema}.mimir_portfolio WHERE source = 'PAPER_ALERT'")
+        cur.execute(f"TRUNCATE TABLE {schema}.mimir_paper_portfolio RESTART IDENTITY")
         cur.execute(f"TRUNCATE TABLE {schema}.mimir_paper_trade_log RESTART IDENTITY")
+        
+        # Reset config to 200.0 initial capital and 20.0 position value
+        cur.execute(f"""
+            UPDATE {schema}.mimir_paper_trading_config
+            SET initial_capital = 200.0,
+                position_size_value = 20.0,
+                updated_at = NOW()
+        """)
         conn.commit()
-        return {"success": True, "message": "Paper trading account and portfolio history reset successfully."}
+        return {"success": True, "message": "Paper trading account reset back to $200.00 baseline capital."}
     except Exception as e:
         conn.rollback()
         return {"success": False, "error": str(e)}
