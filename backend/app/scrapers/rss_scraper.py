@@ -13,6 +13,7 @@ import requests
 import time
 import random
 import hashlib
+from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 from urllib.parse import urlparse
 import psycopg2
@@ -170,10 +171,24 @@ def get_existing_title_hashes():
         return set()
 
 
-def fetch_financial_feed_batch(feeds_list=FINANCIAL_RSS_FEEDS):
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def _fetch_single_feed(url: str, headers: dict) -> Tuple[str, str, List[dict], str]:
+    domain = urlparse(url).netloc
+    try:
+        resp = _SCRAPER_SESSION.get(url, headers=headers, timeout=(3.0, 5.0))
+        if resp.status_code == 429:
+            return url, domain, [], "rate_limited"
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        return url, domain, getattr(feed, 'entries', []), "ok"
+    except Exception as e:
+        return url, domain, [], str(e)
+
+
+def fetch_financial_feed_batch(feeds_list=FINANCIAL_RSS_FEEDS, max_workers=10):
     """
-    Scrape ALL articles from RSS feeds. No filtering.
-    Includes batch-level AND database-level dedupe to prevent duplicate inserts.
+    Scrape ALL articles from RSS feeds concurrently with strict timeouts and robust deduplication.
     """
     normalized_records = []
     headers = {
@@ -195,101 +210,101 @@ def fetch_financial_feed_batch(feeds_list=FINANCIAL_RSS_FEEDS):
     total_articles = 0
 
     print("\n" + "="*60)
-    print("📰 MIMIR RSS SCRAPER (No Filter)")
+    print("📰 MIMIR RSS SCRAPER (Parallel Fast Scrape)")
     print(f"   Existing title hashes in DB: {len(existing_title_hashes)}")
+    print(f"   Total feeds to scrape: {len(feeds_list)}")
     print("="*60)
 
-    for url in feeds_list:
-        try:
-            domain = urlparse(url).netloc
-            total_feeds += 1
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_url = {executor.submit(_fetch_single_feed, url, headers): url for url in feeds_list}
+        for future in as_completed(future_to_url):
+            try:
+                url, domain, entries, status = future.result(timeout=10)
+                results.append((url, domain, entries, status))
+            except Exception as e:
+                url = future_to_url[future]
+                domain = urlparse(url).netloc
+                results.append((url, domain, [], f"timeout/error: {e}"))
 
-            resp = _SCRAPER_SESSION.get(url, headers=headers, timeout=10)
-            if resp.status_code == 429:
-                print(f"⚠️ Rate limited on {domain}. Sleeping 5s...")
-                time.sleep(5)
-                continue
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.text)
-
-            feed_total = 0
-            feed_duplicates = 0
-
-            for entry in feed.entries:
-                feed_total += 1
-                total_articles += 1
-
-                title = entry.get('title', '').strip()
-                summary = entry.get('summary', '').strip()
-                link = entry.get('link')
-
-                if not link:
-                    continue
-
-                # --- GENERATE HASHES ---
-                url_hash = hashlib.md5(link.strip().encode()).hexdigest()
-                title_hash = hashlib.md5(title.lower().strip().encode()).hexdigest()
-
-                # --- 1. CHECK DUPLICATE LINK IN BATCH ---
-                if link in seen_links:
-                    feed_duplicates += 1
-                    batch_duplicates += 1
-                    continue
-                seen_links.add(link)
-
-                # --- 2. CHECK DUPLICATE HASH IN BATCH ---
-                if url_hash in seen_hashes:
-                    feed_duplicates += 1
-                    batch_duplicates += 1
-                    continue
-                seen_hashes.add(url_hash)
-
-                # --- 3. CHECK DUPLICATE TITLE IN BATCH (same run) ---
-                title_key = title[:60].lower().strip()
-                if title_key in seen_titles:
-                    feed_duplicates += 1
-                    batch_duplicates += 1
-                    continue
-                seen_titles.add(title_key)
-
-                # --- 4. CHECK DUPLICATE TITLE IN DATABASE (previous runs) ---
-                if title_hash in existing_title_hashes:
-                    feed_duplicates += 1
-                    batch_duplicates += 1
-                    db_duplicates += 1
-                    print(f"   🔄 DB duplicate title: {title[:60]}...")
-                    continue
-                existing_title_hashes.add(title_hash)  # Add to set for this run
-
-                # --- CLEAN TIMESTAMP ---
-                pub_ts = None
-                if entry.get('published_parsed'):
-                    try:
-                        dt = datetime.fromtimestamp(time.mktime(entry['published_parsed']))
-                        pub_ts = dt.isoformat()
-                    except:
-                        pass
-
-                record = {
-                    "source_name": domain,
-                    "feed_url": url,
-                    "title": title,
-                    "link": link.strip(),
-                    "published_raw": entry.get('published'),
-                    "published_ts": pub_ts,
-                    "summary": summary,
-                    "url_hash": url_hash,
-                    "title_hash": title_hash  # <-- ADD THIS
-                }
-                normalized_records.append(record)
-
-            print(f"\n📡 {domain} → {feed_total} articles (duplicates skipped: {feed_duplicates})")
-
-            time.sleep(random.uniform(1.0, 2.5))
-
-        except Exception as e:
-            print(f"❌ Error scraping {url}: {e}")
+    for url, domain, entries, status in results:
+        total_feeds += 1
+        if status != "ok":
+            print(f"⚠️ {domain} -> {status}")
             continue
+
+        feed_total = 0
+        feed_duplicates = 0
+
+        for entry in entries:
+            feed_total += 1
+            total_articles += 1
+
+            title = entry.get('title', '').strip()
+            summary = entry.get('summary', '').strip()
+            link = entry.get('link')
+
+            if not link or not title:
+                continue
+
+            # --- GENERATE HASHES ---
+            url_hash = hashlib.md5(link.strip().encode()).hexdigest()
+            title_hash = hashlib.md5(title.lower().strip().encode()).hexdigest()
+
+            # --- 1. CHECK DUPLICATE LINK IN BATCH ---
+            if link in seen_links:
+                feed_duplicates += 1
+                batch_duplicates += 1
+                continue
+            seen_links.add(link)
+
+            # --- 2. CHECK DUPLICATE HASH IN BATCH ---
+            if url_hash in seen_hashes:
+                feed_duplicates += 1
+                batch_duplicates += 1
+                continue
+            seen_hashes.add(url_hash)
+
+            # --- 3. CHECK DUPLICATE TITLE IN BATCH ---
+            title_key = title[:60].lower().strip()
+            if title_key in seen_titles:
+                feed_duplicates += 1
+                batch_duplicates += 1
+                continue
+            seen_titles.add(title_key)
+
+            # --- 4. CHECK DUPLICATE TITLE IN DATABASE ---
+            if title_hash in existing_title_hashes:
+                feed_duplicates += 1
+                batch_duplicates += 1
+                db_duplicates += 1
+                continue
+            existing_title_hashes.add(title_hash)
+
+            # --- CLEAN TIMESTAMP ---
+            pub_ts = None
+            if entry.get('published_parsed'):
+                try:
+                    dt = datetime.fromtimestamp(time.mktime(entry['published_parsed']))
+                    pub_ts = dt.isoformat()
+                except:
+                    pass
+
+            record = {
+                "source_name": domain,
+                "feed_url": url,
+                "title": title,
+                "link": link.strip(),
+                "published_raw": entry.get('published'),
+                "published_ts": pub_ts,
+                "summary": summary,
+                "url_hash": url_hash,
+                "title_hash": title_hash
+            }
+            normalized_records.append(record)
+
+        if feed_total > 0:
+            print(f"📡 {domain} → {feed_total} articles (skipped {feed_duplicates})")
 
     print("\n" + "="*60)
     print("📊 SCRAPE SUMMARY")

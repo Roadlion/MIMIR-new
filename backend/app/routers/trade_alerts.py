@@ -106,9 +106,15 @@ def approve_alert(alert_id: int, payload: ActionPayload):
         now_local = datetime.now(gmt_plus_7)
         
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type, source)
+            VALUES (%s, %s, %s, %s, %s, 'PAPER_ALERT')
         """, (ticker, now_local, price, payload.quantity, signal_type))
+        
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_paper_trade_log
+            (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s)
+        """, (alert_id, ticker, signal_type, price, payload.quantity, now_local, alert.get("reason")))
         
         # 4. Update the signal status
         cur.execute(f"""
