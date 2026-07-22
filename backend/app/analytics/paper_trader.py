@@ -13,6 +13,30 @@ from backend.app.config import get_settings
 
 settings = get_settings()
 
+def is_us_stock(ticker: str) -> bool:
+    """
+    Returns True if ticker represents a US stock listed on NYSE, NASDAQ, or AMEX.
+    Filters out crypto (-USD), forex (=X), commodities (=F), and foreign exchange tickers with dots (.L, .BK, .DE, .NS, .SS, .SZ, etc.).
+    """
+    if not ticker:
+        return False
+    t = ticker.strip().upper()
+    
+    # Exclude Crypto (-USD), Forex (=X), Commodities (=F)
+    if "-USD" in t or "=X" in t or "=F" in t:
+        return False
+
+    # Exclude foreign exchange extensions with dots (e.g. .BK, .L, .DE, .NS, .SS, .SZ, .TO, .PA, .HK)
+    if "." in t:
+        return False
+        
+    # Standard US equities consist of 1 to 5 alphabetical characters (e.g. AAPL, MSFT, TSLA, CAG, RYAAY)
+    if t.isalpha() and 1 <= len(t) <= 5:
+        return True
+        
+    return False
+
+
 def init_paper_trading_db():
     """Initializes paper trading configuration, paper portfolio, and log tables in the PostgreSQL database."""
     conn = get_db_connection()
@@ -34,17 +58,24 @@ def init_paper_trading_db():
                 stop_loss_pct FLOAT DEFAULT 3.0,
                 take_profit_pct FLOAT DEFAULT 6.0,
                 auto_exit_on_hold_days BOOLEAN DEFAULT TRUE,
+                us_stocks_only BOOLEAN DEFAULT TRUE,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
+        # Add column if missing in existing table
+        cur.execute(f"""
+            ALTER TABLE {schema}.mimir_paper_trading_config
+            ADD COLUMN IF NOT EXISTS us_stocks_only BOOLEAN DEFAULT TRUE;
+        """)
+
         # Seed default row if empty
         cur.execute(f"SELECT COUNT(*) FROM {schema}.mimir_paper_trading_config")
         if cur.fetchone()[0] == 0:
             cur.execute(f"""
                 INSERT INTO {schema}.mimir_paper_trading_config 
-                (is_enabled, execution_mode, min_win_rate, min_sentiment_score, position_size_type, position_size_value, initial_capital, stop_loss_pct, take_profit_pct, auto_exit_on_hold_days)
-                VALUES (TRUE, 'AUTO', 55.0, 0.0, 'FIXED_USD', 20.0, 200.0, 3.0, 6.0, TRUE)
+                (is_enabled, execution_mode, min_win_rate, min_sentiment_score, position_size_type, position_size_value, initial_capital, stop_loss_pct, take_profit_pct, auto_exit_on_hold_days, us_stocks_only)
+                VALUES (TRUE, 'AUTO', 55.0, 0.0, 'FIXED_USD', 20.0, 200.0, 3.0, 6.0, TRUE, TRUE)
             """)
 
         # 2. Paper Trade Log Table
@@ -97,13 +128,16 @@ def get_paper_config() -> Dict[str, Any]:
         cur.execute(f"""
             SELECT is_enabled, execution_mode, min_win_rate, min_sentiment_score, 
                    position_size_type, position_size_value, initial_capital, 
-                   stop_loss_pct, take_profit_pct, auto_exit_on_hold_days, updated_at
+                   stop_loss_pct, take_profit_pct, auto_exit_on_hold_days, us_stocks_only, updated_at
             FROM {settings.mimir_schema}.mimir_paper_trading_config
             ORDER BY id ASC LIMIT 1
         """)
         row = cur.fetchone()
         if row:
-            return dict(row)
+            res = dict(row)
+            if res.get("us_stocks_only") is None:
+                res["us_stocks_only"] = True
+            return res
         return {
             "is_enabled": True,
             "execution_mode": "AUTO",
@@ -114,7 +148,8 @@ def get_paper_config() -> Dict[str, Any]:
             "initial_capital": 200.0,
             "stop_loss_pct": 3.0,
             "take_profit_pct": 6.0,
-            "auto_exit_on_hold_days": True
+            "auto_exit_on_hold_days": True,
+            "us_stocks_only": True
         }
     finally:
         cur.close()
@@ -140,6 +175,7 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
                 stop_loss_pct = COALESCE(%s, stop_loss_pct),
                 take_profit_pct = COALESCE(%s, take_profit_pct),
                 auto_exit_on_hold_days = COALESCE(%s, auto_exit_on_hold_days),
+                us_stocks_only = COALESCE(%s, us_stocks_only),
                 updated_at = NOW()
             WHERE id = (SELECT id FROM {schema}.mimir_paper_trading_config ORDER BY id ASC LIMIT 1)
         """, (
@@ -152,7 +188,8 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
             updates.get("initial_capital"),
             updates.get("stop_loss_pct"),
             updates.get("take_profit_pct"),
-            updates.get("auto_exit_on_hold_days")
+            updates.get("auto_exit_on_hold_days"),
+            updates.get("us_stocks_only")
         ))
         conn.commit()
         return get_paper_config()
@@ -167,14 +204,15 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
 def auto_execute_pending_alerts() -> Dict[str, Any]:
     """
     Scans pending trade signals in mimir_trade_signals, checks paper trading rules,
-    prevents duplicate position stacking, validates available cash against starting capital ($200 default),
-    and executes small/fractional paper trades.
+    restricts execution to US stocks only (if enabled), prevents position stacking,
+    and executes small/fractional paper trades up to starting capital ($200 default).
     """
     config = get_paper_config()
     if not config.get("is_enabled"):
         return {"executed_count": 0, "message": "Paper trading is currently disabled in settings."}
 
     initial_capital = float(config.get("initial_capital", 200.0))
+    us_only = config.get("us_stocks_only", True)
 
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -249,6 +287,11 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             trigger_price = float(alert["trigger_price"])
             win_rate = float(alert["win_rate"])
             sentiment = float(alert["sentiment_score"] or 0.0)
+
+            # Restrict to US stocks only if enabled
+            if us_only and not is_us_stock(ticker):
+                print(f"[PAPER_TRADER] Skipping non-US ticker {ticker} (US stocks only filter enabled).")
+                continue
 
             # Filtering rules
             if win_rate < min_win_rate:
@@ -698,11 +741,12 @@ def reset_paper_account() -> Dict[str, Any]:
         cur.execute(f"TRUNCATE TABLE {schema}.mimir_paper_portfolio RESTART IDENTITY")
         cur.execute(f"TRUNCATE TABLE {schema}.mimir_paper_trade_log RESTART IDENTITY")
         
-        # Reset config to 200.0 initial capital and 20.0 position value
+        # Reset config to 200.0 initial capital, 20.0 position value, and US stocks only
         cur.execute(f"""
             UPDATE {schema}.mimir_paper_trading_config
             SET initial_capital = 200.0,
                 position_size_value = 20.0,
+                us_stocks_only = TRUE,
                 updated_at = NOW()
         """)
         conn.commit()

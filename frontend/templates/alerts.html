@@ -199,6 +199,14 @@
 
             <div class="flex items-center justify-between bg-[#081115] border border-[#1A2A30] p-3 rounded">
                 <div>
+                    <label class="font-bold text-[#D6E5E3] block">US Stocks Only</label>
+                    <span class="text-[10px] text-[#8BA4A8]">Restrict paper trading to US equities (NYSE / NASDAQ / AMEX)</span>
+                </div>
+                <input type="checkbox" id="cfgUSOnly" class="w-4 h-4 accent-[#00A6B2] cursor-pointer">
+            </div>
+
+            <div class="flex items-center justify-between bg-[#081115] border border-[#1A2A30] p-3 rounded">
+                <div>
                     <label class="font-bold text-[#D6E5E3] block">Auto Exit on Hold Maturity</label>
                     <span class="text-[10px] text-[#8BA4A8]">Close position when optimal hold days elapse</span>
                 </div>
@@ -295,6 +303,7 @@
                 document.getElementById("cfgSL").value = paperConfig.stop_loss_pct;
                 document.getElementById("cfgTP").value = paperConfig.take_profit_pct;
                 document.getElementById("cfgAutoExitHold").checked = paperConfig.auto_exit_on_hold_days;
+                document.getElementById("cfgUSOnly").checked = paperConfig.us_stocks_only !== false;
             } catch (err) {
                 console.error("Error fetching paper config:", err);
             }
@@ -563,7 +572,8 @@
                 position_size_value: parseFloat(document.getElementById("cfgPosVal").value),
                 stop_loss_pct: parseFloat(document.getElementById("cfgSL").value),
                 take_profit_pct: parseFloat(document.getElementById("cfgTP").value),
-                auto_exit_on_hold_days: document.getElementById("cfgAutoExitHold").checked
+                auto_exit_on_hold_days: document.getElementById("cfgAutoExitHold").checked,
+                us_stocks_only: document.getElementById("cfgUSOnly").checked
             };
 
             try {
