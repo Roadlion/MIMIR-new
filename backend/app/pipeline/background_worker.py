@@ -429,6 +429,19 @@ async def start_performance_and_learning_loop():
         await asyncio.sleep(3600)  # every 1 hour
 
 
+async def start_paper_trading_loop():
+    """3-minute async loop for alert-based auto paper trading and position exit monitoring."""
+    await asyncio.sleep(20)  # Stagger startup
+    from ..analytics.paper_trader import auto_execute_pending_alerts, process_paper_position_exits
+    while True:
+        try:
+            await asyncio.to_thread(auto_execute_pending_alerts)
+            await asyncio.to_thread(process_paper_position_exits)
+        except Exception as e:
+            print(f"[BG_WORKER] Error in paper trading loop: {e}")
+        await asyncio.sleep(180)  # every 3 minutes
+
+
 # ponytail: kept for backward compat
 async def start_news_loop():
     """DEPRECATED: use start_scrape_loop() + start_sentiment_loop() instead."""
@@ -455,6 +468,7 @@ def start_background_worker():
     t_fusion = threading.Thread(target=_thread_target, args=(start_signal_fusion_loop,), daemon=True)
     t_fundamentals = threading.Thread(target=_thread_target, args=(start_fundamentals_loop,), daemon=True)
     t_learning = threading.Thread(target=_thread_target, args=(start_performance_and_learning_loop,), daemon=True)
+    t_paper = threading.Thread(target=_thread_target, args=(start_paper_trading_loop,), daemon=True)
 
     t_price.start()
     t_scrape.start()
@@ -462,4 +476,5 @@ def start_background_worker():
     t_fusion.start()
     t_fundamentals.start()
     t_learning.start()
-    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m, fundamentals=12h, learning=1h).")
+    t_paper.start()
+    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m, fundamentals=12h, learning=1h, paper=3m).")

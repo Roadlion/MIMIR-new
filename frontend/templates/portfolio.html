@@ -64,6 +64,9 @@
         <button id="tabPositions" class="px-6 py-3 text-[#00A6B2] border-b-2 border-[#00A6B2] font-bold flex items-center gap-2 transition-colors focus:outline-none">
             <i class="fas fa-chart-pie"></i> Positions & Ledger
         </button>
+        <button id="tabPaper" class="px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none">
+            <i class="fas fa-robot text-[#00E5F2]"></i> Alert Paper Trader
+        </button>
         <button id="tabAI" class="px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none">
             <i class="fas fa-wand-sparkles text-[#ffd700]"></i> AI Strategic Advisor
         </button>
@@ -192,6 +195,105 @@
                             Next <i class="fas fa-chevron-right ml-1"></i>
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Alert Paper Trader -->
+        <div id="contentPaper" class="hidden space-y-6">
+            <!-- Paper Trading Metrics Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between border border-[#00A6B2]/30">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Paper Equity</span>
+                    <span id="paperEquity" class="text-2xl font-bold text-[#00E5F2] font-mono mt-1">$100,000.00</span>
+                </div>
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Virtual Cash</span>
+                    <span id="paperCash" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$100,000.00</span>
+                </div>
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Open Positions Val</span>
+                    <span id="paperOpenVal" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+                </div>
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Realized P&L</span>
+                    <span id="paperRealizedPL" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+                </div>
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Unrealized P&L</span>
+                    <span id="paperUnrealizedPL" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
+                </div>
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between border border-[#00E676]/30">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Closed Win Rate</span>
+                    <span id="paperWinRate" class="text-xl font-bold text-[#00E676] font-mono mt-1">0.0%</span>
+                </div>
+            </div>
+
+            <!-- Active Paper Positions Table -->
+            <div class="card p-0 overflow-hidden">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+                    <h2 class="text-sm font-mono text-[#00E5F2] uppercase tracking-wider">
+                        <i class="fas fa-robot mr-1"></i> Active Paper Positions
+                    </h2>
+                    <div class="flex gap-2">
+                        <button id="refreshPaperBtn" class="text-xs text-[#00E5F2] hover:text-[#00C5D2] font-mono">
+                            <i class="fas fa-sync-alt mr-1"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                            <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                                <th class="px-5 py-3">Ticker</th>
+                                <th class="px-5 py-3">Quantity</th>
+                                <th class="px-5 py-3">Avg Entry</th>
+                                <th class="px-5 py-3">Live Price</th>
+                                <th class="px-5 py-3">Cost Basis</th>
+                                <th class="px-5 py-3">Current Value</th>
+                                <th class="px-5 py-3">Unrealized P&L</th>
+                                <th class="px-5 py-3 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paperPositionsTableBody" class="text-sm font-mono text-[#D6E5E3]">
+                            <tr>
+                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No active paper positions. Alerts will trigger automated entries.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Paper Trade History & Execution Logs -->
+            <div class="card p-0 overflow-hidden">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+                    <h2 class="text-sm font-mono text-[#D6E5E3] uppercase tracking-wider">
+                        <i class="fas fa-history mr-1"></i> Paper Trade Execution Log
+                    </h2>
+                    <button id="resetPaperAccountBtn" class="text-xs text-[#FF5252] hover:bg-[#FF5252]/10 border border-[#FF5252]/30 px-2.5 py-1 rounded transition-all font-mono">
+                        <i class="fas fa-undo mr-1"></i> Reset Paper Account ($100k)
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                            <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                                <th class="px-5 py-3">Ticker</th>
+                                <th class="px-5 py-3">Action</th>
+                                <th class="px-5 py-3">Entry Price</th>
+                                <th class="px-5 py-3">Exit Price</th>
+                                <th class="px-5 py-3">Quantity</th>
+                                <th class="px-5 py-3">Exit Reason</th>
+                                <th class="px-5 py-3">Realized P&L</th>
+                                <th class="px-5 py-3">Entry Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paperLogsTableBody" class="text-sm font-mono text-[#D6E5E3]">
+                            <tr>
+                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade logs available yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -509,23 +611,32 @@
 
     function switchTab(activeTab) {
         const tabPositions = document.getElementById("tabPositions");
+        const tabPaper = document.getElementById("tabPaper");
         const tabAI = document.getElementById("tabAI");
         const tabAnalytics = document.getElementById("tabAnalytics");
+        
         const contentPositions = document.getElementById("contentPositions");
+        const contentPaper = document.getElementById("contentPaper");
         const contentAI = document.getElementById("contentAI");
         const contentAnalytics = document.getElementById("contentAnalytics");
 
         tabPositions.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
+        if (tabPaper) tabPaper.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
         tabAI.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#ffd700] transition-colors focus:outline-none";
         tabAnalytics.className = "px-6 py-3 text-[#4A6A70] border-b-2 border-transparent flex items-center gap-2 hover:text-[#00E5F2] transition-colors focus:outline-none";
         
         contentPositions.classList.add("hidden");
+        if (contentPaper) contentPaper.classList.add("hidden");
         contentAI.classList.add("hidden");
         contentAnalytics.classList.add("hidden");
 
         if (activeTab === "positions") {
             tabPositions.className = "px-6 py-3 text-[#00A6B2] border-b-2 border-[#00A6B2] font-bold flex items-center gap-2 transition-colors focus:outline-none";
             contentPositions.classList.remove("hidden");
+        } else if (activeTab === "paper") {
+            if (tabPaper) tabPaper.className = "px-6 py-3 text-[#00E5F2] border-b-2 border-[#00E5F2] font-bold flex items-center gap-2 transition-colors focus:outline-none";
+            if (contentPaper) contentPaper.classList.remove("hidden");
+            loadPaperSummary();
         } else if (activeTab === "ai") {
             tabAI.className = "px-6 py-3 text-[#ffd700] border-b-2 border-[#ffd700] font-bold flex items-center gap-2 transition-colors focus:outline-none";
             contentAI.classList.remove("hidden");
@@ -967,5 +1078,148 @@
     function closeEditModal() {
         document.getElementById("editModal").classList.add("hidden");
     }
+
+    // --- ALERT PAPER TRADER FUNCTIONS ---
+    async function loadPaperSummary() {
+        try {
+            const res = await fetch("/api/v1/paper-trading/summary");
+            if (!res.ok) throw new Error("Could not load paper trading summary");
+            const data = await res.json();
+
+            document.getElementById("paperEquity").innerText = formatCurrency(data.current_equity);
+            document.getElementById("paperCash").innerText = formatCurrency(data.cash_balance);
+            document.getElementById("paperOpenVal").innerText = formatCurrency(data.total_open_value);
+
+            const rPlEl = document.getElementById("paperRealizedPL");
+            rPlEl.innerText = (data.total_realized_pnl >= 0 ? "+" : "") + formatCurrency(data.total_realized_pnl);
+            rPlEl.className = `text-xl font-bold font-mono mt-1 ${data.total_realized_pnl >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]'}`;
+
+            const uPlEl = document.getElementById("paperUnrealizedPL");
+            uPlEl.innerText = (data.total_unrealized_pnl >= 0 ? "+" : "") + formatCurrency(data.total_unrealized_pnl);
+            uPlEl.className = `text-xl font-bold font-mono mt-1 ${data.total_unrealized_pnl >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]'}`;
+
+            document.getElementById("paperWinRate").innerText = `${data.win_rate_pct.toFixed(1)}% (${data.total_closed_trades} trades)`;
+
+            renderPaperPositions(data.active_positions);
+            renderPaperLogs(data.trade_logs);
+        } catch (err) {
+            console.error("Paper summary load error:", err);
+        }
+    }
+
+    function renderPaperPositions(positions) {
+        const tbody = document.getElementById("paperPositionsTableBody");
+        tbody.innerHTML = "";
+
+        const keys = Object.keys(positions || {});
+        if (keys.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No active paper positions. Alerts will trigger automated entries.</td></tr>`;
+            return;
+        }
+
+        keys.forEach(t => {
+            const pos = positions[t];
+            const pnlColor = pos.unrealized_pnl >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            const tr = document.createElement("tr");
+            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+            tr.innerHTML = `
+                <td class="px-5 py-3 font-bold text-[#00E5F2]">${pos.ticker}</td>
+                <td class="px-5 py-3">${pos.quantity}</td>
+                <td class="px-5 py-3">$${pos.avg_entry_price.toFixed(2)}</td>
+                <td class="px-5 py-3 font-semibold">$${pos.current_price.toFixed(2)}</td>
+                <td class="px-5 py-3">$${pos.total_cost.toFixed(2)}</td>
+                <td class="px-5 py-3">$${pos.current_value.toFixed(2)}</td>
+                <td class="px-5 py-3 ${pnlColor} font-bold">
+                    ${pos.unrealized_pnl >= 0 ? '+' : ''}$${pos.unrealized_pnl.toFixed(2)} (${pos.unrealized_pnl_pct.toFixed(2)}%)
+                </td>
+                <td class="px-5 py-3 text-right">
+                    <button onclick="closePaperPos('${pos.ticker}')" class="px-2.5 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all">
+                        Close
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderPaperLogs(logs) {
+        const tbody = document.getElementById("paperLogsTableBody");
+        tbody.innerHTML = "";
+
+        if (!logs || logs.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade execution logs available yet.</td></tr>`;
+            return;
+        }
+
+        logs.forEach(log => {
+            const isSell = (log.action || '').toUpperCase() === 'SELL';
+            const actionBg = isSell ? 'bg-[#FF5252]/10 text-[#FF5252]' : 'bg-[#00E676]/10 text-[#00E676]';
+            const pnlStr = log.realized_pnl !== null ? `${log.realized_pnl >= 0 ? '+' : ''}$${parseFloat(log.realized_pnl).toFixed(2)} (${parseFloat(log.realized_pnl_pct || 0).toFixed(2)}%)` : 'OPEN';
+            const pnlClass = log.realized_pnl !== null ? (log.realized_pnl >= 0 ? 'text-[#00E676] font-bold' : 'text-[#FF5252] font-bold') : 'text-[#4A6A70]';
+
+            const entryTime = log.entry_time ? new Date(log.entry_time).toLocaleString() : 'N/A';
+
+            const tr = document.createElement("tr");
+            tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
+            tr.innerHTML = `
+                <td class="px-5 py-3 font-bold text-[#D6E5E3]">${log.ticker}</td>
+                <td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ${actionBg}">${log.action}</span></td>
+                <td class="px-5 py-3">$${parseFloat(log.entry_price).toFixed(2)}</td>
+                <td class="px-5 py-3">${log.exit_price ? '$' + parseFloat(log.exit_price).toFixed(2) : '—'}</td>
+                <td class="px-5 py-3">${log.quantity}</td>
+                <td class="px-5 py-3 text-xs text-[#00E5F2] font-mono">${log.exit_reason || 'ALERT_EXECUTION'}</td>
+                <td class="px-5 py-3 ${pnlClass}">${pnlStr}</td>
+                <td class="px-5 py-3 text-xs text-[#8BA4A8]">${entryTime}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    window.closePaperPos = async (ticker) => {
+        if (!confirm(`Are you sure you want to close the paper position for ${ticker}?`)) return;
+        try {
+            const res = await fetch("/api/v1/paper-trading/close-position", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ticker })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                alert(data.message || "Position closed.");
+                loadPaperSummary();
+            } else {
+                alert("Error closing position: " + (data.detail || data.message));
+            }
+        } catch (err) {
+            alert("Error closing position: " + err);
+        }
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+        const tabPaper = document.getElementById("tabPaper");
+        if (tabPaper) {
+            tabPaper.addEventListener("click", () => switchTab("paper"));
+        }
+
+        const refreshPaperBtn = document.getElementById("refreshPaperBtn");
+        if (refreshPaperBtn) {
+            refreshPaperBtn.addEventListener("click", loadPaperSummary);
+        }
+
+        const resetPaperBtn = document.getElementById("resetPaperAccountBtn");
+        if (resetPaperBtn) {
+            resetPaperBtn.addEventListener("click", async () => {
+                if (!confirm("Are you sure you want to reset paper trading balance back to $100,000 baseline?")) return;
+                try {
+                    const res = await fetch("/api/v1/paper-trading/reset", { method: "POST" });
+                    const data = await res.json();
+                    alert(data.message || "Paper account reset.");
+                    loadPaperSummary();
+                } catch (err) {
+                    alert("Reset error: " + err);
+                }
+            });
+        }
+    });
 </script>
 {% endblock %}
