@@ -107,8 +107,20 @@ def calculate_z_score(ticker1, ticker2, period_days=365):
     if std_spread == 0:
         return None
 
+    # Calculate rolling 60-day Z-score to adapt dynamically to regime shifts
+    window = min(60, len(df))
+    df["rolling_mean"] = df["Spread"].rolling(window=window, min_periods=15).mean()
+    df["rolling_std"] = df["Spread"].rolling(window=window, min_periods=15).std()
+
     current_spread = df["Spread"].iloc[-1]
-    z_score = (current_spread - mean_spread) / std_spread
+    curr_mean = df["rolling_mean"].iloc[-1]
+    curr_std = df["rolling_std"].iloc[-1]
+
+    if pd.isna(curr_mean) or pd.isna(curr_std) or curr_std == 0:
+        curr_mean = mean_spread
+        curr_std = std_spread
+
+    z_score = (current_spread - curr_mean) / curr_std
 
     if z_score > 2.0:
         signal = f"SHORT {ticker1}, LONG {ticker2}"

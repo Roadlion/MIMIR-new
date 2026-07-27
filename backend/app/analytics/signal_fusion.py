@@ -7,7 +7,13 @@ from typing import List, Dict, Any, Optional
 from ..database import get_db_connection
 from ..config import get_settings
 from .technical_analysis import analyze_technical_indicators
+from .paper_trader import is_us_stock
 from ..routers.prices import DEFAULT_TICKERS
+from .sentiment_momentum import (
+    compute_sentiment_momentum_features,
+    classify_regime,
+    REGIME_ENCODING,
+)
 
 settings = get_settings()
 
@@ -124,7 +130,7 @@ def insert_trade_signal(ticker: str, signal_type: str, price: float, rsi: float,
         if close_conn:
             conn.close()
 
-def get_cached_fundamentals(ticker: str, conn=None) -> Optional[Dict[str, float]]:
+def get_cached_fundamentals(ticker: str, conn=None) -> Optional[Dict[str, Any]]:
     close_conn = False
     if conn is None:
         conn = get_db_connection()
@@ -132,7 +138,8 @@ def get_cached_fundamentals(ticker: str, conn=None) -> Optional[Dict[str, float]
     cur = conn.cursor()
     try:
         cur.execute(f"""
-            SELECT pe_ratio, debt_to_equity, eps_growth, operating_margin 
+            SELECT pe_ratio, debt_to_equity, eps_growth, operating_margin,
+                   ev_ebitda, fcf_yield, dcf_intrinsic_value, valuation_status
             FROM {settings.mimir_schema}.mimir_asset_fundamentals 
             WHERE ticker = %s
         """, (ticker,))
@@ -142,7 +149,11 @@ def get_cached_fundamentals(ticker: str, conn=None) -> Optional[Dict[str, float]
                 "pe_ratio": float(row[0]) if row[0] is not None else None,
                 "debt_to_equity": float(row[1]) if row[1] is not None else None,
                 "eps_growth": float(row[2]) if row[2] is not None else None,
-                "operating_margin": float(row[3]) if row[3] is not None else None
+                "operating_margin": float(row[3]) if row[3] is not None else None,
+                "ev_ebitda": float(row[4]) if row[4] is not None else None,
+                "fcf_yield": float(row[5]) if row[5] is not None else None,
+                "dcf_intrinsic_value": float(row[6]) if row[6] is not None else None,
+                "valuation_status": str(row[7]) if row[7] is not None else "FAIRLY_VALUED"
             }
         return None
     except Exception:
@@ -300,10 +311,12 @@ def get_daily_sentiment_history(ticker: str, days: int = 20, conn=None) -> pd.Da
             return pd.DataFrame(columns=['date', 'sentiment', 'sent_vol'])
         df_sent = pd.DataFrame(rows, columns=['date', 'sentiment', 'sent_vol'])
         df_sent['date'] = pd.to_datetime(df_sent['date']).dt.date
+        df_sent['sentiment'] = pd.to_numeric(df_sent['sentiment'], errors='coerce').astype(float)
+        df_sent['sent_vol'] = pd.to_numeric(df_sent['sent_vol'], errors='coerce').astype(float)
         return df_sent
     except Exception as e:
         print(f"[SIGNAL_FUSION] Error fetching sentiment history for {ticker}: {e}")
-        return pd.DataFrame(columns=['date', 'sentiment'])
+        return pd.DataFrame(columns=['date', 'sentiment', 'sent_vol'])
     finally:
         cur.close()
         if close_conn:
@@ -371,6 +384,10 @@ def scan_ticker_for_signals(
     """Scans a single ticker and returns a signal dict if triggered and inserted."""
     ticker = ticker.strip().upper()
     
+    # Filter out OTC and non-US listed equities
+    if not is_us_stock(ticker):
+        return None
+
     if df_prices is None:
         df = get_recent_prices(ticker, days=120, conn=conn)
     else:
@@ -387,7 +404,7 @@ def scan_ticker_for_signals(
     # Merge price and sentiment timezone-aligned
     df['date_only'] = df.index.date
     df_merged = pd.merge(df, df_sent, left_on='date_only', right_on='date', how='left')
-    df_merged['sentiment'] = df_merged['sentiment'].fillna(0.0)
+    df_merged['sentiment'] = pd.to_numeric(df_merged['sentiment'], errors='coerce').fillna(0.0).astype(float)
     
     # Calculate feature columns exactly as constructed in training
     def get_rsi(series, window=14):
@@ -488,8 +505,8 @@ def scan_ticker_for_signals(
     sell_features = feature_cols
     
     if ticker_params:
-        target_prob_buy = ticker_params["prob_buy"]
-        target_prob_sell = ticker_params["prob_sell"]
+        target_prob_buy = max(0.65, float(ticker_params["prob_buy"]))
+        target_prob_sell = max(0.65, float(ticker_params["prob_sell"]))
         p_win_rate = ticker_params["win_rate"]
         p_avg_pnl = ticker_params["avg_pnl"]
         p_hold_days = ticker_params["hold_days"]
@@ -500,9 +517,17 @@ def scan_ticker_for_signals(
         win_str = f"{p_win_rate:.1f}%" if p_win_rate is not None else "N/A"
         pnl_str = f"{p_avg_pnl:.2f}%" if p_avg_pnl is not None else "N/A"
         param_src = f"Tuned Profile (Hold: {p_hold_days}d, Est. Win Rate: {win_str}, Est. PnL: {pnl_str})"
+
+        # Filter out low conviction / unpromising historical profiles
+        if p_win_rate is not None and p_win_rate < 55.0:
+            print(f"[SIGNAL_FUSION] {ticker} skipped: backtested win rate ({p_win_rate:.1f}%) < 55%.")
+            return None
+        if p_avg_pnl is not None and p_avg_pnl <= 0.0:
+            print(f"[SIGNAL_FUSION] {ticker} skipped: backtested avg PnL ({p_avg_pnl:.2f}%) <= 0%.")
+            return None
     else:
-        target_prob_buy = 0.62
-        target_prob_sell = 0.62
+        target_prob_buy = 0.65
+        target_prob_sell = 0.65
         p_hold_days = 5
         param_src = "Global Fallback Default (High Conviction)"
         
@@ -513,15 +538,22 @@ def scan_ticker_for_signals(
     if live_success_rate is not None:
         if live_success_rate <= 40.0:
             # If recent trade alert performance is poor, tighten probability boundaries to protect capital
-            target_prob_buy = min(0.70, target_prob_buy + 0.05)
-            target_prob_sell = min(0.70, target_prob_sell + 0.05)
-            feedback_note = f" | [LEARNING LOOP] Poor recent success rate ({live_success_rate:.1f}%). Tightening threshold to 70% max bounds."
+            target_prob_buy = min(0.75, target_prob_buy + 0.05)
+            target_prob_sell = min(0.75, target_prob_sell + 0.05)
+            feedback_note = f" | [LEARNING LOOP] Poor recent success rate ({live_success_rate:.1f}%). Tightening threshold to 75% max bounds."
             
     # Run XGBoost inference
     features_df_buy = features_df[buy_features] if all(col in features_df.columns for col in buy_features) else features_df
     features_df_sell = features_df[sell_features] if all(col in features_df.columns for col in sell_features) else features_df
     prob_buy = get_xgb_prediction(ticker, features_df_buy, "buy")
     prob_sell = get_xgb_prediction(ticker, features_df_sell, "sell")
+    
+    # Fetch sentiment momentum features & regime classification
+    sent_momentum = compute_sentiment_momentum_features(ticker, lookback_days=5, conn=conn)
+    regime = sent_momentum.get('regime_state', 'NEUTRAL')
+    panic_score = sent_momentum.get('panic_score', 0.0)
+    earnings_trap_score = sent_momentum.get('earnings_trap_score', 0.0)
+    pro_retail_div = sent_momentum.get('pro_retail_divergence', 0.0)
     
     signal_type = None
     reason = []
@@ -532,36 +564,52 @@ def scan_ticker_for_signals(
     support = float(today_row['support']) if not pd.isna(today_row['support']) else current_price
     resistance = float(today_row['resistance']) if not pd.isna(today_row['resistance']) else current_price
     
+    # REGIME GATING & BEHAVIORAL FILTERS
     # 1. BUY Signal check
     if prob_buy >= target_prob_buy:
-        passes_fundamentals = True
-        fund_fail_reason = ""
-        
-        if fundamentals:
-            pe = fundamentals.get("pe_ratio")
-            de = fundamentals.get("debt_to_equity")
-            eps = fundamentals.get("eps_growth")
-            
-            if pe is not None and (pe < 0 or pe > 35):
-                passes_fundamentals = False
-                fund_fail_reason = f"PE ratio ({pe:.1f}) is out of bounds (0-35)"
-            if de is not None and de > 250:
-                passes_fundamentals = False
-                fund_fail_reason = f"Debt-to-Equity ({de:.1f}%) exceeds threshold (250%)"
-            if eps is not None and eps < -0.2:
-                passes_fundamentals = False
-                fund_fail_reason = f"EPS growth ({eps * 100:.1f}%) is worse than -20%"
-                
-        if not passes_fundamentals:
-            print(f"[SIGNAL_FUSION] {ticker} rejected by fundamentals overlay: {fund_fail_reason}")
+        # Regime Gating: BUY allowed ONLY in ACCUMULATING or PANIC_OVERSOLD
+        if regime not in ('ACCUMULATING', 'PANIC_OVERSOLD'):
+            print(f"[SIGNAL_FUSION] {ticker} BUY signal blocked: Active regime '{regime}' is not ACCUMULATING or PANIC_OVERSOLD.")
+        elif earnings_trap_score > 0.6:
+            print(f"[SIGNAL_FUSION] {ticker} BUY signal blocked by Earnings Trap Filter (trap score: {earnings_trap_score:.2f}).")
+        elif pro_retail_div < -0.3:
+            print(f"[SIGNAL_FUSION] {ticker} BUY signal blocked by Pro vs Retail Divergence (divergence: {pro_retail_div:.2f}).")
         else:
-            signal_type = 'BUY'
-            reason.append(f"XGBoost BUY prediction prob ({prob_buy * 100.0:.1f}%) >= threshold ({target_prob_buy * 100.0:.1f}%). [Params: {param_src}{feedback_note}]")
+            passes_fundamentals = True
+            fund_fail_reason = ""
             
+            if fundamentals:
+                pe = float(fundamentals.get("pe_ratio")) if fundamentals.get("pe_ratio") is not None else None
+                de = float(fundamentals.get("debt_to_equity")) if fundamentals.get("debt_to_equity") is not None else None
+                eps = float(fundamentals.get("eps_growth")) if fundamentals.get("eps_growth") is not None else None
+                val_status = str(fundamentals.get("valuation_status")) if fundamentals.get("valuation_status") is not None else "FAIRLY_VALUED"
+                
+                if pe is not None and (pe < 0 or pe > 35):
+                    passes_fundamentals = False
+                    fund_fail_reason = f"PE ratio ({pe:.1f}) is out of bounds (0-35)"
+                if de is not None and de > 250:
+                    passes_fundamentals = False
+                    fund_fail_reason = f"Debt-to-Equity ({de:.1f}%) exceeds threshold (250%)"
+                if eps is not None and eps < -0.2:
+                    passes_fundamentals = False
+                    fund_fail_reason = f"EPS growth ({eps * 100.0:.1f}%) is worse than -20%"
+                if val_status == "OVERVALUED":
+                    passes_fundamentals = False
+                    fund_fail_reason = f"DCF intrinsic valuation model indicates asset is OVERVALUED"
+                    
+            if not passes_fundamentals:
+                print(f"[SIGNAL_FUSION] {ticker} rejected by fundamentals overlay: {fund_fail_reason}")
+            else:
+                signal_type = 'BUY'
+                reason.append(f"XGBoost BUY prediction prob ({prob_buy * 100.0:.1f}%) >= threshold ({target_prob_buy * 100.0:.1f}%) in '{regime}' regime. [Params: {param_src}{feedback_note}]")
+                
     # 2. SELL Signal check
     elif prob_sell >= target_prob_sell:
-        signal_type = 'SELL'
-        reason.append(f"XGBoost SELL prediction prob ({prob_sell * 100.0:.1f}%) >= threshold ({target_prob_sell * 100.0:.1f}%). [Params: {param_src}{feedback_note}]")
+        if regime not in ('EXHAUSTED', 'ALIGNED'):
+            print(f"[SIGNAL_FUSION] {ticker} SELL signal blocked: Active regime '{regime}' is not EXHAUSTED or ALIGNED.")
+        else:
+            signal_type = 'SELL'
+            reason.append(f"XGBoost SELL prediction prob ({prob_sell * 100.0:.1f}%) >= threshold ({target_prob_sell * 100.0:.1f}%) in '{regime}' regime. [Params: {param_src}{feedback_note}]")
         
     if signal_type:
         reason_str = " | ".join(reason)
@@ -665,6 +713,8 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
         if sent_rows:
             df_sent_all = pd.DataFrame(sent_rows, columns=['ticker', 'date', 'sentiment', 'sent_vol'])
             df_sent_all['date'] = pd.to_datetime(df_sent_all['date']).dt.date
+            df_sent_all['sentiment'] = pd.to_numeric(df_sent_all['sentiment'], errors='coerce').astype(float)
+            df_sent_all['sent_vol'] = pd.to_numeric(df_sent_all['sent_vol'], errors='coerce').astype(float)
             for t, grp in df_sent_all.groupby('ticker'):
                 sentiment_by_ticker[t.strip().upper()] = grp[['date', 'sentiment', 'sent_vol']].reset_index(drop=True)
     except Exception as e:
@@ -699,7 +749,8 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
     fund_map = {}
     try:
         cur.execute(f"""
-            SELECT ticker, pe_ratio, debt_to_equity, eps_growth, operating_margin 
+            SELECT ticker, pe_ratio, debt_to_equity, eps_growth, operating_margin,
+                   ev_ebitda, fcf_yield, dcf_intrinsic_value, valuation_status 
             FROM {settings.mimir_schema}.mimir_asset_fundamentals
         """)
         for r in cur.fetchall():
@@ -707,7 +758,11 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
                 "pe_ratio": float(r[1]) if r[1] is not None else None,
                 "debt_to_equity": float(r[2]) if r[2] is not None else None,
                 "eps_growth": float(r[3]) if r[3] is not None else None,
-                "operating_margin": float(r[4]) if r[4] is not None else None
+                "operating_margin": float(r[4]) if r[4] is not None else None,
+                "ev_ebitda": float(r[5]) if r[5] is not None else None,
+                "fcf_yield": float(r[6]) if r[6] is not None else None,
+                "dcf_intrinsic_value": float(r[7]) if r[7] is not None else None,
+                "valuation_status": str(r[8]) if r[8] is not None else "FAIRLY_VALUED"
             }
     except Exception as e:
         print(f"[SIGNAL_FUSION] Bulk fundamentals fetch warning: {e}")

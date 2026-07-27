@@ -73,9 +73,38 @@ def test_advice_filtering():
         conn.close()
         print("[OK] Cleaned up test data.")
 
+def test_advice_sanitization():
+    print("Testing portfolio advice HTML sanitization...")
+    raw_llm_output = """```html
+<html>
+<head><style>body { background-color: #ffffff !important; color: #000; }</style></head>
+<body>
+<script>alert('xss');</script>
+<div class="mb-6">
+    <h3 class="text-xl font-bold text-[#00A6B2]">Clean Header</h3>
+</div>
+</body>
+</html>
+```"""
+
+    def mock_completion(messages, temperature, timeout):
+        return raw_llm_output
+
+    with patch("backend.app.routers.portfolio.send_chat_completion", side_effect=mock_completion):
+        res = get_portfolio_advice()
+        advice = res.get("advice", "")
+        print(f"Sanitized result: {advice}")
+        assert "<style>" not in advice and "</style>" not in advice, "Style tags should be stripped"
+        assert "<script>" not in advice and "</script>" not in advice, "Script tags should be stripped"
+        assert "<html>" not in advice and "</html>" not in advice, "Html wrapper tags should be stripped"
+        assert "background-color: #ffffff" not in advice, "Global style definitions should be removed"
+        assert "Clean Header" in advice, "Legitimate HTML content should be retained"
+        print("[OK] HTML sanitization test passed!")
+
 if __name__ == "__main__":
     try:
         test_advice_filtering()
+        test_advice_sanitization()
         print("[OK] ALL ADVICE TESTS PASSED.")
     except Exception as e:
         print(f"[FAIL] Verification failed: {e}")

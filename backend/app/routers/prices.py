@@ -1828,3 +1828,34 @@ def get_ticker_details(ticker: str, nocache: bool = False):
         _ticker_details_cache[ticker_symbol] = {"data": details_payload, "fetched_at": now}
     return details_payload
 
+from backend.app.analytics import financial_skills
+
+@router.get("/fundamentals/{ticker}")
+def get_ticker_fundamentals(ticker: str):
+    """Retrieve full cached fundamental metrics and DCF intrinsic valuation status for an asset."""
+    ticker_clean = ticker.strip().upper()
+    fund = financial_skills.get_cached_asset_fundamentals(ticker_clean)
+    if not fund:
+        # Run local fallback fetch
+        dcf = financial_skills.run_dcf_valuation(ticker_clean)
+        comps = financial_skills.run_comps_analysis(ticker_clean)
+        return {"ticker": ticker_clean, "fundamentals": None, "dcf_valuation": dcf, "comps": comps}
+    return {"ticker": ticker_clean, "fundamentals": fund}
+
+@router.get("/valuation/{ticker}")
+def get_ticker_valuation(ticker: str):
+    """Trigger or retrieve real-time DCF, Comps, and LBO evaluation metrics for individual ticker pages."""
+    ticker_clean = ticker.strip().upper()
+    dcf = financial_skills.run_dcf_valuation(ticker_clean)
+    comps = financial_skills.run_comps_analysis(ticker_clean)
+    lbo = financial_skills.run_lbo_analysis(ticker_clean)
+    earnings = financial_skills.review_earnings(ticker_clean)
+    return {
+        "ticker": ticker_clean,
+        "dcf": dcf,
+        "comps": comps,
+        "lbo": lbo,
+        "earnings": earnings
+    }
+
+

@@ -77,6 +77,51 @@ class RelationshipGraph:
         all_targets = self.get_spillover_targets(source_key)
         return [(tt, tk, d) for tt, tk, d in all_targets if tt == target_type]
 
+    def get_tier2_targets(self, source_key: str) -> List[Tuple[str, str, float]]:
+        """Return Tier 2 supply chain targets for a source ticker/key."""
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT target_type, target_key, decay_factor, diffusion_days
+                FROM yggdrasil.mimir_asset_relationships
+                WHERE source_key = %s AND chain_tier = 2 AND is_validated = TRUE AND is_active = TRUE
+            """, (source_key.upper(),))
+            rows = cur.fetchall()
+            cur.close()
+            return [(r[0], r[1], float(r[2])) for r in rows]
+        except Exception:
+            return []
+        finally:
+            if conn:
+                conn.close()
+
+    def get_tier3_targets(self, source_key: str) -> List[Tuple[str, str, float]]:
+        """Return Tier 3 supply chain targets for a source ticker/key."""
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT target_type, target_key, decay_factor, diffusion_days
+                FROM yggdrasil.mimir_asset_relationships
+                WHERE source_key = %s AND chain_tier = 3 AND is_validated = TRUE AND is_active = TRUE
+            """, (source_key.upper(),))
+            rows = cur.fetchall()
+            cur.close()
+            return [(r[0], r[1], float(r[2])) for r in rows]
+        except Exception:
+            return []
+        finally:
+            if conn:
+                conn.close()
+
+    def get_skip_list(self, source_key: str) -> List[str]:
+        """Return frontline tickers to skip for a given catalyst source."""
+        # Tier 1 frontline tickers are skipped for new position entry
+        return [source_key.upper()]
+
     def has_source(self, source_key: str) -> bool:
         return bool(self.get_spillover_targets(source_key))
 

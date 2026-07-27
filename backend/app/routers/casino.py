@@ -173,11 +173,17 @@ def get_now() -> datetime:
 def _parse_legs_to_objects(legs_data: List[LegDict]) -> List[StrategyLeg]:
     legs = []
     for leg in legs_data:
-        try:
-            exp_date = datetime.fromisoformat(leg.expiration.replace('Z', '+00:00'))
-        except ValueError:
-            # Fallback format parsing
-            exp_date = datetime.strptime(leg.expiration.split('T')[0], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        exp_date = None
+        if leg.expiration:
+            try:
+                exp_date = datetime.fromisoformat(leg.expiration.replace('Z', '+00:00')).date()
+            except Exception:
+                try:
+                    exp_date = datetime.strptime(str(leg.expiration).split('T')[0], "%Y-%m-%d").date()
+                except Exception:
+                    exp_date = date.today() + timedelta(days=30)
+        else:
+            exp_date = date.today() + timedelta(days=30)
             
         legs.append(StrategyLeg(
             contract_type=leg.contract_type,
@@ -186,11 +192,7 @@ def _parse_legs_to_objects(legs_data: List[LegDict]) -> List[StrategyLeg]:
             expiration=exp_date,
             quantity=leg.quantity,
             premium=leg.premium,
-            implied_volatility=leg.implied_volatility or 0.0,
-            delta=leg.delta,
-            gamma=leg.gamma,
-            theta=leg.theta,
-            vega=leg.vega
+            iv=leg.implied_volatility or 0.3
         ))
     return legs
 
@@ -201,25 +203,63 @@ def get_options_chain(ticker: str):
     _check_tables()
     try:
         service = get_options_service()
-        chain_data = service.fetch_chain(ticker)
-        if not chain_data:
+        chain = service.fetch_chain(ticker)
+        if not chain:
             raise HTTPException(status_code=404, detail=f"Chain data not found for {ticker}")
         
-        # Limit expirations to first 3 to keep response manageable
-        limited_expirations = chain_data.get('expirations', [])[:3]
-        filtered_calls = {exp: chain_data.get('calls', {}).get(exp, []) for exp in limited_expirations}
-        filtered_puts = {exp: chain_data.get('puts', {}).get(exp, []) for exp in limited_expirations}
+        # Limit expirations to first 5
+        exp_dates = getattr(chain, 'expirations', [])
+        limited_expirations = [d.isoformat() if hasattr(d, 'isoformat') else str(d) for d in exp_dates[:5]]
+        
+        filtered_calls = {}
+        filtered_puts = {}
+        calls_dict = getattr(chain, 'calls', {})
+        puts_dict = getattr(chain, 'puts', {})
+        
+        for exp in exp_dates[:5]:
+            exp_str = exp.isoformat() if hasattr(exp, 'isoformat') else str(exp)
+            calls_list = calls_dict.get(exp, []) if isinstance(calls_dict, dict) else []
+            puts_list = puts_dict.get(exp, []) if isinstance(puts_dict, dict) else []
+            
+            filtered_calls[exp_str] = [
+                {
+                    "strike": c.strike,
+                    "bid": c.bid,
+                    "ask": c.ask,
+                    "mid": c.mid,
+                    "last": c.last,
+                    "volume": c.volume,
+                    "open_interest": c.open_interest,
+                    "implied_volatility": c.implied_volatility
+                }
+                for c in calls_list
+            ]
+            filtered_puts[exp_str] = [
+                {
+                    "strike": p.strike,
+                    "bid": p.bid,
+                    "ask": p.ask,
+                    "mid": p.mid,
+                    "last": p.last,
+                    "volume": p.volume,
+                    "open_interest": p.open_interest,
+                    "implied_volatility": p.implied_volatility
+                }
+                for p in puts_list
+            ]
+
+        underlying_price = getattr(chain, 'underlying_price', 100.0)
         
         return {
             "ticker": ticker,
-            "underlying_price": round(chain_data.get('underlying_price', 0.0), 2),
+            "underlying_price": round(underlying_price, 2),
             "expirations": limited_expirations,
             "calls": filtered_calls,
             "puts": filtered_puts,
             "liquidity_warning": "Warning: Options with low Open Interest (OI) may have wide bid-ask spreads."
         }
     except Exception as e:
-        logger.error(f"Error fetching chain for {ticker}: {e}")
+        logger.error(f"Error fetching chain for {ticker}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/iv-surface/{ticker}")
@@ -238,28 +278,34 @@ def get_payoff(request: PayoffRequest):
     _check_tables()
     try:
         legs = _parse_legs_to_objects(request.legs)
+        ticker = request.underlying_ticker or "CUSTOM"
         strategy = Strategy(
             name="Custom Payoff",
-            category=StrategyCategory.CUSTOM,
+            category=StrategyCategory.NEUTRAL,
             legs=legs,
+            underlying_ticker=ticker,
             underlying_price=request.underlying_price
         )
         surface = compute_payoff_surface(strategy)
         
         # Format the surface data nicely
         curves = {}
-        for date, date_surface in surface.items():
-            curves[date.isoformat()] = {
-                "prices": [round(p, 2) for p in date_surface.get("prices", [])],
-                "pnl": [round(p, 2) for p in date_surface.get("pnl", [])],
-                "breakevens": [round(b, 2) for b in date_surface.get("breakevens", [])],
-                "max_profit": round(date_surface.get("max_profit"), 2) if date_surface.get("max_profit") is not None else None,
-                "max_loss": round(date_surface.get("max_loss"), 2) if date_surface.get("max_loss") is not None else None
-            }
+        for date_key, date_surface in surface.items():
+            key_str = date_key.isoformat() if hasattr(date_key, 'isoformat') else str(date_key)
+            if hasattr(date_surface, 'to_dict'):
+                curves[key_str] = date_surface.to_dict()
+            else:
+                curves[key_str] = {
+                    "prices": [round(p, 2) for p in getattr(date_surface, 'prices', [])],
+                    "pnl": [round(p, 2) for p in getattr(date_surface, 'pnl', [])],
+                    "breakevens": [round(b, 2) for b in getattr(date_surface, 'breakevens', [])],
+                    "max_profit": round(date_surface.max_profit, 2) if getattr(date_surface, 'max_profit', None) is not None and date_surface.max_profit != float('inf') else None,
+                    "max_loss": round(date_surface.max_loss, 2) if getattr(date_surface, 'max_loss', None) is not None and date_surface.max_loss != float('inf') else None
+                }
             
         return {"curves": curves}
     except Exception as e:
-        logger.error(f"Error computing payoff: {e}")
+        logger.error(f"Error computing payoff: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/greeks")
@@ -267,16 +313,24 @@ def get_aggregate_greeks(request: GreeksRequest):
     _check_tables()
     try:
         legs = _parse_legs_to_objects(request.legs)
-        greeks = compute_aggregate_greeks(legs)
+        ticker = request.underlying_ticker or "CUSTOM"
+        strategy = Strategy(
+            name="Custom Strategy",
+            category=StrategyCategory.NEUTRAL,
+            legs=legs,
+            underlying_ticker=ticker,
+            underlying_price=request.underlying_price
+        )
+        greeks = compute_aggregate_greeks(strategy)
         return {
-            "delta": round(greeks.delta, 4) if greeks.delta else 0,
-            "gamma": round(greeks.gamma, 4) if greeks.gamma else 0,
-            "theta": round(greeks.theta, 4) if greeks.theta else 0,
-            "vega": round(greeks.vega, 4) if greeks.vega else 0,
-            "rho": round(greeks.rho, 4) if greeks.rho else 0
+            "delta": round(greeks.delta, 4) if getattr(greeks, 'delta', None) is not None else 0,
+            "gamma": round(greeks.gamma, 4) if getattr(greeks, 'gamma', None) is not None else 0,
+            "theta": round(greeks.theta, 4) if getattr(greeks, 'theta', None) is not None else 0,
+            "vega": round(greeks.vega, 4) if getattr(greeks, 'vega', None) is not None else 0,
+            "rho": round(greeks.rho, 4) if getattr(greeks, 'rho', None) is not None else 0
         }
     except Exception as e:
-        logger.error(f"Error computing greeks: {e}")
+        logger.error(f"Error computing greeks: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/recommend/{ticker}")
@@ -295,17 +349,18 @@ def recommend_strategies(ticker: str, top_k: int = Query(5, ge=1, le=20)):
         saved_recs = []
         for rec in recommendations:
             strat = rec.strategy
-            legs_json = json.dumps([
+            legs_list = [
                 {
                     "contract_type": leg.contract_type,
                     "direction": leg.direction,
                     "strike": leg.strike,
-                    "expiration": leg.expiration.isoformat(),
+                    "expiration": leg.expiration.isoformat() if hasattr(leg.expiration, 'isoformat') else str(leg.expiration),
                     "quantity": leg.quantity,
                     "premium": leg.premium
                 }
                 for leg in strat.legs
-            ])
+            ]
+            legs_json = json.dumps(legs_list)
             
             exp_date = strat.legs[0].expiration if strat.legs else None
             
@@ -319,8 +374,8 @@ def recommend_strategies(ticker: str, top_k: int = Query(5, ge=1, le=20)):
             """, (
                 ticker, strat.name, strat.category.value, legs_json,
                 round(strat.underlying_price, 2), round(strat.net_premium, 2),
-                round(strat.max_profit, 2) if strat.max_profit is not None else None,
-                round(strat.max_loss, 2) if strat.max_loss is not None else None,
+                round(strat.max_profit, 2) if strat.max_profit is not None and strat.max_profit != float('inf') else None,
+                round(strat.max_loss, 2) if strat.max_loss is not None and strat.max_loss != float('inf') and strat.max_loss != -float('inf') else None,
                 [round(bp, 2) for bp in strat.breakeven_points],
                 round(strat.probability_of_profit, 4) if strat.probability_of_profit else None,
                 round(strat.risk_reward_ratio, 4) if strat.risk_reward_ratio else None,
@@ -335,7 +390,16 @@ def recommend_strategies(ticker: str, top_k: int = Query(5, ge=1, le=20)):
                 "ticker": ticker,
                 "conviction": rec.conviction,
                 "risk_grade": rec.risk_grade,
-                "reasoning": rec.reasoning
+                "reasoning": rec.reasoning,
+                "legs": legs_list,
+                "strategy": {
+                    "ticker": ticker,
+                    "name": strat.name,
+                    "underlying_price": strat.underlying_price,
+                    "legs": legs_list,
+                    "max_profit": strat.max_profit if strat.max_profit != float('inf') else None,
+                    "max_loss": strat.max_loss if strat.max_loss != float('inf') else None
+                }
             })
             
         conn.commit()
@@ -343,11 +407,13 @@ def recommend_strategies(ticker: str, top_k: int = Query(5, ge=1, le=20)):
         
     except Exception as e:
         conn.rollback()
-        logger.error(f"Error recommending strategies for {ticker}: {e}")
+        logger.error(f"Error recommending strategies for {ticker}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if 'cursor' in locals() and cursor:
             cursor.close()
+        if conn:
+            conn.close()
         if conn:
             conn.close()
 

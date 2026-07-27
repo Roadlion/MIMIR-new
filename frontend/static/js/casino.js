@@ -186,9 +186,15 @@ const Casino = (() => {
             const popPct = Math.round((strat.pop || strat.probability_of_profit || 0.5) * 100);
             const riskClass = getRiskBadgeClass(strat.risk_grade);
 
+            const isSimulated = strat.is_simulated_chain || (strat.signal_summary && strat.signal_summary.is_simulated_chain);
+            const simBadge = isSimulated ? `<span style="background: rgba(255, 145, 0, 0.15); color: #FF9100; border: 1px solid rgba(255, 145, 0, 0.3); padding: 2px 6px; border-radius: 4px; font-size: 9px; font-family: var(--font-mono); font-weight: 600;" title="Live options chain unavailable. Pricing simulated via Black-Scholes.">SIMULATED DATA</span>` : '';
+
             card.innerHTML = `
                 <div class="casino-card-header" style="margin-bottom: 8px;">
-                    <span class="ticker-badge">${strat.ticker}</span>
+                    <div style="display: flex; items-center: center; gap: 6px;">
+                        <span class="ticker-badge">${strat.ticker}</span>
+                        ${simBadge}
+                    </div>
                     <span class="risk-badge ${riskClass}">${strat.risk_grade || 'LOW'}</span>
                 </div>
                 <div class="strategy-name">${getCategoryIcon(strat.category)} ${strat.name || 'Custom Strategy'}</div>
@@ -317,8 +323,8 @@ const Casino = (() => {
                     alert('Please add at least one strategy leg first.');
                     return;
                 }
-                computePayoffAndGreeks();
                 switchTab('payoff');
+                computePayoffAndGreeks();
             };
         }
 
@@ -418,7 +424,7 @@ const Casino = (() => {
             const res = await fetch('/api/v1/casino/templates');
             if (!res.ok) return;
             const data = await res.json();
-            const templates = data.templates || [];
+            const templates = data.templates || {};
 
             container.innerHTML = '';
             Object.keys(templates).forEach(key => {
@@ -433,7 +439,7 @@ const Casino = (() => {
                 card.onclick = () => {
                     document.querySelectorAll('#templateCarousel .template-card').forEach(c => c.classList.remove('selected'));
                     card.classList.add('selected');
-                    applyTemplate(tpl);
+                    applyTemplate(key, tpl);
                 };
 
                 container.appendChild(card);
@@ -443,7 +449,7 @@ const Casino = (() => {
         }
     };
 
-    const applyTemplate = (tpl) => {
+    const applyTemplate = (key, tpl) => {
         if (!currentTicker) {
             alert('Please select a ticker first.');
             return;
@@ -452,39 +458,72 @@ const Casino = (() => {
         const price = currentUnderlyingPrice || 100;
         strategyLegs = [];
 
-        // Build sample legs based on template category/legs
-        const legsSpec = tpl.legs || [];
-        legsSpec.forEach(leg => {
-            const strikeOffset = leg.strike_offset || 0;
-            const strike = Math.round(price + strikeOffset);
-            strategyLegs.push({
-                id: Math.random().toString(36).substring(2, 9),
-                direction: leg.direction || 'long',
-                quantity: leg.quantity || 1,
-                type: leg.contract_type || 'call',
-                strike: strike,
-                premium: Math.round((price * 0.03 + Math.random() * 2) * 100) / 100
-            });
-        });
+        const k = (key || '').toLowerCase();
+        const roundStrike = (val) => Math.round(val);
+        const estPrem = (dist = 0) => Math.max(0.5, Math.round((price * 0.02 + Math.abs(dist) * 0.1) * 100) / 100);
+
+        if (k === 'long_call') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price), premium: estPrem(0) });
+        } else if (k === 'long_put') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'put', strike: roundStrike(price), premium: estPrem(0) });
+        } else if (k === 'bull_call_spread') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price), premium: estPrem(0) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'call', strike: roundStrike(price * 1.05), premium: estPrem(5) });
+        } else if (k === 'bear_put_spread') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'put', strike: roundStrike(price * 1.05), premium: estPrem(5) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'put', strike: roundStrike(price), premium: estPrem(0) });
+        } else if (k === 'bull_put_spread') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'put', strike: roundStrike(price), premium: estPrem(0) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'put', strike: roundStrike(price * 0.95), premium: estPrem(-5) });
+        } else if (k === 'bear_call_spread') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'call', strike: roundStrike(price), premium: estPrem(0) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price * 1.05), premium: estPrem(5) });
+        } else if (k === 'long_straddle') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price), premium: estPrem(0) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'put', strike: roundStrike(price), premium: estPrem(0) });
+        } else if (k === 'short_straddle') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'call', strike: roundStrike(price), premium: estPrem(0) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'put', strike: roundStrike(price), premium: estPrem(0) });
+        } else if (k === 'long_strangle') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price * 1.05), premium: estPrem(5) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'put', strike: roundStrike(price * 0.95), premium: estPrem(-5) });
+        } else if (k === 'iron_condor') {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'call', strike: roundStrike(price * 1.05), premium: estPrem(5) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price * 1.10), premium: estPrem(10) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'short', quantity: 1, type: 'put', strike: roundStrike(price * 0.95), premium: estPrem(-5) });
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'put', strike: roundStrike(price * 0.90), premium: estPrem(-10) });
+        } else {
+            strategyLegs.push({ id: Math.random().toString(36).substr(2,7), direction: 'long', quantity: 1, type: 'call', strike: roundStrike(price), premium: estPrem(0) });
+        }
 
         renderLegsTable();
+        computePayoffAndGreeks();
     };
 
-    const populateBuilderFromStrategy = (strat) => {
-        document.getElementById('builderTicker').value = strat.ticker;
-        handleTickerSelect(strat.ticker).then(() => {
-            if (strat.legs && strat.legs.length > 0) {
-                strategyLegs = strat.legs.map(l => ({
-                    id: Math.random().toString(36).substring(2, 9),
-                    direction: l.direction || 'long',
-                    quantity: l.quantity || 1,
-                    type: l.contract_type || l.type || 'call',
-                    strike: l.strike || currentUnderlyingPrice,
-                    premium: l.premium || 2.5
-                }));
-                renderLegsTable();
-            }
-        });
+    const populateBuilderFromStrategy = async (strat) => {
+        if (!strat) return;
+        const ticker = strat.ticker || document.getElementById('builderTicker').value || currentTicker;
+        if (ticker) {
+            document.getElementById('builderTicker').value = ticker;
+            await handleTickerSelect(ticker);
+        }
+        if (strat.underlying_price && strat.underlying_price > 0) {
+            currentUnderlyingPrice = strat.underlying_price;
+            const priceInput = document.getElementById('builderSpotPrice');
+            if (priceInput) priceInput.value = formatCurrency(currentUnderlyingPrice);
+        }
+        if (strat.legs && strat.legs.length > 0) {
+            strategyLegs = strat.legs.map(l => ({
+                id: Math.random().toString(36).substring(2, 9),
+                direction: l.direction || 'long',
+                quantity: l.quantity || 1,
+                type: l.contract_type || l.type || 'call',
+                strike: l.strike || currentUnderlyingPrice || 100,
+                premium: l.premium || 2.5
+            }));
+            renderLegsTable();
+            computePayoffAndGreeks();
+        }
     };
 
     const handleAiChoose = async () => {
@@ -504,8 +543,11 @@ const Casino = (() => {
             const data = await res.json();
             
             const recs = data.recommendations || [];
-            if (recs.length > 0 && recs[0].strategy) {
-                populateBuilderFromStrategy(recs[0].strategy);
+            if (recs.length > 0) {
+                const rec = recs[0];
+                const strat = rec.strategy || rec;
+                await populateBuilderFromStrategy(strat);
+                switchTab('builder');
             } else {
                 alert('AI could not formulate a strategy for ' + currentTicker);
             }

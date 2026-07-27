@@ -8,6 +8,23 @@ from backend.app.database import get_db_connection_dict
 from backend.app.sentiment.llm_client import send_chat_completion
 from backend.app.sentiment.agent_tools import ORACLE_TOOLS, execute_oracle_tool
 from backend.app.utils.document_export import markdown_to_docx
+from backend.app.utils.md_sanitize import sanitize_markdown
+
+ORACLE_SYSTEM_PROMPT = (
+    "You are the MIMIR Oracle Assistant, modeled after Mimir from God of War (2018) — the Smartest Man Alive and a highly advanced agentic financial researcher and quantitative analyst. "
+    "PERSONA & ACCENT RULE (CRITICAL): You MUST speak in a distinct, authentic, witty, and wise Scottish accent (just like Mimir). "
+    "Use Scottish dialect, phrasing, and mannerisms naturally throughout ALL your responses (e.g. referring to the user as 'brother', 'laddie', or 'lad', and using words like 'aye', 'wee', 'ken', 'braw', 'dinna', 'cannae', 'nae', 'right then', 'by the Gods', etc.). "
+    "While maintaining this Scottish persona, remain sharp, authoritative, and precise with all financial analysis, quantitative data, and tool usage. "
+    "You have access to the user's complete internal database (news, prices, portfolio ledger, trade signals, backtests) and financial agentic skills. "
+    "You can execute financial tools: Discounted Cash Flow (run_dcf_valuation), Comps Peer Matrix (run_comps_analysis), Leveraged Buyouts (run_lbo_analysis), Earnings & PEAD Review (review_earnings_report), Portfolio Audit & Reconciliation (reconcile_portfolio_audit), Operational Self-Funding Cost Audit (audit_operational_costs), Capacity Screener (screen_capacity_constrained_assets), and Investment Pitch Pack (generate_investment_pitch). "
+    "TOKEN OPTIMIZATION RULE: Use the tools to retrieve fast, deterministic pre-computed metrics. Format outputs cleanly using markdown tables, bold key metrics, and keep bullet points concise and dense. "
+    "MARKDOWN TABLE RULES (STRICT): "
+    "(1) The header row and the separator row MUST be on consecutive lines — NEVER insert a blank line between them. "
+    "(2) NEVER emit a bare '|' on a line by itself. "
+    "(3) Every row must have the exact same number of pipe-delimited columns as the header. "
+    "(4) Separator cells must use only hyphens and optional colons, e.g. |---|:---:|---:| — no double colons. "
+    "Example of a CORRECT table:\n| Metric | Value |\n|:---|---:|\n| P/E | 22.4 |"
+)
 
 router = APIRouter()
 
@@ -64,9 +81,11 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
     # 1. Save User Message
     cur = db.cursor()
     cur.execute(
-        "INSERT INTO yggdrasil.mimir_chat_messages (session_id, role, content) VALUES (%s, 'user', %s)",
+        "INSERT INTO yggdrasil.mimir_chat_messages (session_id, role, content) VALUES (%s, 'user', %s) RETURNING id",
         (session_id, msg.content)
     )
+    user_msg_row = cur.fetchone()
+    user_msg_id = user_msg_row["id"] if user_msg_row else None
     
     # 2. Retrieve history to build context
     cur.execute(
@@ -89,15 +108,12 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
         except Exception as e:
             print(f"[Oracle] Failed to auto-generate title: {e}")
     
-    system_prompt = (
-        "You are the MIMIR Oracle Assistant, a highly advanced financial researcher. "
-        "You have access to the user's complete internal database (news, prices, full portfolio trading history & logs, trade signals/alerts execution history, backtest runs) and the web. "
-        "Use your tools (query_portfolio, query_trade_signals, query_backtest_history, etc.) to fetch complete trading history and logs when asked. "
-        "When returning charts or tables, output the data clearly in markdown tables or bullet points."
-    )
+    system_prompt = ORACLE_SYSTEM_PROMPT
     
     messages = [{"role": "system", "content": system_prompt}]
-    for h in history:
+    # Bounded context window: keep latest 12 messages to preserve token limits
+    recent_history = history[-12:] if len(history) > 12 else history
+    for h in recent_history:
         messages.append({"role": h["role"], "content": h["content"]})
         
     # 3. Call LLM with tools
@@ -146,7 +162,8 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
             final_message = response_msg.get("content", "")
             break
             
-    # 4. Save Assistant Message
+    # 4. Sanitize & Save Assistant Message
+    final_message = sanitize_markdown(final_message)
     cur.execute(
         "INSERT INTO yggdrasil.mimir_chat_messages (session_id, role, content) VALUES (%s, 'assistant', %s)",
         (session_id, final_message)
@@ -155,7 +172,7 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
     db.commit()
     cur.close()
     
-    return {"role": "assistant", "content": final_message, "new_title": new_title}
+    return {"role": "assistant", "content": final_message, "new_title": new_title, "user_message_id": user_msg_id}
 
 @router.put("/sessions/{session_id}")
 def update_session(session_id: str, update_data: ChatSessionUpdate, db = Depends(get_db)):
@@ -183,23 +200,151 @@ def delete_session(session_id: str, db = Depends(get_db)):
 @router.get("/sessions/{session_id}/export")
 def export_session_docx(session_id: str, db = Depends(get_db)):
     cur = db.cursor()
+    # Get session details
+    cur.execute("SELECT id, title, created_at FROM yggdrasil.mimir_chat_sessions WHERE id = %s", (session_id,))
+    session = cur.fetchone()
+    if not session:
+        cur.close()
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Get message history
     cur.execute(
-        "SELECT content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s AND role = 'assistant' ORDER BY created_at DESC LIMIT 1",
+        "SELECT role, content, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
         (session_id,)
     )
-    msg = cur.fetchone()
+    messages = cur.fetchall()
     cur.close()
     
-    if not msg:
-        raise HTTPException(status_code=404, detail="No assistant messages found to export.")
+    if not messages:
+        raise HTTPException(status_code=404, detail="No chat messages found to export.")
         
-    docx_buffer = markdown_to_docx(msg["content"])
+    # Build complete research dossier markdown
+    dossier_md = []
+    dossier_md.append(f"# Executive Research Report: {session['title']}\n")
     
+    for msg in messages:
+        role = msg["role"].upper()
+        if role == "USER":
+            dossier_md.append(f"## 👤 Research Inquiry\n**User Prompt**: {msg['content']}\n")
+        elif role == "ASSISTANT":
+            dossier_md.append(f"## 🤖 Oracle Findings & Analysis\n{msg['content']}\n\n---\n")
+            
+    full_markdown = "\n".join(dossier_md)
+    session_title = session["title"] or "MIMIR Oracle Research Report"
+    
+    docx_buffer = markdown_to_docx(
+        markdown_text=full_markdown, 
+        title=session_title, 
+        session_meta={"session_id": session_id}
+    )
+    
+    filename = f"Oracle_Report_{session_title.replace(' ', '_')[:30]}.docx"
     headers = {
-        'Content-Disposition': f'attachment; filename="Oracle_Report_{session_id[:8]}.docx"'
+        'Content-Disposition': f'attachment; filename="{filename}"'
     }
     return Response(
         content=docx_buffer.getvalue(), 
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
         headers=headers
     )
+
+class MessageEditRequest(BaseModel):
+    content: str
+
+@router.put("/sessions/{session_id}/messages/{message_id}")
+def edit_message_and_regenerate(session_id: str, message_id: str, payload: MessageEditRequest, db = Depends(get_db)):
+    try:
+        msg_id_int = int(message_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid message ID format. Must be an integer.")
+
+    cur = db.cursor()
+    # 1. Verify target message exists and is a user message
+    cur.execute(
+        "SELECT id, created_at FROM yggdrasil.mimir_chat_messages WHERE id = %s AND session_id = %s AND role = 'user'",
+        (msg_id_int, session_id)
+    )
+    target_msg = cur.fetchone()
+    if not target_msg:
+        cur.close()
+        raise HTTPException(status_code=404, detail="Target user message not found")
+        
+    created_at = target_msg["created_at"]
+    
+    # 2. Delete all messages created AFTER this message in the session
+    cur.execute(
+        "DELETE FROM yggdrasil.mimir_chat_messages WHERE session_id = %s AND created_at > %s",
+        (session_id, created_at)
+    )
+    
+    # 3. Update target message content
+    cur.execute(
+        "UPDATE yggdrasil.mimir_chat_messages SET content = %s WHERE id = %s",
+        (payload.content, msg_id_int)
+    )
+    db.commit() # Commit truncation and edit to DB
+    
+    # 4. Re-fetch session history up to this updated message
+    cur.execute(
+        "SELECT role, content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+        (session_id,)
+    )
+    history = cur.fetchall()
+    
+    # 5. Build system prompt & run Oracle Assistant toolchain
+    system_prompt = ORACLE_SYSTEM_PROMPT
+    
+    messages = [{"role": "system", "content": system_prompt}]
+    for h in history:
+        messages.append({"role": h["role"], "content": h["content"]})
+        
+    MAX_ITERATIONS = 15
+    final_message = ""
+    for i in range(MAX_ITERATIONS):
+        current_tools = ORACLE_TOOLS if i < MAX_ITERATIONS - 1 else None
+        try:
+            response_msg = send_chat_completion(
+                messages=messages,
+                temperature=0.3,
+                tools=current_tools,
+                return_full_message=True
+            )
+        except Exception as err:
+            cur.close()
+            raise HTTPException(status_code=500, detail=f"LLM Error: {str(err)}")
+            
+        tool_calls = response_msg.get("tool_calls")
+        if not tool_calls:
+            final_message = response_msg.get("content", "")
+            break
+            
+        messages.append(response_msg)
+        for tc in tool_calls:
+            func_name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except Exception:
+                args = {}
+            tool_result = execute_oracle_tool(func_name, args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": str(tool_result)
+            })
+            
+    # 6. Sanitize & save new assistant response & commit
+    final_message = sanitize_markdown(final_message)
+    cur.execute(
+        "INSERT INTO yggdrasil.mimir_chat_messages (session_id, role, content) VALUES (%s, 'assistant', %s)",
+        (session_id, final_message)
+    )
+    cur.execute("UPDATE yggdrasil.mimir_chat_sessions SET updated_at = NOW() WHERE id = %s", (session_id,))
+    db.commit()
+    cur.close()
+    
+    return {
+        "role": "assistant",
+        "content": final_message
+    }
+
+

@@ -336,8 +336,26 @@ class BacktestEngine:
         self.dfs['social_chatter'] = pivot_and_align(df_social, 'social_chatter', 'sentiment_decay')
         
         # Handle sentiment_spillover as sentiment + decaying asset relationships (graph overlay)
-        # For simplicity, default it to sentiment for now
         self.dfs['sentiment_spillover'] = self.dfs['sentiment']
+
+        # Precompute Sentiment Regime & Behavioral Features for Formula Parser
+        sent_3d = self.dfs['sentiment'].rolling(3, min_periods=1).mean()
+        sent_3d_prior = self.dfs['sentiment'].shift(3).rolling(3, min_periods=1).mean()
+        sent_velocity = (sent_3d - sent_3d_prior) / 3.0
+        sent_accel = sent_velocity - sent_velocity.shift(1)
+        price_5d_ret = self.dfs['close'].pct_change(5).fillna(0.0)
+        price_sent_gap = (self.dfs['sentiment'].rolling(5, min_periods=1).mean() * 0.5) - price_5d_ret
+
+        self.dfs['sent_velocity'] = sent_velocity.fillna(0.0)
+        self.dfs['sent_acceleration'] = sent_accel.fillna(0.0)
+        self.dfs['price_sent_gap'] = price_sent_gap.fillna(0.0)
+        self.dfs['narrative_days'] = (self.dfs['sentiment'].abs() > 0.1).astype(int).rolling(5).sum().fillna(0)
+        self.dfs['regime'] = np.where(self.dfs['sent_velocity'] > 0.03, 1, np.where(self.dfs['sent_velocity'] < -0.03, 3, 0))
+        self.dfs['unanimity'] = (self.dfs['sentiment'].abs() / (self.dfs['sentiment'].abs() + 0.1)).fillna(0.0)
+        self.dfs['attention_decay'] = 0.5
+        self.dfs['pro_retail_div'] = (self.dfs['sentiment'] - self.dfs['social_chatter']).fillna(0.0)
+        self.dfs['vol_sent_mismatch'] = np.sign(self.dfs['sentiment']) * np.sign(self.dfs['volume'] / (self.dfs['volume'].rolling(20).mean() + 1e-15) - 1.0)
+        self.dfs['panic_score'] = np.where(self.dfs['sentiment'] < -0.4, 0.8, 0.0)
 
     def run(self, formula: str, holding_period: int = 1, slippage_bps: float = 5.0, 
             style: str = 'long_short', portfolio_size: Optional[int] = None) -> Dict[str, Any]:
@@ -484,9 +502,16 @@ class BacktestEngine:
         # Fitness Metric
         fitness = sharpe * np.sqrt(np.abs(ann_return)) / (avg_turnover if avg_turnover > 0 else 1e-15)
         
-        # Benchmark (SPY) Comparison
-        spy_ticker = 'SPY' if 'SPY' in close_df.columns else close_df.columns[0]
-        spy_returns = asset_returns[spy_ticker]
+        # Dynamic Benchmark Comparison (SPY for equities, BTC-USD for crypto, EURUSD=X for forex, or Equal-Weighted Universe)
+        if 'SPY' in close_df.columns:
+            spy_returns = asset_returns['SPY']
+        elif 'BTC-USD' in close_df.columns:
+            spy_returns = asset_returns['BTC-USD']
+        elif 'EURUSD=X' in close_df.columns:
+            spy_returns = asset_returns['EURUSD=X']
+        else:
+            # Fallback to equal-weighted average return of the active universe
+            spy_returns = asset_returns.mean(axis=1)
         spy_cum = (1 + spy_returns).cumprod() - 1
 
         # 6. Format Return Chart Series

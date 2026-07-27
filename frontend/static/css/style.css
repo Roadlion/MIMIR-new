@@ -1119,3 +1119,66 @@ a:hover {
     box-shadow: 0 0 8px rgba(0, 166, 178, 0.3);
 }
 
+/* ==================== TASTEFUL MICRO-ANIMATIONS & NAV POLISH ==================== */
+.nav-link.active,
+.nav-dropdown-trigger.active {
+    color: #00A6B2 !important;
+    background: rgba(0, 166, 178, 0.12) !important;
+    border-bottom: 2px solid #00A6B2;
+}
+
+/* Ambient Pulse for Status Indicators */
+@keyframes statusPulse {
+    0% { transform: scale(0.95); opacity: 0.75; box-shadow: 0 0 0 0 rgba(0, 166, 178, 0.5); }
+    70% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 6px rgba(0, 166, 178, 0); }
+    100% { transform: scale(0.95); opacity: 0.75; box-shadow: 0 0 0 0 rgba(0, 166, 178, 0); }
+}
+.animate-status-pulse {
+    animation: statusPulse 2.5s infinite ease-in-out;
+}
+
+/* Card Elevation & Border Glow */
+.hover-card-elevate {
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-card-elevate:hover {
+    transform: translateY(-2px);
+    border-color: rgba(0, 166, 178, 0.4);
+    box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 166, 178, 0.15);
+}
+
+/* Typing Dots Animation for AI Oracle */
+.typing-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #00A6B2;
+    animation: pulseDot 1.4s infinite ease-in-out both;
+}
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes pulseDot {
+    0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+    40% { transform: scale(1.0); opacity: 1; }
+}
+
+/* Watchlist Preset Chips */
+.wl-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    background: #0D1418;
+    border: 1px solid #1A2A30;
+    color: #8A9E9B;
+    transition: all 0.15s ease;
+    cursor: pointer;
+}
+.wl-chip:hover {
+    border-color: #00A6B2;
+    color: #00A6B2;
+    background: rgba(0, 166, 178, 0.08);
+}
+

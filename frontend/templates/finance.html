@@ -253,6 +253,32 @@
             
             <!-- FINANCIALS TAB -->
             <div id="tab-financials" class="tab-content hidden flex flex-col gap-6">
+                <!-- Agentic Valuation & Financial Skill Summary Card -->
+                <div class="p-5 glass-card border-l-4 border-l-[#00A6B2]">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-bold uppercase tracking-wider text-[#D6E5E3] font-mono"><i class="fas fa-calculator text-[#00A6B2] mr-2"></i> Agentic Valuation & Financial Skills</h3>
+                        <span id="val-badge" class="px-2.5 py-0.5 rounded text-[11px] font-mono uppercase bg-[#00A6B2]/20 text-[#00A6B2] border border-[#00A6B2]/40 font-bold">CALCULATING...</span>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono mt-3">
+                        <div class="p-3 bg-[#060A0D] border border-[#1A2A30] rounded">
+                            <div class="text-[#4A6A70] text-[10px] uppercase">DCF Intrinsic Value</div>
+                            <div id="val-dcf" class="text-base font-bold text-[#D6E5E3] mt-1">--</div>
+                        </div>
+                        <div class="p-3 bg-[#060A0D] border border-[#1A2A30] rounded">
+                            <div class="text-[#4A6A70] text-[10px] uppercase">Margin of Safety</div>
+                            <div id="val-mos" class="text-base font-bold text-[#D6E5E3] mt-1">--</div>
+                        </div>
+                        <div class="p-3 bg-[#060A0D] border border-[#1A2A30] rounded">
+                            <div class="text-[#4A6A70] text-[10px] uppercase">Relative Valuation vs Peers</div>
+                            <div id="val-comps" class="text-sm font-bold text-[#00A6B2] mt-1">--</div>
+                        </div>
+                        <div class="p-3 bg-[#060A0D] border border-[#1A2A30] rounded">
+                            <div class="text-[#4A6A70] text-[10px] uppercase">5-Yr LBO Projected IRR</div>
+                            <div id="val-irr" class="text-base font-bold text-[#D6E5E3] mt-1">--</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="p-5 glass-card">
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4 pb-4 border-b border-[#1A2A30]">
                         <div class="flex gap-2">
@@ -619,6 +645,9 @@
             document.getElementById("target-high").textContent = `$${detailsData.target_high}`;
             const recPercent = ((detailsData.target_mean - detailsData.target_low) / (detailsData.target_high - detailsData.target_low)) * 100;
             document.getElementById("consensus-slider").style.left = `${Math.min(Math.max(recPercent, 0), 100)}%`;
+
+            // Fetch Valuation Skills metrics
+            loadValuationData(tickerSymbol);
 
             // Peers rendering
             const peersContainer = document.getElementById("peers-container");
@@ -1019,12 +1048,21 @@
         });
     }
 
-    function formatNumber(num) {
-        if (!num || isNaN(num)) return "-";
-        if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
-        if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
-        if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
-        return num.toLocaleString();
+    async function loadValuationData(ticker) {
+        try {
+            const res = await fetch(`/api/v1/prices/valuation/${ticker}`);
+            const data = await res.json();
+            if (data && data.dcf) {
+                document.getElementById("val-badge").textContent = data.dcf.valuation_status || "FAIRLY_VALUED";
+                document.getElementById("val-dcf").textContent = `$${data.dcf.dcf_intrinsic_value}`;
+                const mosSign = data.dcf.margin_of_safety_pct >= 0 ? '+' : '';
+                document.getElementById("val-mos").textContent = `${mosSign}${data.dcf.margin_of_safety_pct}%`;
+                document.getElementById("val-comps").textContent = data.comps.relative_valuation || "FAIRLY ALIGNED";
+                document.getElementById("val-irr").textContent = `${data.lbo.projected_5yr_irr_pct}% (${data.lbo.equity_multiple_moic})`;
+            }
+        } catch (e) {
+            console.error("Failed to load valuation data:", e);
+        }
     }
 </script>
 {% endblock %}

@@ -366,14 +366,14 @@ async def start_scrape_loop():
 
 
 async def start_sentiment_loop():
-    """15-minute async loop for heavy sentiment pipeline (LLM calls)."""
+    """5-minute async loop for sentiment pipeline (smaller batches for fine velocity calculations)."""
     await asyncio.sleep(30)  # Stagger startup
     while True:
         try:
             await asyncio.to_thread(run_sentiment_cycle)
         except Exception as e:
             print(f"[BG_WORKER] Error in sentiment loop: {e}")
-        await asyncio.sleep(900)  # every 15 minutes
+        await asyncio.sleep(300)  # accelerated to 5 minutes
 
 
 async def start_signal_fusion_loop():
@@ -404,18 +404,28 @@ async def start_performance_and_learning_loop():
     """
     1-hour async loop that:
     1. Evaluates mature trade signals (every 1 hour).
-    2. Re-runs ticker-specific parameter tuning (every 24 hours).
+    2. Runs nightly supply chain co-occurrence mining (every 24 hours).
+    3. Re-runs ticker-specific parameter tuning (every 24 hours).
+    4. Runs weekly chain validation self-learning loop (every 7 days).
     """
     await asyncio.sleep(90)  # Stagger startup
     from ..analytics.performance_evaluator import evaluate_past_signals
+    from ..sentiment.supply_chain_mapper import mine_cooccurrence_chains
     
     last_tuning_time = datetime.now()
+    last_mining_time = datetime.now()
     
     while True:
         try:
             print("[BG_WORKER] Running Trade Alerts Performance Evaluation...")
             # Run evaluation (updates trade signals with PnL and successful/failed tags)
             await asyncio.to_thread(evaluate_past_signals)
+            
+            # Nightly co-occurrence mining
+            if datetime.now() - last_mining_time >= timedelta(hours=24):
+                print("[BG_WORKER] Running nightly supply chain co-occurrence mining...")
+                await asyncio.to_thread(mine_cooccurrence_chains, 3)
+                last_mining_time = datetime.now()
             
             # Run re-tuning if 24 hours have passed
             if datetime.now() - last_tuning_time >= timedelta(hours=24):

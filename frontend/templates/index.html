@@ -1114,6 +1114,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadWatchlistSentiment();
     }, 300000);
 
+    // Cross-page storage event listener for real-time watchlist sync
+    window.addEventListener('storage', () => {
+        renderWatchlist();
+        loadWatchlistPrices();
+        loadWatchlistSentiment();
+    });
+
     // ==================== MARKET SUMMARY ====================
     const summaryContainer = document.getElementById('market-summary-container');
     const summaryEmpty = document.getElementById('market-summary-empty');

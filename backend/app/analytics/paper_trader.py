@@ -15,8 +15,9 @@ settings = get_settings()
 
 def is_us_stock(ticker: str) -> bool:
     """
-    Returns True if ticker represents a US stock listed on NYSE, NASDAQ, or AMEX.
-    Filters out crypto (-USD), forex (=X), commodities (=F), and foreign exchange tickers with dots (.L, .BK, .DE, .NS, .SS, .SZ, etc.).
+    Returns True if ticker represents a major US stock listed on NYSE, NASDAQ, or AMEX (tradable on Dime).
+    Filters out OTC stocks (5-letter tickers ending in F or Y), crypto (-USD), forex (=X), commodities (=F),
+    and foreign exchange tickers with dots (.L, .BK, .DE, .NS, .SS, .SZ, .HK, .KS, .KQ, .TW, .SR, .SI, etc.).
     """
     if not ticker:
         return False
@@ -26,15 +27,87 @@ def is_us_stock(ticker: str) -> bool:
     if "-USD" in t or "=X" in t or "=F" in t:
         return False
 
-    # Exclude foreign exchange extensions with dots (e.g. .BK, .L, .DE, .NS, .SS, .SZ, .TO, .PA, .HK)
+    # Exclude foreign exchange extensions with dots (e.g. .BK, .L, .DE, .NS, .SS, .SZ, .TO, .PA, .HK, .KS, .KQ, .TW, .SR, .SI)
     if "." in t:
         return False
         
-    # Standard US equities consist of 1 to 5 alphabetical characters (e.g. AAPL, MSFT, TSLA, CAG, RYAAY)
+    # Standard US equities consist of 1 to 5 alphabetical characters (e.g. AAPL, MSFT, TSLA, NVDA, AMD, F, T).
+    # 5-letter tickers ending in 'F' or 'Y' denote OTC Foreign Ordinary shares and OTC ADRs (e.g. CPNFF, PILBF, HWAUF, ANPDY, VDMCY).
     if t.isalpha() and 1 <= len(t) <= 5:
+        if len(t) == 5 and t[-1] in ('F', 'Y'):
+            return False
         return True
-        
     return False
+
+# Execution blackout periods (all times ET)
+EXECUTION_BLACKOUT = {
+    'market_open': ('09:30', '10:15'),    # Retail emotion zone — do NOT enter
+    'market_close': ('15:45', '16:00'),   # End-of-day volatility — avoid
+}
+
+REGIME_EXIT_RULES = {
+    'ACCUMULATING': {'stop_loss': -4.0, 'take_profit': 10.0, 'trailing_stop': None},
+    'ALIGNED': {'stop_loss': -2.5, 'take_profit': 6.0, 'trailing_stop': -2.0},
+    'EXHAUSTED': {'stop_loss': -1.5, 'take_profit': 3.0, 'trailing_stop': -1.0},
+    'PANIC_OVERSOLD': {'stop_loss': -5.0, 'take_profit': 12.0, 'trailing_stop': None},
+    'NEUTRAL': {'stop_loss': -3.0, 'take_profit': 6.0, 'trailing_stop': None},
+}
+
+TIER_HOLD_LIMITS = {
+    'tier_2': {'min_hold': 2, 'max_hold': 7, 'optimal_hold': 5},
+    'tier_3': {'min_hold': 5, 'max_hold': 15, 'optimal_hold': 10},
+    'direct': {'min_hold': 1, 'max_hold': 10, 'optimal_hold': 5},
+}
+
+def is_execution_allowed(ignore_market_hours: bool = False) -> bool:
+    """
+    Checks if current time is within US regular market hours (Mon-Fri 09:30-16:00 ET)
+    and outside retail execution blackout windows (09:30-10:15 & 15:45-16:00 ET).
+    If ignore_market_hours is True, allows execution anytime for testing.
+    """
+    if ignore_market_hours:
+        return True
+    try:
+        from zoneinfo import ZoneInfo
+        now_et = datetime.now(ZoneInfo('America/New_York'))
+        
+        # 1. Weekend check (Saturday = 5, Sunday = 6)
+        if now_et.weekday() >= 5:
+            print(f"[PAPER_TRADER] Execution paused: Weekend ({now_et.strftime('%A')}). Market is closed.")
+            return False
+
+        current_time = now_et.strftime('%H:%M')
+        
+        # 2. Regular session hours check (09:30 to 16:00 ET)
+        if current_time < '09:30' or current_time > '16:00':
+            print(f"[PAPER_TRADER] Execution paused: Outside regular market hours ({current_time} ET). Only regular session (09:30-16:00 ET Mon-Fri) is allowed.")
+            return False
+
+        # 3. Monday Morning Strategy delay
+        if now_et.weekday() == 0 and current_time < '10:30':
+            print("[PAPER_TRADER] Execution paused: Monday Morning Strategy delay until 10:30 AM ET.")
+            return False
+            
+        # 4. Blackout windows within regular session
+        for name, (start, end) in EXECUTION_BLACKOUT.items():
+            if start <= current_time <= end:
+                print(f"[PAPER_TRADER] Execution paused during blackout window ({name}: {start}-{end} ET).")
+                return False
+                
+        return True
+    except Exception as e:
+        print(f"[PAPER_TRADER] Warning during execution time check: {e}")
+        return False
+
+def check_herd_arrival(ticker: str, conn=None) -> bool:
+    """When social volume spikes > 3x AND unanimity > 0.85, retail herd has arrived."""
+    try:
+        from .sentiment_momentum import compute_unanimity, compute_attention_decay
+        unanimity = compute_unanimity(ticker, lookback_days=5, conn=conn)
+        attention = compute_attention_decay(ticker, conn=conn)
+        return unanimity >= 0.85 and attention >= 0.80
+    except Exception:
+        return False
 
 
 def init_paper_trading_db():
@@ -211,6 +284,10 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
     if not config.get("is_enabled"):
         return {"executed_count": 0, "message": "Paper trading is currently disabled in settings."}
 
+    ignore_hours = config.get("ignore_market_hours", False)
+    if not is_execution_allowed(ignore_market_hours=ignore_hours):
+        return {"executed_count": 0, "message": "Paper trading execution paused: outside US regular market hours (Mon-Fri 09:30-16:00 ET) or during blackout window."}
+
     initial_capital = float(config.get("initial_capital", 200.0))
     us_only = config.get("us_stocks_only", True)
 
@@ -277,6 +354,10 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
         gmt_plus_7 = timezone(timedelta(hours=7))
         now_local = datetime.now(gmt_plus_7)
 
+        from backend.app.routers.portfolio import fetch_current_prices
+        tickers_in_alerts = list(set([a["ticker"].upper() for a in pending_alerts]))
+        live_prices = fetch_current_prices(tickers_in_alerts) if tickers_in_alerts else {}
+
         min_win_rate = float(config.get("min_win_rate", 55.0))
         min_sentiment = float(config.get("min_sentiment_score", 0.0))
 
@@ -302,6 +383,10 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             current_qty = active_qtys.get(ticker, 0.0)
             avg_entry = active_costs.get(ticker, 0.0)
 
+            # Resolve live execution price to prevent instant stop-out from stale alert trigger_price
+            live_p = live_prices.get(ticker, 0.0)
+            exec_price = live_p if live_p > 0 else trigger_price
+
             if signal_type == "BUY":
                 # Prevent position stacking: skip if we already hold an open position in this ticker
                 if current_qty > 0.0001:
@@ -317,34 +402,34 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
 
                 if pos_type == "FIXED_SHARES":
                     qty = pos_val
-                    trade_cost = qty * trigger_price
+                    trade_cost = qty * exec_price
                     if trade_cost > current_cash:
-                        qty = round(current_cash / trigger_price, 6)
+                        qty = round(current_cash / exec_price, 6)
                 else:  # FIXED_USD
                     trade_alloc = min(pos_val, current_cash)
-                    qty = round(trade_alloc / trigger_price, 6) if trigger_price > 0 else 0.1
+                    qty = round(trade_alloc / exec_price, 6) if exec_price > 0 else 0.1
 
                 if qty <= 0.000001:
                     continue
 
-                actual_cost = qty * trigger_price
+                actual_cost = qty * exec_price
 
                 # Execute BUY
                 cur.execute(f"""
                     INSERT INTO {schema}.mimir_paper_portfolio 
                     (ticker, order_date, buy_price, quantity, transaction_type)
                     VALUES (%s, %s, %s, %s, 'BUY')
-                """, (ticker, now_local, trigger_price, qty))
+                """, (ticker, now_local, exec_price, qty))
 
                 cur.execute(f"""
                     INSERT INTO {schema}.mimir_paper_trade_log
                     (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
                     VALUES (%s, %s, 'BUY', %s, %s, %s, 'ALERT_EXECUTION', %s)
-                """, (alert_id, ticker, trigger_price, qty, now_local, alert.get("reason")))
+                """, (alert_id, ticker, exec_price, qty, now_local, alert.get("reason")))
 
                 # Update local trackers
                 active_qtys[ticker] = qty
-                active_costs[ticker] = trigger_price
+                active_costs[ticker] = exec_price
                 current_cash -= actual_cost
 
             elif signal_type == "SELL":
@@ -353,26 +438,26 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                     continue
 
                 close_qty = current_qty  # Close existing open position
-                realized_pnl = close_qty * (trigger_price - avg_entry)
-                realized_pnl_pct = ((trigger_price - avg_entry) / avg_entry * 100.0) if avg_entry > 0 else 0.0
+                realized_pnl = close_qty * (exec_price - avg_entry)
+                realized_pnl_pct = ((exec_price - avg_entry) / avg_entry * 100.0) if avg_entry > 0 else 0.0
 
                 # Execute SELL
                 cur.execute(f"""
                     INSERT INTO {schema}.mimir_paper_portfolio 
                     (ticker, order_date, buy_price, quantity, transaction_type)
                     VALUES (%s, %s, %s, %s, 'SELL')
-                """, (ticker, now_local, trigger_price, close_qty))
+                """, (ticker, now_local, exec_price, close_qty))
 
                 cur.execute(f"""
                     INSERT INTO {schema}.mimir_paper_trade_log
                     (signal_id, ticker, action, entry_price, exit_price, quantity, entry_time, exit_time, exit_reason, realized_pnl, realized_pnl_pct, notes)
                     VALUES (%s, %s, 'SELL', %s, %s, %s, %s, %s, 'SIGNAL_EXIT', %s, %s, %s)
-                """, (alert_id, ticker, avg_entry, trigger_price, close_qty, now_local, now_local, realized_pnl, realized_pnl_pct, alert.get("reason")))
+                """, (alert_id, ticker, avg_entry, exec_price, close_qty, now_local, now_local, realized_pnl, realized_pnl_pct, alert.get("reason")))
 
                 # Update local trackers
                 active_qtys[ticker] = 0.0
                 active_costs[ticker] = 0.0
-                current_cash += (close_qty * trigger_price)
+                current_cash += (close_qty * exec_price)
 
             # Mark trade signal as APPROVED / AUTO_TRADED
             cur.execute(f"""
@@ -386,7 +471,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                 "alert_id": alert_id,
                 "ticker": ticker,
                 "signal_type": signal_type,
-                "trigger_price": trigger_price,
+                "trigger_price": exec_price,
                 "quantity": qty if signal_type == 'BUY' else close_qty
             })
 
@@ -452,8 +537,7 @@ def process_paper_position_exits() -> Dict[str, Any]:
                 continue
 
             net_qty = 0.0
-            avg_price = 0.0
-            total_cost = 0.0
+            cost_basis = 0.0
             first_entry_date = None
 
             for tx in txs:
@@ -461,19 +545,24 @@ def process_paper_position_exits() -> Dict[str, Any]:
                 q = float(tx["quantity"])
                 p = float(tx["buy_price"])
                 dt = tx["order_date"]
-                if first_entry_date is None or dt < first_entry_date:
+                if net_qty <= 0.0001:
                     first_entry_date = dt
 
                 if t_type == "BUY":
-                    total_cost += q * p
+                    if net_qty + q > 0:
+                        cost_basis = (net_qty * cost_basis + q * p) / (net_qty + q)
                     net_qty += q
                 elif t_type == "SELL":
                     net_qty -= q
+                    if net_qty <= 0.0001:
+                        net_qty = 0.0
+                        cost_basis = 0.0
+                        first_entry_date = None
 
             if net_qty <= 0.0001:
                 continue
 
-            avg_price = total_cost / net_qty if net_qty > 0 else 0.0
+            avg_price = cost_basis
             if avg_price <= 0:
                 continue
 

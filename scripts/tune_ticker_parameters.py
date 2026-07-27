@@ -111,7 +111,8 @@ def load_data():
                                    (a.published_ts AT TIME ZONE 'America/New_York')::date
                            END
                    END as date,
-                   si.sentiment_score
+                   si.sentiment_score,
+                   si.article_id
             FROM {settings.mimir_schema}.mimir_sentiment_impacts si
             JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
             WHERE a.published_ts >= '2025-01-01' AND si.ticker IS NOT NULL
@@ -254,9 +255,17 @@ def calculate_features_and_targets(df, holding_period=5, slippage_bps=5.0):
     
     df['forward_return'] = (df['close_hold'] - df['open_next']) / (df['open_next'] + 1e-15)
     
+    # Path-aware max high and min low during the holding period window
+    df['max_high_hold'] = df.groupby('ticker')['high'].transform(lambda x: x.iloc[::-1].rolling(holding_period, min_periods=1).max().iloc[::-1]).shift(-holding_period)
+    df['min_low_hold'] = df.groupby('ticker')['low'].transform(lambda x: x.iloc[::-1].rolling(holding_period, min_periods=1).min().iloc[::-1]).shift(-holding_period)
+
+    df['max_up_pct'] = (df['max_high_hold'] - df['open_next']) / (df['open_next'] + 1e-15)
+    df['max_down_pct'] = (df['open_next'] - df['min_low_hold']) / (df['open_next'] + 1e-15)
+
     cost = 2.0 * slippage_bps / 10000.0
-    df['target_buy'] = (df['forward_return'] > cost).astype(int)
-    df['target_sell'] = (-df['forward_return'] > cost).astype(int)
+    # Target is positive ONLY if return > cost AND maximum drawdown during holding period did not trigger 3% stop loss
+    df['target_buy'] = ((df['forward_return'] > cost) & (df['max_down_pct'] < 0.03)).astype(int)
+    df['target_sell'] = ((-df['forward_return'] > cost) & (df['max_up_pct'] < 0.03)).astype(int)
     
     # Drop rows that don't have enough history or future dates (to avoid target NaNs)
     df = df.dropna(subset=['rsi', 'support', 'resistance', 'volatility_20d', 'open_next', 'close_hold']).copy()
@@ -417,16 +426,16 @@ def recursive_feature_elimination(df_train, df_val, target_col, side="buy"):
     return final_model, best_overall_features, final_metrics
 
 def optimize_threshold(model, X_val, df_val, side="buy"):
-    """Simulates trading at various probability thresholds on validation set
-    to pick the optimal threshold maximizing cumulative return.
+    """Simulates trading at various high-conviction probability thresholds on validation set
+    to pick the optimal threshold maximizing cumulative return while maintaining win rate >= 55%.
     """
     if len(df_val) == 0:
-        return 0.55, 0.0, 0.0, 0
+        return 0.65, 0.0, 0.0, 0
         
     probs = model.predict_proba(X_val)[:, 1]
     
-    thresholds = [0.51, 0.53, 0.55, 0.57, 0.60, 0.63, 0.65]
-    best_thresh = 0.55
+    thresholds = [0.60, 0.63, 0.65, 0.68, 0.70, 0.73, 0.75, 0.80]
+    best_thresh = 0.65
     best_pnl = -999.0
     best_win_rate = 0.0
     best_trades = 0
@@ -442,18 +451,18 @@ def optimize_threshold(model, X_val, df_val, side="buy"):
             win_rate = sum(1 for r in trade_returns if r > 0) / total_trades * 100.0
             avg_pnl = np.mean(trade_returns) * 100.0
             
-            # Objective: Maximize total cumulative PnL
+            # Objective: Maximize total cumulative PnL, requiring win_rate >= 50.0%
             total_pnl = np.sum(trade_returns) * 100.0
             
-            if total_pnl > best_pnl:
+            if win_rate >= 50.0 and total_pnl > best_pnl:
                 best_pnl = total_pnl
                 best_thresh = th
                 best_win_rate = win_rate
                 best_trades = total_trades
                 
     if best_trades == 0:
-        # If no trades triggered, fallback default
-        return 0.55, 0.0, 0.0, 0
+        # Fallback default high conviction
+        return 0.65, 0.0, 0.0, 0
         
     # Return optimal values
     avg_pnl = (best_pnl / best_trades) if best_trades > 0 else 0.0
@@ -543,7 +552,7 @@ def train_and_tune_all():
                     selected_features_buy = EXCLUDED.selected_features_buy,
                     selected_features_sell = EXCLUDED.selected_features_sell,
                     updated_at = NOW();
-            """, (ticker, 30.0, 65.0, 0.3, 1.0, holding_period, None, None, 0, 0.55, 0.55, json.dumps(list(FEATURE_COLS)), json.dumps(list(FEATURE_COLS))))
+            """, (ticker, 30.0, 65.0, 0.3, 1.0, holding_period, None, None, 0, 0.65, 0.65, json.dumps(list(FEATURE_COLS)), json.dumps(list(FEATURE_COLS))))
             continue
             
         print(f"[{i}/{total_tickers}] Tuning parameters for {ticker}...")

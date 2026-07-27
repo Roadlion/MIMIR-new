@@ -5,6 +5,7 @@ from typing import List, Optional, Dict
 from datetime import datetime, timezone
 import requests
 import json
+import re
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
@@ -858,8 +859,12 @@ CONTEXT DATA:
 {json.dumps(prompt_context, indent=2)}
 ---
 
-Generate a comprehensive strategic briefing for the user's portfolio. The output MUST be raw HTML (do not wrap in ```html or other markdown blocks; just start with the HTML elements directly).
+Generate a comprehensive strategic briefing for the user's portfolio. The output MUST be raw HTML fragments (do not wrap in ```html or other markdown blocks; do NOT include <style>, <script>, <html>, <head>, or <body> tags; just start with the HTML elements directly).
 Use Tailwind CSS classes to style the output so it looks premium, sleek, and matches a high-end terminal dashboard (dark theme, using the application's palette of dark slate, emerald, cyan, amber, and gold/yellow).
+
+STRICT HTML & STYLING DIRECTIVES:
+- Do NOT include <style> blocks, CSS definitions, or custom CSS rules under any circumstances.
+- Do NOT include <script> tags, external links, or stylesheet links.
 
 STRICT DATA INTEGRITY DIRECTIVES:
 - Do NOT search online, use pre-trained general knowledge, or fabricate numbers.
@@ -935,11 +940,20 @@ Format values nicely (e.g. prefixing dollar amounts with $, formatting percentag
             timeout=60
         )
         
-        # Clean markdown code block wraps if LLM returns them
-        if content.startswith("```html"):
-            content = content.replace("```html", "", 1)
+        # Clean markdown code block wraps and sanitize HTML content
+        content = content.strip()
+        if content.startswith("```"):
+            content = re.sub(r'^```[a-zA-Z]*\s*', '', content)
         if content.endswith("```"):
-            content = content[:-3]
+            content = re.sub(r'\s*```$', '', content)
+            
+        # Strip any <style>...</style>, <script>...</script>, and global wrapper tags to prevent document style leaks
+        content = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'<head[^>]*>[\s\S]*?</head>', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'<!DOCTYPE[^>]*>', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'</?(?:html|head|body)[^>]*>', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'<link[^>]*rel=["\']stylesheet["\'][^>]*>', '', content, flags=re.IGNORECASE)
         content = content.strip()
         
         return {"advice": content}
@@ -950,9 +964,16 @@ Format values nicely (e.g. prefixing dollar amounts with $, formatting percentag
 
 
 @router.get("/portfolio/history")
-def get_portfolio_history():
-    from datetime import timedelta, date
+def get_portfolio_history(
+    period: str = Query("1m", description="1w, 1m, 3m, 6m, 1y, ytd, all"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    benchmark: str = Query("SPY", description="Benchmark ticker to compare against")
+):
+    from datetime import timedelta, date, datetime as dt
     import time
+    import math
+    import numpy as np
     from curl_cffi.requests import Session
 
     conn = get_db_connection_dict()
@@ -960,7 +981,10 @@ def get_portfolio_history():
     
     # 1. Fetch all transactions sorted by order_date
     cur.execute(f"""
-        SELECT ticker, buy_price, quantity, transaction_type, order_date
+        SELECT ticker, buy_price, quantity, transaction_type, order_date,
+               COALESCE(brokerage_fee, 0.0) as brokerage_fee,
+               COALESCE(regulatory_fee, 0.0) as regulatory_fee,
+               COALESCE(other_fee, 0.0) as other_fee
         FROM {settings.mimir_schema}.mimir_portfolio
         ORDER BY order_date ASC
     """)
@@ -969,14 +993,56 @@ def get_portfolio_history():
     if not txs:
         cur.close()
         conn.close()
-        return []
+        return {
+            "history": [],
+            "benchmark": [],
+            "metrics": {},
+            "allocation": [],
+            "monthly_matrix": []
+        }
         
     tickers = list(set(tx["ticker"].upper() for tx in txs))
+    bm_ticker = benchmark.upper()
+    all_tickers_to_fetch = list(set(tickers + [bm_ticker]))
     
-    # 2. Fetch price history for the tickers for the last 30 days
-    # We will query local hourly/daily cache first or fallback to yfinance
-    end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=30)
+    # Calculate date range
+    now_utc = datetime.now(timezone.utc)
+    
+    if start_date and end_date:
+        try:
+            calc_start_date = dt.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            calc_end_date = dt.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except Exception:
+            calc_end_date = now_utc
+            calc_start_date = now_utc - timedelta(days=30)
+    else:
+        calc_end_date = now_utc
+        p = period.lower()
+        if p == "1w":
+            calc_start_date = now_utc - timedelta(days=7)
+        elif p == "1m":
+            calc_start_date = now_utc - timedelta(days=30)
+        elif p == "3m":
+            calc_start_date = now_utc - timedelta(days=90)
+        elif p == "6m":
+            calc_start_date = now_utc - timedelta(days=180)
+        elif p == "1y":
+            calc_start_date = now_utc - timedelta(days=365)
+        elif p == "ytd":
+            calc_start_date = dt(now_utc.year, 1, 1, tzinfo=timezone.utc)
+        elif p == "all":
+            earliest_tx = txs[0]["order_date"]
+            if isinstance(earliest_tx, dt):
+                calc_start_date = earliest_tx if earliest_tx.tzinfo else earliest_tx.replace(tzinfo=timezone.utc)
+            else:
+                calc_start_date = now_utc - timedelta(days=365)
+        else:
+            calc_start_date = now_utc - timedelta(days=30)
+            
+    if calc_start_date > calc_end_date:
+        calc_start_date, calc_end_date = calc_end_date - timedelta(days=30), calc_end_date
+
+    days_diff = max(1, (calc_end_date.date() - calc_start_date.date()).days)
     
     prices_map = {} # {ticker: {date_str: price}}
     
@@ -993,9 +1059,9 @@ def get_portfolio_history():
             cur_p.execute(f"""
                 SELECT DISTINCT ON (DATE(timestamp)) DATE(timestamp) as date, close
                 FROM {settings.mimir_schema}.mimir_hourly_ohlcv
-                WHERE ticker = %s AND timestamp >= NOW() - INTERVAL '40 days'
+                WHERE ticker = %s AND timestamp >= %s - INTERVAL '15 days'
                 ORDER BY DATE(timestamp), timestamp DESC
-            """, (ticker,))
+            """, (ticker, calc_start_date))
             rows = cur_p.fetchall()
             cur_p.close()
             
@@ -1005,11 +1071,21 @@ def get_portfolio_history():
         except Exception as e:
             print(f"[PORTFOLIO HISTORY] DB error for {ticker}: {e}")
             
-        # If we got no data or less than 15 days, let's fetch from yfinance as fallback
-        if len(ticker_prices) < 15:
+        # yfinance fallback
+        yf_period = "1mo"
+        if days_diff > 300:
+            yf_period = "max"
+        elif days_diff > 150:
+            yf_period = "1y"
+        elif days_diff > 60:
+            yf_period = "6mo"
+        elif days_diff > 14:
+            yf_period = "3mo"
+            
+        if len(ticker_prices) < max(5, days_diff * 0.4):
             try:
                 t = yf.Ticker(ticker, session=session)
-                df = t.history(period="1mo", interval="1d")
+                df = t.history(period=yf_period, interval="1d")
                 for index, row in df.iterrows():
                     date_str = index.strftime("%Y-%m-%d")
                     ticker_prices[date_str] = float(row["Close"])
@@ -1019,34 +1095,68 @@ def get_portfolio_history():
         return ticker, ticker_prices
 
     with ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(fetch_ticker_history, tickers)
+        results = executor.map(fetch_ticker_history, all_tickers_to_fetch)
         for ticker, t_prices in results:
             prices_map[ticker] = t_prices
             
     cur.close()
     conn.close()
     
-    # 3. Generate list of dates for the last 30 days
+    # Generate list of dates from calc_start_date to calc_end_date
     date_list = []
-    for i in range(31):
-        day = start_date + timedelta(days=i)
+    num_days = (calc_end_date.date() - calc_start_date.date()).days + 1
+    for i in range(num_days):
+        day = calc_start_date + timedelta(days=i)
         date_list.append(day.date())
         
     history_data = []
+    total_brokerage_fees = 0.0
+    total_regulatory_fees = 0.0
+    total_other_fees = 0.0
+    total_dividends_earned = 0.0
     
-    # 4. For each day, simulate portfolio holdings up to that date and calculate value
+    # Calculate fee totals from txs
+    for tx in txs:
+        total_brokerage_fees += float(tx.get("brokerage_fee") or 0)
+        total_regulatory_fees += float(tx.get("regulatory_fee") or 0)
+        total_other_fees += float(tx.get("other_fee") or 0)
+        if tx.get("transaction_type", "").upper() == "DIVIDEND":
+            total_dividends_earned += float(tx.get("quantity") or 0) * float(tx.get("buy_price") or 0)
+
+    # Benchmark initial baseline price
+    bm_prices = prices_map.get(bm_ticker, {})
+    bm_base_price = None
+    first_day_str = date_list[0].strftime("%Y-%m-%d") if date_list else None
+    if first_day_str and first_day_str in bm_prices:
+        bm_base_price = bm_prices[first_day_str]
+    else:
+        for d_check in sorted(bm_prices.keys()):
+            bm_base_price = bm_prices[d_check]
+            break
+            
+    last_known_bm_price = bm_base_price or 1.0
+
+    # Simulate portfolio on each day
     for day_date in date_list:
         day_str = day_date.strftime("%Y-%m-%d")
         
         holdings_on_day = {}
         for tx in txs:
             tx_date = tx["order_date"]
-            if tx_date.date() <= day_date:
+            if isinstance(tx_date, dt):
+                tx_d = tx_date.date()
+            else:
+                tx_d = tx_date
+                
+            if tx_d <= day_date:
                 ticker = tx["ticker"].upper()
                 qty = float(tx["quantity"])
                 price = float(tx["buy_price"])
                 tx_type = tx.get("transaction_type", "BUY").upper()
                 
+                if tx_type == "DIVIDEND":
+                    continue
+                    
                 if ticker not in holdings_on_day:
                     holdings_on_day[ticker] = {"qty": 0.0, "avg_buy": 0.0}
                     
@@ -1072,8 +1182,7 @@ def get_portfolio_history():
                 price = ticker_prices.get(day_str)
                 
                 if price is None:
-                    # Look back up to 10 days for closest preceding price
-                    for lookback in range(1, 10):
+                    for lookback in range(1, 15):
                         prev_date = (day_date - timedelta(days=lookback)).strftime("%Y-%m-%d")
                         if prev_date in ticker_prices:
                             price = ticker_prices[prev_date]
@@ -1088,15 +1197,232 @@ def get_portfolio_history():
         day_pl = day_value - day_cost
         day_pl_pct = (day_pl / day_cost * 100) if day_cost > 0 else 0.0
         
+        # Benchmark value on this day
+        bm_price = bm_prices.get(day_str)
+        if bm_price is None:
+            bm_price = last_known_bm_price
+        else:
+            last_known_bm_price = bm_price
+            
+        bm_return_pct = ((bm_price - bm_base_price) / bm_base_price * 100) if (bm_base_price and bm_base_price > 0) else 0.0
+        
         history_data.append({
             "date": day_str,
             "portfolio_value": round(day_value, 2),
             "cost_basis": round(day_cost, 2),
             "profit_loss": round(day_pl, 2),
-            "profit_loss_pct": round(day_pl_pct, 2)
+            "profit_loss_pct": round(day_pl_pct, 2),
+            "benchmark_price": round(bm_price, 2),
+            "benchmark_return_pct": round(bm_return_pct, 2)
         })
         
-    return history_data
+    # Calculate Quantitative Metrics
+    metrics = {
+        "start_date": first_day_str,
+        "end_date": date_list[-1].strftime("%Y-%m-%d") if date_list else "",
+        "period": period,
+        "current_value": history_data[-1]["portfolio_value"] if history_data else 0.0,
+        "current_cost": history_data[-1]["cost_basis"] if history_data else 0.0,
+        "current_unrealized_pl": history_data[-1]["profit_loss"] if history_data else 0.0,
+        "current_unrealized_pl_pct": history_data[-1]["profit_loss_pct"] if history_data else 0.0,
+        "total_dividends": round(total_dividends_earned, 2),
+        "total_fees": round(total_brokerage_fees + total_regulatory_fees + total_other_fees, 2),
+        "brokerage_fees": round(total_brokerage_fees, 2),
+        "regulatory_fees": round(total_regulatory_fees, 2),
+        "other_fees": round(total_other_fees, 2)
+    }
+
+    # Calculate returns series for advanced metrics
+    if len(history_data) >= 2:
+        # Daily percentage changes & daily dollar changes (excluding capital buys/sells)
+        daily_pct_changes = []
+        daily_dollar_changes = []
+        curr_peak = history_data[0]["portfolio_value"]
+        max_dd = 0.0
+        twr_factor = 1.0
+        
+        for i in range(len(history_data)):
+            v = history_data[i]["portfolio_value"]
+            if v > curr_peak:
+                curr_peak = v
+            dd = ((curr_peak - v) / curr_peak * 100) if curr_peak > 0 else 0.0
+            if dd > max_dd:
+                max_dd = dd
+                
+            if i > 0:
+                prev_v = history_data[i-1]["portfolio_value"]
+                prev_c = history_data[i-1]["cost_basis"]
+                curr_c = history_data[i]["cost_basis"]
+                cap_injected = curr_c - prev_c
+                
+                # Pure market gain/loss excluding capital injected
+                d_dollar = v - prev_v - cap_injected
+                base_v = prev_v + max(0, cap_injected)
+                if base_v > 0:
+                    d_pct = (d_dollar / base_v) * 100.0
+                elif prev_v > 0:
+                    d_pct = (d_dollar / prev_v) * 100.0
+                else:
+                    d_pct = 0.0
+                    
+                daily_pct_changes.append(d_pct)
+                daily_dollar_changes.append(d_dollar)
+                twr_factor *= (1.0 + (d_pct / 100.0))
+
+        # Time-Weighted Return (%) over the selected period
+        port_ret_pct = (twr_factor - 1.0) * 100.0
+        bm_ret_pct = history_data[-1]["benchmark_return_pct"]
+        alpha = port_ret_pct - bm_ret_pct
+                
+        # Win Rate & Profit Factor
+        pos_days = [d for d in daily_pct_changes if d > 0]
+        neg_days = [d for d in daily_pct_changes if d < 0]
+        win_rate = (len(pos_days) / len(daily_pct_changes) * 100) if daily_pct_changes else 0.0
+        gross_gains = sum(pos_days)
+        gross_losses = abs(sum(neg_days))
+        profit_factor = (gross_gains / gross_losses) if gross_losses > 0 else (gross_gains if gross_gains > 0 else 1.0)
+        
+        # Volatility & Sharpe Ratio (rf = 4.5% annual = 0.045/252 daily)
+        if len(daily_pct_changes) > 1:
+            arr = np.array(daily_pct_changes) / 100.0
+            mean_daily = np.mean(arr)
+            std_daily = np.std(arr, ddof=1)
+            ann_vol = std_daily * math.sqrt(252) * 100.0
+            
+            rf_daily = 0.045 / 252.0
+            sharpe = ((mean_daily - rf_daily) / std_daily * math.sqrt(252)) if std_daily > 0 else 0.0
+            
+            # Sortino
+            downside_arr = arr[arr < rf_daily]
+            downside_std = np.std(downside_arr, ddof=1) if len(downside_arr) > 1 else std_daily
+            sortino = ((mean_daily - rf_daily) / downside_std * math.sqrt(252)) if downside_std > 0 else sharpe
+        else:
+            ann_vol = 0.0
+            sharpe = 0.0
+            sortino = 0.0
+            
+        best_day_val = max(daily_dollar_changes) if daily_dollar_changes else 0.0
+        worst_day_val = min(daily_dollar_changes) if daily_dollar_changes else 0.0
+        best_day_pct = max(daily_pct_changes) if daily_pct_changes else 0.0
+        worst_day_pct = min(daily_pct_changes) if daily_pct_changes else 0.0
+        
+        metrics.update({
+            "portfolio_return_pct": round(port_ret_pct, 2),
+            "benchmark_return_pct": round(bm_ret_pct, 2),
+            "benchmark_ticker": bm_ticker,
+            "alpha": round(alpha, 2),
+            "beat_market": bool(alpha >= 0),
+            "max_drawdown_pct": round(max_dd, 2),
+            "annualized_volatility_pct": round(ann_vol, 2),
+            "sharpe_ratio": round(sharpe, 2),
+            "sortino_ratio": round(sortino, 2),
+            "win_rate_pct": round(win_rate, 1),
+            "profit_factor": round(profit_factor, 2),
+            "best_day_dollar": round(best_day_val, 2),
+            "best_day_pct": round(best_day_pct, 2),
+            "worst_day_dollar": round(worst_day_val, 2),
+            "worst_day_pct": round(worst_day_pct, 2)
+        })
+    else:
+        metrics.update({
+            "portfolio_return_pct": 0.0,
+            "benchmark_return_pct": 0.0,
+            "benchmark_ticker": bm_ticker,
+            "alpha": 0.0,
+            "beat_market": True,
+            "max_drawdown_pct": 0.0,
+            "annualized_volatility_pct": 0.0,
+            "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
+            "win_rate_pct": 0.0,
+            "profit_factor": 1.0,
+            "best_day_dollar": 0.0,
+            "best_day_pct": 0.0,
+            "worst_day_dollar": 0.0,
+            "worst_day_pct": 0.0
+        })
+
+    # Asset Allocation Calculation
+    latest_holdings = {}
+    for tx in txs:
+        ticker = tx["ticker"].upper()
+        qty = float(tx["quantity"])
+        price = float(tx["buy_price"])
+        tx_type = tx.get("transaction_type", "BUY").upper()
+        if tx_type == "DIVIDEND":
+            continue
+        if ticker not in latest_holdings:
+            latest_holdings[ticker] = {"qty": 0.0, "avg_buy": 0.0}
+        h = latest_holdings[ticker]
+        if tx_type == "BUY":
+            if h["qty"] + qty > 0:
+                h["avg_buy"] = (h["qty"] * h["avg_buy"] + qty * price) / (h["qty"] + qty)
+            h["qty"] += qty
+        elif tx_type == "SELL":
+            h["qty"] -= qty
+            if h["qty"] <= 0:
+                h["qty"] = 0.0
+                h["avg_buy"] = 0.0
+                
+    allocation = []
+    tot_val = metrics["current_value"]
+    for ticker, h in latest_holdings.items():
+        if h["qty"] > 0:
+            cur_p = h["avg_buy"]
+            t_prices = prices_map.get(ticker, {})
+            if t_prices:
+                cur_p = list(t_prices.values())[-1]
+            c_val = h["qty"] * cur_p
+            c_cost = h["qty"] * h["avg_buy"]
+            unrealized = c_val - c_cost
+            weight = (c_val / tot_val * 100) if tot_val > 0 else 0.0
+            allocation.append({
+                "ticker": ticker,
+                "quantity": round(h["qty"], 4),
+                "current_price": round(cur_p, 2),
+                "market_value": round(c_val, 2),
+                "cost_basis": round(c_cost, 2),
+                "unrealized_pl": round(unrealized, 2),
+                "weight_pct": round(weight, 2)
+            })
+    allocation.sort(key=lambda x: x["market_value"], reverse=True)
+
+    # Monthly Performance Matrix
+    monthly_data = {}
+    for h in history_data:
+        ym = h["date"][:7] # YYYY-MM
+        if ym not in monthly_data:
+            monthly_data[ym] = {
+                "month": ym,
+                "start_val": h["portfolio_value"],
+                "end_val": h["portfolio_value"],
+                "start_bm": h["benchmark_return_pct"],
+                "end_bm": h["benchmark_return_pct"]
+            }
+        else:
+            monthly_data[ym]["end_val"] = h["portfolio_value"]
+            monthly_data[ym]["end_bm"] = h["benchmark_return_pct"]
+            
+    monthly_matrix = []
+    for ym, m in sorted(monthly_data.items(), reverse=True):
+        m_ret = ((m["end_val"] - m["start_val"]) / m["start_val"] * 100) if m["start_val"] > 0 else 0.0
+        m_bm_ret = m["end_bm"] - m["start_bm"]
+        m_alpha = m_ret - m_bm_ret
+        monthly_matrix.append({
+            "month": ym,
+            "portfolio_return_pct": round(m_ret, 2),
+            "benchmark_return_pct": round(m_bm_ret, 2),
+            "alpha": round(m_alpha, 2),
+            "beat_market": bool(m_alpha >= 0)
+        })
+
+    return {
+        "history": history_data,
+        "benchmark": [],
+        "metrics": metrics,
+        "allocation": allocation,
+        "monthly_matrix": monthly_matrix
+    }
 
 def evaluate_tick_stoploss(price_cache):
     """Event-driven portfolio risk management using live 1-min data."""

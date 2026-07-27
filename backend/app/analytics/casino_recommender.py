@@ -56,6 +56,7 @@ class SignalBundle:
     resistance: Optional[float]
     win_rate: Optional[float]
     avg_pnl: Optional[float]
+    is_simulated_chain: bool = False
 
 @dataclass 
 class StrategyRecommendation:
@@ -165,7 +166,8 @@ def gather_signals(ticker: str) -> SignalBundle:
         support=support,
         resistance=resistance,
         win_rate=win_rate,
-        avg_pnl=avg_pnl
+        avg_pnl=avg_pnl,
+        is_simulated_chain=(chain is None)
     )
 
 def scan_universe(tickers: Optional[List[str]] = None, top_k: int = 10) -> List[StrategyRecommendation]:
@@ -407,31 +409,40 @@ def rank_strategies(candidates: List[Strategy], signals: SignalBundle) -> List[S
     return recs
 
 def generate_explanation(strategy: Strategy, signals: SignalBundle) -> str:
+    prem_val = getattr(strategy, 'net_premium', 0.0)
+    prem_str = f"${abs(prem_val):.2f} ({'credit' if prem_val > 0 else 'debit'})"
+    mp_str = 'Unlimited' if strategy.max_profit == float('inf') or strategy.max_profit is None else f'${strategy.max_profit:.2f}'
+    ml_str = 'Unlimited' if strategy.max_loss == float('inf') or strategy.max_loss is None else f'${strategy.max_loss:.2f}'
+    iv_str = f"{signals.iv_rank_value:.1f}" if getattr(signals, 'iv_rank_value', None) is not None else "N/A"
+    buy_str = f"{signals.prob_buy:.2f}" if getattr(signals, 'prob_buy', None) is not None else "N/A"
+    sell_str = f"{signals.prob_sell:.2f}" if getattr(signals, 'prob_sell', None) is not None else "N/A"
+    sent_str = f"{signals.sentiment_score:.2f}" if getattr(signals, 'sentiment_score', None) is not None else "N/A"
+
     prompt = f"""
 Explain why the '{strategy.name}' options strategy is recommended for {signals.ticker}.
 Current Signals:
 - Price: ${signals.current_price:.2f}
-- Buy Probability (XGBoost): {signals.prob_buy:.2f}
-- Sell Probability (XGBoost): {signals.prob_sell:.2f}
-- Sentiment: {signals.sentiment_score}
-- IV Rank: {signals.iv_rank_value}
+- Buy Probability (XGBoost): {buy_str}
+- Sell Probability (XGBoost): {sell_str}
+- Sentiment: {sent_str}
+- IV Rank: {iv_str}
 
 Strategy Details:
-- Cost/Credit: ${strategy.net_cost if strategy.net_cost > 0 else -strategy.net_credit:.2f}
-- Max Profit: {'Unlimited' if strategy.max_profit == float('inf') else f'${strategy.max_profit:.2f}'}
-- Max Loss: {'Unlimited' if strategy.max_loss == float('inf') else f'${strategy.max_loss:.2f}'}
+- Cost/Credit: {prem_str}
+- Max Profit: {mp_str}
+- Max Loss: {ml_str}
 
 Keep the explanation concise, professional, and max 3 sentences. Focus on how the strategy fits the signals.
 """
     try:
-        response = send_chat_completion([{"role": "user", "content": prompt}], max_tokens=100)
+        response = send_chat_completion([{"role": "user", "content": prompt}])
         if response and response.strip():
             return response.strip()
     except Exception as e:
         print(f"[CASINO_RECOMMENDER] LLM explanation failed: {e}")
         
     # Rule-based fallback
-    return f"The {strategy.name} strategy aligns with {signals.ticker}'s current signal profile, offering defined risk/reward characteristics suitable for an IV Rank of {signals.iv_rank_value:.1f} and buy probability of {signals.prob_buy:.2f}."
+    return f"The {strategy.name} strategy aligns with {signals.ticker}'s current signal profile, offering defined risk/reward characteristics suitable for an IV Rank of {iv_str} and buy probability of {buy_str}."
 
 def generate_recommendations(ticker: str, top_k: int = 5, use_llm: bool = True) -> List[StrategyRecommendation]:
     try:

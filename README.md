@@ -8,12 +8,14 @@ This repository is designed to be easily navigated and understood by both **huma
 
 ## 🎯 Core Mission & Trading Edge
 
-MIMIR provides structural trading edges by identifying:
-1. **Niche Sentiment Arbitrage**: Spotting discrepancies between news/social sentiment momentum and price action before retail channels react.
-2. **Capacity-Constrained Opportunities**: Capitalizing on smaller, low-liquidity, or specialized assets (e.g., small-cap equities, localized commodity spreads, niche crypto tokens) where large hedge funds cannot trade because their large capital size would cause excessive market impact.
-3. **Multi-Factor Signal Fusion**: Combining real-time sentiment catalyst indicators, technical analysis setups, and Corporate Fundamentals to filter out false breakouts and back high-probability setups.
-4. **Self-Funding / Operational Efficiency**: Generating enough reliable alpha yields to fully offset operational API expenses (such as DeepSeek token consumption and premium data feeds).
-5. **Medium-Term Execution Horizon**: MIMIR is NOT designed for High-Frequency Trading (HFT); rather, it aims to exploit medium-term market inefficiencies (spanning hours to days).
+MIMIR operates on **Project Odin: Retail-Predator System Architecture**. Instead of chasing breaking news articles 15-33 minutes late against HFT algos, MIMIR exploits systematic, predictable retail behavioral patterns across multi-tiered supply chains.
+
+Key structural trading edges:
+1. **Sentiment Regime Classification**: Classifying *WHERE* in the narrative cycle an asset is (`ACCUMULATING`, `PANIC_OVERSOLD`, `EXHAUSTED`, `ALIGNED`, `DIVERGENT`, `NEUTRAL`) using 3-day sentiment velocity, acceleration, price-sentiment gap, and narrative persistence.
+2. **Supply Chain Cascade ("Trade the Ripple, Not the Splash")**: Identifying *WHAT* to trade (2nd & 3rd order beneficiaries with 2–10 day diffusion delays) while skipping headline frontline tickers (e.g., NVDA, TSLA) where market efficiency is instantaneous.
+3. **Retail Behavioral Exploitation**: Explicitly exploiting retail flaws (hype chasing, panic selling on stable fundamentals, Monday morning opening emotion, 3-5 day attention span decay, and price/volume ignoring).
+4. **Session & Execution Discipline**: Enforcing strict US regular market session execution (Mon-Fri 09:30–16:00 ET), market open/close blackout windows, and Monday morning strategy delays (10:30 AM ET).
+5. **Self-Learning Relationship Validation**: Weekly automated feedback loop evaluating supply chain pair hit-rates, promoting validated relationships (`hit_rate >= 0.55`), and deprecating failing links.
 
 ---
 
@@ -115,6 +117,27 @@ Use this directory map to understand exactly where features live and what each s
 * [technical_analysis.py](file:///backend/app/analytics/technical_analysis.py)
   * **Role**: Vectorized technical indicator computer.
   * **Key Functions**: Calculates RSI, moving averages (EMA/SMA), Bollinger Bands, and support/resistance zones using Pandas.
+* [casino_recommender.py](file:///backend/app/analytics/casino_recommender.py)
+  * **Role**: Options strategy recommendation engine.
+  * **Key Functions**: Evaluates market sentiment, volatility metrics, and stock technicals to generate quantitative options strategy recommendations (vertical spreads, iron condors, straddles).
+* [options_pricing.py](file:///backend/app/analytics/options_pricing.py) & [options_data.py](file:///backend/app/analytics/options_data.py)
+  * **Role**: Options pricing & chain analytics.
+  * **Key Functions**: Computes Black-Scholes options pricing, Greeks (Delta, Gamma, Theta, Vega), IV ranks, and fetches options chains.
+* [strategy_builder.py](file:///backend/app/analytics/strategy_builder.py)
+  * **Role**: Multi-leg options strategy calculator.
+  * **Key Functions**: Computes multi-leg option payoff surfaces, probability of profit, aggregate Greeks, and Kelly Criterion position sizing.
+* [sentiment_momentum.py](file:///backend/app/analytics/sentiment_momentum.py)
+  * **Role**: Sentiment regime detection & retail behavioral momentum engine.
+  * **Key Functions**: Computes 3-day sentiment velocity, acceleration, price-sentiment gap, narrative persistence, unanimity score, attention decay ratio, panic score, earnings trap score, and pro vs retail divergence. Classifies tickers into actionable regime states (`ACCUMULATING`, `PANIC_OVERSOLD`, `EXHAUSTED`, `ALIGNED`, `DIVERGENT`, `NEUTRAL`).
+* [chain_validator.py](file:///backend/app/analytics/chain_validator.py)
+  * **Role**: Weekly supply chain relationship self-learning validator.
+  * **Key Functions**: Evaluates empirical price diffusion hit-rates for discovered asset relationships, promoting validated targets (`hit_rate >= 0.55`) and deprecating failing links (`hit_rate < 0.40`).
+* [paper_trader.py](file:///backend/app/analytics/paper_trader.py)
+  * **Role**: Automated paper trading execution engine.
+  * **Key Functions**: Tracks paper positions, auto-executes signal alerts outside blackout windows, enforces strict US regular session hours (Mon-Fri 09:30–16:00 ET), auto-tightens stop-losses on herd arrival, and manages staged position sizing.
+* [financial_skills.py](file:///backend/app/analytics/financial_skills.py)
+  * **Role**: AI assistant skill engine.
+  * **Key Functions**: Executes specialized quantitative functions and market research tools invoked by the AI Oracle research assistant.
 
 ---
 
@@ -143,12 +166,18 @@ Use this directory map to understand exactly where features live and what each s
 * [llm_client.py](file:///backend/app/sentiment/llm_client.py)
   * **Role**: LLM routing layer.
   * **Key Functions**: Handles fallbacks, retries, and API configuration mappings across providers (DeepSeek, Groq, OpenRouter, NVIDIA).
+* [agent_tools.py](file:///backend/app/sentiment/agent_tools.py)
+  * **Role**: AI Research Oracle tool definitions.
+  * **Key Functions**: Exposes DB queries, news searching, chart generation, and financial analysis tools to the interactive research agent.
 * [relationship_graph.py](file:///backend/app/sentiment/relationship_graph.py)
   * **Role**: Asset dependency network mapping tool.
-  * **Key Functions**: Builds and queries direct relationships (supply chain partners, competitors, parent-subsidiary) to feed the spillover propagation engine.
+  * **Key Functions**: Builds and queries direct relationships (supply chain partners, competitors, parent-subsidiary) and tier-specific query helper methods (`get_tier2_targets`, `get_tier3_targets`, `get_skip_list`) to feed the spillover engine.
+* [supply_chain_mapper.py](file:///backend/app/sentiment/supply_chain_mapper.py)
+  * **Role**: 3-method supply chain relationship auto-discovery engine.
+  * **Key Functions**: Discovers 2nd and 3rd-tier supply chain beneficiary relationships via Co-occurrence mining, DeepSeek LLM dynamic discovery for high-impact headlines (`|score| >= 0.7`), and curated seed chains (Data Centers, EVs, Defense).
 * [thematic_detector.py](file:///backend/app/sentiment/thematic_detector.py)
   * **Role**: Macroeconomic indicator scanner.
-  * **Key Functions**: Scans texts for macro themes (inflation, rate decisions, regulatory shifts) and triggers systemic spillover events.
+  * **Key Functions**: Scans texts for macro themes and generates spillover impacts for tiered supply chain targets (`affected_tier2` and `affected_tier3`) while skipping Tier 1 frontline tickers.
 
 ---
 
@@ -173,7 +202,7 @@ Use this directory map to understand exactly where features live and what each s
   * **Key Functions**: Runs quantitative formula simulations (`POST /run`) and retrieves history log tables (`GET /history`).
 * [portfolio.py](file:///backend/app/routers/portfolio.py)
   * **Role**: Shadow portfolio ledger tracker.
-  * **Key Functions**: Manages transactions (buy/sell orders), retrieves portfolio valuations, calculates realized/unrealized P&L, and fetches AI-driven investment recommendations.
+  * **Key Functions**: Manages transactions (buy/sell orders), retrieves portfolio valuations, calculates realized/unrealized P&L, sanitizes HTML advice, and fetches AI-driven investment recommendations.
 * [prices.py](file:///backend/app/routers/prices.py)
   * **Role**: Price feed endpoint controller.
   * **Key Functions**: Resolves candle charts, asset lists, heatmaps, and queries ticker prices.
@@ -183,6 +212,15 @@ Use this directory map to understand exactly where features live and what each s
 * [articles.py](file:///backend/app/routers/articles.py)
   * **Role**: Scraped news feeds pagination controller.
   * **Key Functions**: Provides paginated list views of news records with search and filtration filters.
+* [casino.py](file:///backend/app/routers/casino.py)
+  * **Role**: Casino Quant Options router.
+  * **Key Functions**: Handles options chain analytics, strategy calculations, Greeks surfaces, and automated AI strategy recommendations.
+* [paper_trading.py](file:///backend/app/routers/paper_trading.py)
+  * **Role**: Automated paper trading execution router.
+  * **Key Functions**: Configures auto-trading policies, position sizing, auto-exit rules, and processes paper position management.
+* [research.py](file:///backend/app/routers/research.py)
+  * **Role**: Interactive AI Oracle market research router.
+  * **Key Functions**: Manages chat sessions, messages, tool execution, and document export (DOCX/Markdown).
 * [niche.py](file:///backend/app/routers/niche.py)
   * **Role**: Cointegration and Guerilla Quant views router.
   * **Key Functions**: Retrieves pair relationships, historical spreads, and real-time trade signals.
@@ -195,6 +233,17 @@ Use this directory map to understand exactly where features live and what each s
 * [refresh.py](file:///backend/app/routers/refresh.py)
   * **Role**: Real-time event broker (SSE).
   * **Key Functions**: Streams real-time pipeline status updates and progress tracking to the front-end dashboard.
+* [voice.py](file:///backend/app/routers/voice.py)
+  * **Role**: Mimir Voice Router (Interactive Voice Briefings).
+  * **Key Functions**: Generates Jarvis-style voice recaps of overnight market moves and portfolio impacts, voiced in Mimir's authentic Scottish persona.
+
+---
+
+### 📁 Core Services (`backend/app/services/`)
+
+* [voice_service.py](file:///backend/app/services/voice_service.py)
+  * **Role**: Voice Synthesis and TTS integration.
+  * **Key Functions**: Handles zero-shot voice cloning using `F5-TTS` (CUDA GPU) to generate Mimir's custom voice, with sub-second fallbacks to `edge-tts`.
 
 ---
 
@@ -221,6 +270,15 @@ Use this directory map to understand exactly where features live and what each s
 * [tune_ticker_parameters.py](file:///scripts/tune_ticker_parameters.py)
   * **Role**: Trading strategy parameters optimizer.
   * **Key Functions**: Tunes asset indicators (e.g. RSI lookback periods or Z-score limits) using historical performance feedback.
+* [seed_supply_chains.py](file:///scripts/seed_supply_chains.py)
+  * **Role**: Project Odin supply chain relationship seeder.
+  * **Key Functions**: Populates initial curated supply chain beneficiary maps and executes co-occurrence relationship mining.
+* [migrate_db_supply_chains.py](file:///scripts/migrate_db_supply_chains.py)
+  * **Role**: Database schema migration script.
+  * **Key Functions**: Extends `mimir_asset_relationships` and `mimir_sentiment_impacts` tables with `chain_tier`, `diffusion_days`, `chain_category`, `is_validated`, and `activation_date` columns.
+* [reset_paper_trader.py](file:///scripts/reset_paper_trader.py)
+  * **Role**: Paper trading account reset script.
+  * **Key Functions**: Clears portfolio positions and trade logs, resetting starting paper capital to $200.00.
 * [mt5_price_fetcher.py](file:///scripts/mt5_price_fetcher.py)
   * **Role**: MT5 real-time 1-minute price ingestion service.
   * **Key Functions**: Fetches live price data via MetaTrader 5 API for real-time asset feeds.
@@ -237,17 +295,23 @@ Use this directory map to understand exactly where features live and what each s
 * [articles.html](file:///frontend/templates/articles.html): Article explorer for viewing raw articles and direct sentiment impacts.
 * [social.html](file:///frontend/templates/social.html): Social dashboard displaying Reddit and forum indicators.
 * [finance.html](file:///frontend/templates/finance.html): Detail page for specific assets showing prices, signals, and news history.
-* [portfolio.html](file:///frontend/templates/portfolio.html): Shadow portfolio ledger interface displaying returns, P&L graphs, and AI advice.
+* [portfolio.html](file:///frontend/templates/portfolio.html): Shadow portfolio ledger interface displaying returns, P&L graphs, sanitized AI advice, and paper trading execution.
 * [backtest.html](file:///frontend/templates/backtest.html): Interactive quant formula testing simulator.
 * [alphas.html](file:///frontend/templates/alphas.html): Alpha formula catalog containing pre-built strategies.
 * [guerilla.html](file:///frontend/templates/guerilla.html): Cointegration spread monitoring and signal dashboard.
+* [casino.html](file:///frontend/templates/casino.html): Options strategy laboratory, payoff surface visualizer, and options recommendation scanner.
+* [research_chat.html](file:///frontend/templates/research_chat.html): Interactive AI Market Oracle research assistant chat with tool execution and DOCX/Markdown document export.
+* [watchlist.html](file:///frontend/templates/watchlist.html): Custom asset watchlist tracker view.
 * [map.html](file:///frontend/templates/map.html): Relationship network graph visualizer.
 * [taxonomy.html](file:///frontend/templates/taxonomy.html): Name-to-ticker mapping manager.
 * [alerts.html](file:///frontend/templates/alerts.html): Technical signal alert log.
 
+### 📁 Frontend Scripts (`frontend/static/js/`)
+* [mimir_jarvis.js](file:///frontend/static/js/mimir_jarvis.js): Web Speech API integration for hands-free voice commands, live transcriptions, and audio playback of market briefings.
+
 ---
 
-## 🗄️ Database Schema Reference
+### 🗄️ Database Schema Reference
 
 All tables reside within the `yggdrasil` schema of PostgreSQL:
 
@@ -289,6 +353,8 @@ All tables reside within the `yggdrasil` schema of PostgreSQL:
    * `start_date` (DATE), `end_date` (DATE)
    * `holding_period` (INTEGER), `slippage_bps` (NUMERIC)
    * `sharpe`, `annualized_return`, `max_drawdown`, `turnover`, `fitness`, `win_rate`, `ic` (NUMERIC)
+7. **`mimir_chat_sessions` & `mimir_chat_messages`**: Interactive AI Market Oracle chat session persistent state and tool execution logs.
+8. **`mimir_paper_trading_config` & `mimir_paper_portfolio` & `mimir_paper_trade_log`**: Automated paper trading configuration, open positions, and execution trade logs.
 
 ---
 
@@ -300,6 +366,7 @@ All tables reside within the `yggdrasil` schema of PostgreSQL:
   * **XGBoost**: Gradient boosted decision trees for real-time signal generation and predictive trade alert scoring (`scripts/test_ml_signals.py`).
   * **WorldQuant AST Parser**: Custom Abstract Syntax Tree vectorizer (`backend/app/analytics/expression_parser.py`) supporting cross-sectional operators, rolling math, and decay functions.
 * **LLM Engine & NLP**: DeepSeek, OpenRouter, Groq, NVIDIA API integration for entity sentiment extraction, automated portfolio advice, and interactive AI market chat research (`backend/app/routers/research.py`).
+* **Voice & TTS Integration**: F5-TTS (zero-shot voice cloning on CUDA GPU) and edge-tts for sub-second neural voice synthesis. Web Speech API for hands-free voice commands.
 * **Live Ingestion & Execution**:
   * **MetaTrader 5 (MT5)**: Real-time tick and 1-minute OHLCV price streamer (`scripts/mt5_price_fetcher.py`).
   * **Yahoo Finance & News Scraping**: Resilient `curl_cffi` client sessions to spoof browser parameters and bypass rate limits.
@@ -316,6 +383,7 @@ All tables reside within the `yggdrasil` schema of PostgreSQL:
 5. **Interactive AI Market Research & Chat Assistant**: Multi-session persistent chat interface backed by PostgreSQL `mimir_chat_sessions` and `mimir_chat_messages` tables for deep asset analysis.
 6. **Shadow Portfolio Ledger & Dividend Tracker**: Transaction tracking for Buy, Sell, and Dividend executions with real-time unrealized/realized P&L metrics and automated AI portfolio optimization advice.
 7. **Cointegration & Guerilla Quant Engine**: Automated spread z-score cointegration modeling (`cointegration.py`) for statistical arbitrage pair trading overlayed with LLM sentiment signals.
+8. **Interactive Jarvis-Style Voice Briefings**: Hands-free voice command interface (`mimir_jarvis.js`) generating LLM-powered market recaps and portfolio digests, synthesized using F5-TTS voice cloning and edge-tts for authentic Scottish brogue persona delivery.
 
 ---
 

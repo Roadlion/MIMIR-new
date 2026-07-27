@@ -5,47 +5,52 @@
 {% block head_extra %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
-    /* Markdown Styles */
+    /* DeepSeek Markdown Typography Styles */
     .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
-        color: #D6E5E3;
+        color: #E6F2F5;
         font-family: 'JetBrains Mono', monospace;
-        margin-top: 1.25rem;
+        margin-top: 1.5rem;
         margin-bottom: 0.75rem;
         font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.02em;
     }
+    .markdown-body h1 { font-size: 1.4rem; color: #00A6B2; border-bottom: 1px solid rgba(0, 166, 178, 0.2); padding-bottom: 0.4rem; }
+    .markdown-body h2 { font-size: 1.2rem; color: #E6F2F5; }
+    .markdown-body h3 { font-size: 1.05rem; color: #8BA4A8; }
+    
     .markdown-body p {
-        margin-bottom: 1rem;
-        color: #8BA4A8;
-        line-height: 1.6;
+        margin-bottom: 1.1rem;
+        color: #C2D6D9;
+        line-height: 1.75;
+        font-size: 0.95rem;
     }
-    .markdown-body ul {
-        list-style-type: square;
+    .markdown-body ul, .markdown-body ol {
         padding-left: 1.5rem;
         margin-bottom: 1.25rem;
-        color: #8BA4A8;
+        color: #C2D6D9;
     }
+    .markdown-body ul { list-style-type: disc; }
+    .markdown-body ol { list-style-type: decimal; }
     .markdown-body li {
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.4rem;
+        line-height: 1.6;
     }
     .markdown-body strong {
-        color: #00A6B2;
+        color: #FFFFFF;
         font-weight: 600;
     }
     .markdown-body a {
         color: #00A6B2;
         text-decoration: underline;
-        text-decoration-style: dotted;
         text-underline-offset: 4px;
     }
     .markdown-body a:hover {
         color: #00E5F2;
     }
     .markdown-body code {
-        background: rgba(0, 166, 178, 0.1);
+        background: rgba(0, 166, 178, 0.12);
         color: #00A6B2;
-        padding: 0.125rem 0.375rem;
+        padding: 0.15rem 0.4rem;
         border-radius: 4px;
         font-family: 'JetBrains Mono', monospace;
         font-size: 0.85em;
@@ -53,8 +58,8 @@
     .markdown-body pre {
         background: #060A0D;
         border: 1px solid #1A2A30;
-        border-radius: 6px;
-        padding: 1rem;
+        border-radius: 8px;
+        padding: 1.1rem;
         overflow-x: auto;
         margin-bottom: 1.25rem;
     }
@@ -64,17 +69,42 @@
         padding: 0;
     }
     
-    .chat-bubble-assistant {
-        background: #0D1418;
-        border: 1px solid #1A2A30;
-        border-left: 3px solid #00A6B2;
-        color: #D6E5E3;
-    }
-    .chat-bubble-user {
-        background: rgba(0, 166, 178, 0.08);
-        border: 1px solid rgba(0, 166, 178, 0.3);
-        color: #00A6B2;
+    /* Markdown Tables */
+    .markdown-body table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        margin-bottom: 1.25rem;
+        font-size: 0.85rem;
         font-family: 'JetBrains Mono', monospace;
+    }
+    .markdown-body table th {
+        background-color: #0C1417;
+        color: #00A6B2;
+        font-weight: 700;
+        text-transform: uppercase;
+        padding: 0.6rem 0.8rem;
+        border-bottom: 2px solid #00A6B2;
+        text-align: left;
+    }
+    .markdown-body table td {
+        padding: 0.55rem 0.8rem;
+        border-bottom: 1px solid rgba(26, 42, 48, 0.6);
+        color: #C2D6D9;
+        background: rgba(13, 20, 24, 0.4);
+    }
+    .markdown-body table tr:hover td {
+        background: rgba(0, 166, 178, 0.05);
+    }
+
+    /* Blockquote Callout Box */
+    .markdown-body blockquote {
+        border-left: 3px solid #00A6B2;
+        background: rgba(0, 166, 178, 0.06);
+        padding: 0.75rem 1rem;
+        border-radius: 0 8px 8px 0;
+        margin-bottom: 1.25rem;
+        color: #D6E5E3;
     }
     
     /* Scrollbar */
@@ -104,20 +134,20 @@
 {% endblock %}
 
 {% block content %}
-<div class="flex flex-col lg:flex-row h-[calc(100vh-130px)] gap-5">
+<div class="flex flex-col lg:flex-row h-[calc(100vh-130px)] gap-4 relative">
     
-    <!-- Sidebar: Sessions -->
-    <div class="w-full lg:w-1/4 card flex flex-col p-0 overflow-hidden h-full">
+    <!-- Collapsible Sidebar: Sessions -->
+    <div id="sidebarPanel" class="w-full lg:w-56 shrink-0 card flex flex-col p-0 overflow-hidden h-full transition-all duration-300">
         <!-- Sidebar Header -->
-        <div class="p-4 border-b border-[#1A2A30] bg-[#0c1417]">
-            <button id="newSessionBtn" class="w-full flex items-center justify-center gap-2 bg-[#00A6B2]/10 text-[#00A6B2] border border-[#00A6B2]/30 font-mono text-xs uppercase tracking-wider font-bold py-2.5 px-4 rounded transition-all hover:bg-[#00A6B2]/20 hover:border-[#00A6B2]/60">
+        <div class="p-3 border-b border-[#1A2A30] bg-[#0c1417]">
+            <button id="newSessionBtn" class="w-full flex items-center justify-center gap-2 bg-[#00A6B2]/10 text-[#00A6B2] border border-[#00A6B2]/30 font-mono text-xs uppercase tracking-wider font-bold py-2.5 px-3 rounded transition-all hover:bg-[#00A6B2]/20 hover:border-[#00A6B2]/60">
                 <i class="fas fa-plus"></i> New Research
             </button>
         </div>
         
         <!-- Sessions List -->
-        <div class="p-4 flex-1 flex flex-col overflow-hidden">
-            <div class="text-[10px] text-[#4A6A70] uppercase font-mono font-bold tracking-wider mb-3">Recent Sessions</div>
+        <div class="p-3 flex-1 flex flex-col overflow-hidden">
+            <div class="text-[10px] text-[#4A6A70] uppercase font-mono font-bold tracking-wider mb-2">Recent Sessions</div>
             <div id="sessionList" class="overflow-y-auto flex-1 flex flex-col gap-1 pr-1">
                 <!-- Sessions injected here -->
             </div>
@@ -127,12 +157,17 @@
     <!-- Main Chat Area -->
     <div class="flex-1 card flex flex-col p-0 relative overflow-hidden h-full">
         <!-- Header -->
-        <div class="border-b border-[#1A2A30] p-4 flex justify-between items-center bg-[#0c1417]">
-            <div class="flex flex-col gap-1 w-2/3">
-                <h2 id="currentSessionTitle" class="text-sm font-bold text-[#D6E5E3] uppercase tracking-wider font-mono truncate">New Research Session</h2>
-                <div class="flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-[#00E676] animate-pulse"></span>
-                    <span class="text-[10px] text-[#4A6A70] font-mono uppercase">Oracle Engine Active</span>
+        <div class="border-b border-[#1A2A30] p-3 md:p-4 flex justify-between items-center bg-[#0c1417]">
+            <div class="flex items-center gap-3 w-3/4">
+                <button id="toggleSidebarBtn" title="Toggle Sidebar (Expand/Collapse)" class="px-2.5 py-1.5 rounded bg-[#1A2A30] text-[#8BA4A8] border border-[#2A4A50] hover:border-[#00A6B2] hover:text-[#00A6B2] transition-all text-xs font-mono cursor-pointer">
+                    <i id="toggleSidebarIcon" class="fas fa-[#sidebar] fa-bars"></i>
+                </button>
+                <div class="flex flex-col gap-0.5 truncate">
+                    <h2 id="currentSessionTitle" class="text-sm font-bold text-[#D6E5E3] uppercase tracking-wider font-mono truncate">New Research Session</h2>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-[#00E676] animate-pulse"></span>
+                        <span class="text-[10px] text-[#4A6A70] font-mono uppercase">Oracle Engine Active</span>
+                    </div>
                 </div>
             </div>
             <button id="exportBtn" class="hidden flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#8BA4A8] border border-[#2A4A50] hover:border-[#00A6B2] hover:text-[#00A6B2] transition-all cursor-pointer">
@@ -140,8 +175,8 @@
             </button>
         </div>
 
-        <!-- Chat History -->
-        <div id="chatHistory" class="flex-1 overflow-y-auto p-5 md:p-8 space-y-6 bg-[#091013]">
+        <!-- Chat History Container (Centered Canvas like DeepSeek) -->
+        <div id="chatHistory" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 bg-[#091013]">
             <!-- Messages injected here -->
             <div class="text-center flex flex-col items-center justify-center h-full opacity-50 select-none">
                 <div class="w-16 h-16 border border-[#2A4A50] rounded-xl flex items-center justify-center mb-4 bg-[#0c1417] shadow-[0_0_15px_rgba(0,166,178,0.1)]">
@@ -154,8 +189,20 @@
 
         <!-- Input Area -->
         <div class="p-4 border-t border-[#1A2A30] bg-[#0c1417]">
-            <div class="relative flex items-end bg-[#060A0D] border border-[#1A2A30] rounded-lg transition-colors focus-within:border-[#00A6B2]/50">
-                <textarea id="chatInput" rows="1" class="w-full bg-transparent border-none pl-4 pr-12 py-3 text-sm text-[#D6E5E3] font-sans placeholder-[#4A6A70] focus:outline-none resize-none overflow-hidden max-h-32" placeholder="Analyze TSLA sentiment based on latest news..."></textarea>
+            <!-- Quick Agentic Financial Skill Pills -->
+            <div class="flex items-center gap-2 overflow-x-auto pb-2 mb-2 no-scrollbar text-xs font-mono max-w-5xl mx-auto">
+                <span class="text-[10px] text-[#4A6A70] uppercase font-bold tracking-wider shrink-0">Financial Skills:</span>
+                <button onclick="sendQuickPrompt('Run a 2-stage DCF valuation model on AAPL')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">📊 DCF Model</button>
+                <button onclick="sendQuickPrompt('Run Comps peer group analysis on NVDA')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">📈 Comps Matrix</button>
+                <button onclick="sendQuickPrompt('Run LBO buyout feasibility analysis on TSLA')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">💰 LBO Model</button>
+                <button onclick="sendQuickPrompt('Review quarterly earnings results and PEAD momentum for MSFT')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">📑 Earnings Review</button>
+                <button onclick="sendQuickPrompt('Audit portfolio transaction ledger and fee consistency')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">🛡️ Portfolio Audit</button>
+                <button onclick="sendQuickPrompt('Audit MIMIR operational API token cost and self-funding yield')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">⚡ Self-Funding Audit</button>
+                <button onclick="sendQuickPrompt('Screen capacity-constrained small-cap assets with sentiment momentum and DCF upside')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">🔍 Capacity Screener</button>
+                <button onclick="sendQuickPrompt('Generate an institutional investment pitch memo for AAPL')" class="shrink-0 px-2.5 py-1 rounded bg-[#1A2A30] hover:bg-[#00A6B2]/20 border border-[#2A4A50] hover:border-[#00A6B2] text-[#8BA4A8] hover:text-[#00A6B2] transition-all">💼 Investment Pitch</button>
+            </div>
+            <div class="relative flex items-end bg-[#060A0D] border border-[#1A2A30] rounded-lg transition-colors focus-within:border-[#00A6B2]/50 max-w-5xl mx-auto">
+                <textarea id="chatInput" rows="1" class="w-full bg-transparent border-none pl-4 pr-12 py-3 text-sm text-[#D6E5E3] font-sans placeholder-[#4A6A70] focus:outline-none resize-none overflow-hidden max-h-32" placeholder="Analyze TSLA sentiment or run DCF valuation..."></textarea>
                 <button id="sendBtn" class="absolute right-3 bottom-3 text-[#4A6A70] hover:text-[#00A6B2] transition-colors focus:outline-none cursor-pointer">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -195,6 +242,15 @@
             sendBtn.classList.remove('text-[#00A6B2]');
         }
     });
+
+    function sendQuickPrompt(promptText) {
+        chatInput.value = promptText;
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 128) + 'px';
+        sendBtn.classList.remove('text-[#4A6A70]');
+        sendBtn.classList.add('text-[#00A6B2]');
+        sendMessage();
+    }
 
     async function loadSessions() {
         try {
@@ -361,7 +417,7 @@
                 </div>`;
             } else {
                 data.messages.forEach(msg => {
-                    appendMessage(msg.role, msg.content);
+                    appendMessage(msg.role, msg.content, msg.id);
                 });
             }
         } catch (e) {
@@ -369,20 +425,178 @@
         }
     }
 
-    function appendMessage(role, content) {
-        const div = document.createElement('div');
-        div.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'} mb-6 last:mb-0 w-full`;
+    if (window.marked) {
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            headerIds: false,
+            mangle: false
+        });
+    }
+
+    function cleanMarkdownForRendering(raw) {
+        if (!raw) return "";
+        let str = raw;
+
+        // 1. Remove standalone pipe-only lines (e.g. a line containing just '|' or '| ')
+        str = str.replace(/^[ \t]*\|[ \t]*$/gm, '');
+
+        // 1b. Collapse blank lines that sit between a table header row and its GFM separator.
+        //     LLMs frequently emit:  | Header |\n\n|:---|:---|  which breaks marked.js
+        //     because marked requires the header and separator to be on consecutive lines.
+        //     We repeat the replace up to 3 times to handle multiple blank lines.
+        for (let _pass = 0; _pass < 3; _pass++) {
+            str = str.replace(
+                /(\|[^\n]+\|)\n[ \t]*\n+(\|[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-*:?[ \t]*)*\|)/g,
+                '$1\n$2'
+            );
+        }
+
+        // 2. Fix double colon delimiter glitch (e.g. |::--- or ---::|)
+        str = str.replace(/\|::+/g, '|:');
+        str = str.replace(/::+\|/g, ':|');
+
+        // 3. Table Structural Normalizer & Column Matcher
+        //    Operates on full table blocks: identifies them, standardises pipes,
+        //    and pads/trims data rows so column counts match the header.
+        const lines = str.split('\n');
+        const outputLines = [];
+        let i = 0;
+
+        // Helper: is a line part of a markdown table block?
+        const isTableLine = (l) => {
+            const t = l.trim();
+            // Starts with pipe, or is a separator-only row like ":---:|:---:"
+            return t.startsWith('|') || /^\|?[\s:\-|]+\|?$/.test(t);
+        };
+
+        // Helper: is a line a GFM separator row? e.g. |:---|:---:|---:|
+        const isSeparatorRow = (l) => /^\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*\|?\s*$/.test(l.trim());
+
+        // Helper: split a pipe-delimited row into column values
+        const extractCols = (rowStr) => rowStr.split('|').slice(1, -1).map(s => s.trim());
+
+        while (i < lines.length) {
+            const trimmed = lines[i].trim();
+
+            // Detect start of a table block (must have a pipe)
+            if (trimmed.startsWith('|') && trimmed.includes('|', 1)) {
+                const tableBlock = [];
+
+                // Collect all contiguous table lines
+                while (i < lines.length && isTableLine(lines[i])) {
+                    const rowStr = lines[i].trim();
+                    // Drop lone-pipe lines that slipped through
+                    if (rowStr !== '|' && rowStr.length > 0) {
+                        tableBlock.push(rowStr);
+                    }
+                    i++;
+                }
+
+                // Only process as a real table if we have a header + separator at minimum
+                const sepIdx = tableBlock.findIndex((l, idx) => idx > 0 && isSeparatorRow(l));
+                if (tableBlock.length >= 2 && sepIdx !== -1) {
+                    // Ensure every row has leading/trailing pipes
+                    for (let k = 0; k < tableBlock.length; k++) {
+                        if (!tableBlock[k].startsWith('|')) tableBlock[k] = '| ' + tableBlock[k];
+                        if (!tableBlock[k].endsWith('|')) tableBlock[k] += ' |';
+                    }
+
+                    let headerCols = extractCols(tableBlock[0]);
+                    let delimCols  = extractCols(tableBlock[sepIdx]);
+
+                    // Fix header vs. separator column-count mismatch
+                    if (delimCols.length > headerCols.length) {
+                        const diff = delimCols.length - headerCols.length;
+                        for (let d = 0; d < diff; d++) headerCols.unshift('#');
+                        tableBlock[0] = '| ' + headerCols.join(' | ') + ' |';
+                    } else if (headerCols.length > delimCols.length && delimCols.length > 0) {
+                        const diff = headerCols.length - delimCols.length;
+                        for (let d = 0; d < diff; d++) delimCols.push('---');
+                        tableBlock[sepIdx] = '| ' + delimCols.join(' | ') + ' |';
+                    }
+
+                    const targetCols = headerCols.length;
+
+                    // Normalise data rows (skip header row 0 and the separator row)
+                    for (let k = 0; k < tableBlock.length; k++) {
+                        if (k === 0 || k === sepIdx) continue;
+                        let rCols = extractCols(tableBlock[k]);
+                        if (rCols.length < targetCols) {
+                            while (rCols.length < targetCols) rCols.push('-');
+                            tableBlock[k] = '| ' + rCols.join(' | ') + ' |';
+                        } else if (rCols.length > targetCols) {
+                            rCols = rCols.slice(0, targetCols);
+                            tableBlock[k] = '| ' + rCols.join(' | ') + ' |';
+                        }
+                    }
+
+                    outputLines.push('');
+                    outputLines.push(...tableBlock);
+                    outputLines.push('');
+                    continue;
+                } else {
+                    // Not a proper table — emit lines as-is
+                    outputLines.push(...tableBlock);
+                }
+            }
+
+            outputLines.push(lines[i]);
+            i++;
+        }
+
+        str = outputLines.join('\n');
+
+        // 4. Fix headings that are glued to preceding text (e.g. "text# Heading")
+        str = str.replace(/([^\n])(#{1,6}\s)/g, '$1\n\n$2');
+
+        return str;
+    }
+
+    function escapeHtml(str) {
+        return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    function escapeJsString(str) {
+        return str.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\${/g, '\\${');
+    }
+
+    function appendMessage(role, content, msgId = null) {
+        const outerDiv = document.createElement('div');
+        outerDiv.className = 'w-full py-2 flex justify-center';
+        if (msgId) outerDiv.setAttribute('data-msg-id', msgId);
         
-        const innerDiv = document.createElement('div');
-        innerDiv.className = `max-w-[90%] md:max-w-[85%] lg:max-w-[75%] rounded-xl p-5 ${role === 'user' ? 'chat-bubble-user text-sm' : 'chat-bubble-assistant markdown-body text-sm'}`;
+        const innerContainer = document.createElement('div');
+        innerContainer.className = 'w-full max-w-5xl px-2 md:px-4';
         
         if (role === 'user') {
-            innerDiv.textContent = content;
+            const safeContent = escapeHtml(content);
+            innerContainer.innerHTML = `
+                <div class="flex flex-col items-end mb-4 group relative" id="msg-card-${msgId || ''}">
+                    <div class="msg-content-box bg-[#182328] border border-[#26373E] rounded-2xl px-5 py-4 text-[#E6F2F5] text-sm leading-relaxed max-w-2xl shadow-sm font-sans whitespace-pre-wrap">${safeContent}</div>
+                    ${msgId ? `
+                    <div class="flex items-center gap-3 text-[11px] text-[#4A6A70] font-mono mt-1.5 pr-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                        <button onclick="startEditPrompt('${msgId}')" class="hover:text-[#00A6B2] transition-colors flex items-center gap-1 cursor-pointer" title="Edit prompt & regenerate answer">
+                            <i class="fas fa-pen text-[10px]"></i> Edit
+                        </button>
+                    </div>` : ''}
+                </div>
+            `;
         } else {
-            innerDiv.innerHTML = marked.parse(content);
+            innerContainer.innerHTML = `
+                <div class="flex flex-col items-start w-full my-3">
+                    <div class="flex items-center gap-2 text-xs font-mono text-[#00A6B2] mb-3 select-none">
+                        <i class="fas fa-brain text-[11px]"></i>
+                        <span class="font-bold uppercase tracking-wider text-[10px]">Oracle Research Synthesis</span>
+                    </div>
+                    <div class="w-full text-[#C2D6D9] markdown-body text-sm leading-relaxed">
+                        ${marked.parse(cleanMarkdownForRendering(content))}
+                    </div>
+                </div>
+            `;
         }
         
-        div.appendChild(innerDiv);
+        outerDiv.appendChild(innerContainer);
         
         // Remove empty state if present
         const emptyState = chatHistory.querySelector('.text-center.opacity-50');
@@ -390,8 +604,72 @@
             chatHistory.removeChild(emptyState);
         }
         
-        chatHistory.appendChild(div);
+        chatHistory.appendChild(outerDiv);
         chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function startEditPrompt(msgId) {
+        const card = document.getElementById(`msg-card-${msgId}`);
+        if (!card) return;
+        
+        const box = card.querySelector('.msg-content-box');
+        const currentText = box ? box.innerText.trim() : '';
+        
+        card.innerHTML = `
+            <div class="w-full max-w-2xl bg-[#060A0D] border border-[#00A6B2]/60 rounded-2xl p-3.5 shadow-lg font-sans">
+                <textarea id="edit-textarea-${msgId}" class="w-full bg-transparent border-none text-[#E6F2F5] text-sm focus:outline-none resize-none min-h-[80px]" placeholder="Edit your prompt...">${escapeHtml(currentText)}</textarea>
+                <div class="flex justify-end gap-2 mt-2 pt-2 border-t border-[#1A2A30]">
+                    <button onclick="cancelEditPrompt('${msgId}')" class="px-3 py-1.5 rounded text-xs font-mono text-[#8BA4A8] bg-[#1A2A30] hover:bg-[#2A4A50] transition-colors cursor-pointer">Cancel</button>
+                    <button onclick="submitEditPrompt('${msgId}')" class="px-3.5 py-1.5 rounded text-xs font-mono font-bold text-[#0C1417] bg-[#00A6B2] hover:bg-[#00E5F2] transition-colors flex items-center gap-1.5 cursor-pointer">
+                        <i class="fas fa-paper-plane text-[10px]"></i> Save & Submit
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        const textarea = document.getElementById(`edit-textarea-${msgId}`);
+        if (textarea) {
+            textarea.focus();
+            textarea.selectionStart = textarea.value.length;
+        }
+    }
+
+    function cancelEditPrompt(msgId) {
+        loadSessionData(currentSessionId, currentSessionTitle.textContent);
+    }
+
+    async function submitEditPrompt(msgId) {
+        const textarea = document.getElementById(`edit-textarea-${msgId}`);
+        if (!textarea) return;
+        const newText = textarea.value.trim();
+        if (!newText) return;
+        
+        const card = document.getElementById(`msg-card-${msgId}`);
+        if (card) {
+            card.innerHTML = `
+                <div class="w-full max-w-2xl bg-[#182328] border border-[#00A6B2]/40 rounded-2xl p-4 text-[#00A6B2] text-xs font-mono flex items-center gap-3">
+                    <i class="fas fa-circle-notch fa-spin"></i>
+                    <span class="animate-pulse">Updating prompt & regenerating analysis...</span>
+                </div>
+            `;
+        }
+        
+        try {
+            const res = await fetch(`/api/v1/research/sessions/${currentSessionId}/messages/${msgId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newText })
+            });
+            
+            if (!res.ok) throw new Error('Failed to update message');
+            
+            // Reload conversation cleanly
+            await loadSessionData(currentSessionId, currentSessionTitle.textContent);
+        } catch (err) {
+            console.error(err);
+            alert('Failed to update message. Please check backend connection.');
+            loadSessionData(currentSessionId, currentSessionTitle.textContent);
+        }
     }
 
     async function sendMessage() {
@@ -410,10 +688,19 @@
         appendMessage('user', text);
         exportBtn.classList.add('hidden'); // Hide export while generating
 
-        // Loading indicator
+        // DeepSeek-style loading indicator with Scottish Oracle persona
         const loadingDiv = document.createElement('div');
-        loadingDiv.className = 'flex justify-start mb-6 w-full';
-        loadingDiv.innerHTML = `<div class="max-w-[75%] rounded-xl p-4 bg-[#0D1418] border border-[#1A2A30] border-l-4 border-l-[#00A6B2] text-[#8BA4A8] font-mono text-xs flex items-center gap-3"><i class="fas fa-circle-notch fa-spin text-[#00A6B2]"></i> Executing Oracle toolchain...</div>`;
+        loadingDiv.className = 'w-full py-3 flex justify-center';
+        loadingDiv.innerHTML = `
+            <div class="w-full max-w-5xl px-2 md:px-4 flex items-center gap-3 text-[#00A6B2] font-mono text-xs bg-[#0C1417]/40 py-2.5 px-4 rounded-xl border border-[#1A2A30]">
+                <div class="flex items-center gap-1.5">
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                </div>
+                <span class="animate-pulse tracking-wide text-[11px]">Aye, consulting the well of wisdom & analyzing financial toolchains...</span>
+            </div>
+        `;
         chatHistory.appendChild(loadingDiv);
         chatHistory.scrollTop = chatHistory.scrollHeight;
 
@@ -426,20 +713,40 @@
             const data = await res.json();
             
             chatHistory.removeChild(loadingDiv);
-            appendMessage(data.role, data.content);
-            exportBtn.classList.remove('hidden');
             
             // Check if title was auto-updated by backend
             if (data.new_title) {
                 currentSessionTitle.textContent = data.new_title;
                 loadSessions(); // Re-render sidebar to show new title
             }
+            
+            // Reload session messages so all user prompts have valid database IDs for editing
+            await loadSessionData(currentSessionId, currentSessionTitle.textContent);
         } catch (e) {
             console.error(e);
             chatHistory.removeChild(loadingDiv);
             appendMessage('assistant', '**Error:** Could not connect to Oracle Engine. Check network and API status.');
         }
     }
+
+    // Toggle Collapsible Sidebar
+    const sidebarPanel = document.getElementById('sidebarPanel');
+    const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
+    const toggleSidebarIcon = document.getElementById('toggleSidebarIcon');
+    let isSidebarCollapsed = false;
+
+    toggleSidebarBtn.addEventListener('click', () => {
+        isSidebarCollapsed = !isSidebarCollapsed;
+        if (isSidebarCollapsed) {
+            sidebarPanel.classList.add('hidden');
+            toggleSidebarBtn.classList.add('border-[#00A6B2]', 'text-[#00A6B2]', 'bg-[#00A6B2]/10');
+            toggleSidebarBtn.title = "Expand Sidebar";
+        } else {
+            sidebarPanel.classList.remove('hidden');
+            toggleSidebarBtn.classList.remove('border-[#00A6B2]', 'text-[#00A6B2]', 'bg-[#00A6B2]/10');
+            toggleSidebarBtn.title = "Collapse Sidebar";
+        }
+    });
 
     sendBtn.addEventListener('click', sendMessage);
     chatInput.addEventListener('keydown', (e) => {

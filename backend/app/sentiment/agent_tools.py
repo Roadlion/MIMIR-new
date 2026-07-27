@@ -178,6 +178,8 @@ def search_web_tool(query: str) -> str:
         return "No results found on the web."
     return json.dumps(results)
 
+from backend.app.analytics import financial_skills
+
 # Tool Definitions for DeepSeek Function Calling
 ORACLE_TOOLS = [
     {
@@ -214,13 +216,13 @@ ORACLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "query_portfolio",
-            "description": "Retrieve the user's complete portfolio transaction history, trading logs, holdings, and cost basis. Returns ALL records by default unless limit is specified.",
+            "description": "Retrieve the user's complete portfolio transaction history, trading logs, holdings, and cost basis.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "ticker": {"type": "string", "description": "Optional ticker to filter transactions (e.g. AAPL)"},
+                    "ticker": {"type": "string", "description": "Optional ticker to filter transactions"},
                     "days_back": {"type": "integer", "description": "Optional number of days to look back"},
-                    "limit": {"type": "integer", "description": "Optional limit on number of transactions to return. If omitted, retrieves ALL transactions."}
+                    "limit": {"type": "integer", "description": "Optional limit on number of transactions to return."}
                 }
             }
         }
@@ -229,14 +231,14 @@ ORACLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "query_trade_signals",
-            "description": "Retrieve history of generated trade signals, automated/manual trade execution logs, and alert statuses (PENDING, APPROVED, REJECTED). Returns ALL records by default unless limit is specified.",
+            "description": "Retrieve history of generated trade signals, automated/manual trade execution logs, and alert statuses.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "ticker": {"type": "string", "description": "Optional ticker to filter trade signals"},
-                    "status": {"type": "string", "description": "Optional signal status filter (e.g. PENDING, APPROVED, REJECTED)"},
+                    "status": {"type": "string", "description": "Optional signal status filter"},
                     "days_back": {"type": "integer", "description": "Optional number of days to look back"},
-                    "limit": {"type": "integer", "description": "Optional limit on number of signals returned. Defaults to returning all if omitted."}
+                    "limit": {"type": "integer", "description": "Optional limit on number of signals returned."}
                 }
             }
         }
@@ -262,8 +264,8 @@ ORACLE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "min_sentiment": {"type": "number", "description": "Minimum average sentiment score between -1.0 and 1.0 (default 0.5)"},
-                    "limit": {"type": "integer", "description": "Maximum number of assets to return (default 10)"}
+                    "min_sentiment": {"type": "number", "description": "Minimum average sentiment score"},
+                    "limit": {"type": "integer", "description": "Maximum number of assets to return"}
                 }
             }
         }
@@ -272,17 +274,137 @@ ORACLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_web_tool",
-            "description": "Perform a live web search using DuckDuckGo/Tavily for breaking news, macro events, or general knowledge not in the internal database.",
+            "description": "Perform a live web search for breaking news, macro events, or general knowledge.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "The search query (e.g., 'Tesla Q3 earnings report summary')"}
+                    "query": {"type": "string", "description": "The search query"}
                 },
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_dcf_valuation",
+            "description": "Run a deterministic 2-stage Discounted Cash Flow (DCF) valuation model to calculate intrinsic value per share and Margin of Safety for a ticker.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, NVDA)"}
+                },
+                "required": ["ticker"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_comps_analysis",
+            "description": "Run a Comparable Company Analysis (Comps) peer matrix evaluating relative P/E, EV/EBITDA, P/S valuation vs industry peers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, NVDA)"}
+                },
+                "required": ["ticker"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_lbo_analysis",
+            "description": "Run a Leveraged Buyout (LBO) financial model evaluating debt capacity, 5-year debt paydown, exit IRR, and equity multiplier.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, NVDA)"}
+                },
+                "required": ["ticker"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_earnings_report",
+            "description": "Review quarterly earnings results, surprises, guidance changes, and Post-Earnings Announcement Drift (PEAD) momentum.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, NVDA)"}
+                },
+                "required": ["ticker"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reconcile_portfolio_audit",
+            "description": "Audit portfolio transactions, verify ledger integrity, fee calculations, cost basis consistency, and unhedged asset risks.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "audit_operational_costs",
+            "description": "Audit MIMIR operational API token spend vs trading alpha yield to evaluate system self-funding efficiency.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "screen_capacity_constrained_assets",
+            "description": "Screen small-cap/niche assets combining positive sentiment momentum with strong DCF Margin of Safety.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_investment_pitch",
+            "description": "Generate an institutional investment pitch deck memo combining DCF, Comps, LBO, Earnings, and Sentiment metrics.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, NVDA)"}
+                },
+                "required": ["ticker"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_docx_report",
+            "description": "Create an institutional-grade Word (.docx) research document using the Create DOCX Skill Engine with custom styling, shaded tables, callout alert boxes, and executive headers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "The title of the document report"},
+                    "markdown_content": {"type": "string", "description": "The markdown structured content to convert into styled Word document format"}
+                },
+                "required": ["title", "markdown_content"]
+            }
+        }
     }
 ]
+
+from backend.app.utils.document_export import markdown_to_docx
 
 # Dispatcher
 def execute_oracle_tool(name: str, args: dict) -> str:
@@ -300,5 +422,27 @@ def execute_oracle_tool(name: str, args: dict) -> str:
         return screen_assets(args.get("min_sentiment", 0.5), args.get("limit", 10))
     elif name == "search_web_tool":
         return search_web_tool(args.get("query"))
+    elif name == "run_dcf_valuation":
+        return json.dumps(financial_skills.run_dcf_valuation(args.get("ticker", "AAPL")), default=str)
+    elif name == "run_comps_analysis":
+        return json.dumps(financial_skills.run_comps_analysis(args.get("ticker", "AAPL")), default=str)
+    elif name == "run_lbo_analysis":
+        return json.dumps(financial_skills.run_lbo_analysis(args.get("ticker", "AAPL")), default=str)
+    elif name == "review_earnings_report":
+        return json.dumps(financial_skills.review_earnings(args.get("ticker", "AAPL")), default=str)
+    elif name == "reconcile_portfolio_audit":
+        return json.dumps(financial_skills.reconcile_portfolio_audit(), default=str)
+    elif name == "audit_operational_costs":
+        return json.dumps(financial_skills.audit_operational_costs(), default=str)
+    elif name == "screen_capacity_constrained_assets":
+        return json.dumps(financial_skills.screen_capacity_constrained_assets(), default=str)
+    elif name == "generate_investment_pitch":
+        res = financial_skills.generate_pitch_pack(args.get("ticker", "AAPL"))
+        return res.get("investment_memo_markdown", json.dumps(res))
+    elif name == "create_docx_report":
+        buf = markdown_to_docx(args.get("markdown_content", ""), title=args.get("title", "Research Report"))
+        return f"[SUCCESS] Created styled DOCX document report ({len(buf.getvalue())} bytes). Available via Export button."
     return f"Unknown tool: {name}"
+
+
 

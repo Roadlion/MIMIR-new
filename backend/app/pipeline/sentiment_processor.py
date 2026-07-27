@@ -75,6 +75,8 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             # Enforce strict mapping of region by resolving it from the country code first
             resolved_reg = resolve_region(country) if country else None
             region = resolved_reg or asset.get("region")
+            from datetime import datetime, timezone
+            now_ts = datetime.now(timezone.utc)
 
             impacts.append((
                 article_id,
@@ -93,6 +95,7 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 False,  # is_spillover
                 None,   # spillover_source_article_id
                 None,   # spillover_source_asset
+                now_ts, # activation_date (direct impact is immediate)
             ))
 
         if not impacts:
@@ -105,19 +108,30 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             conn.commit()
             return 0
 
-        # --- Insert impacts ---
+        # --- Insert direct impacts ---
         sql = """
         INSERT INTO yggdrasil.mimir_sentiment_impacts (
             article_id, asset_name, asset_category, asset_sub_category,
             country, region, sentiment_score, confidence, direction,
             magnitude, reasoning, ticker, policy_signal,
-            is_spillover, spillover_source_article_id, spillover_source_asset
+            is_spillover, spillover_source_article_id, spillover_source_asset, activation_date
         ) VALUES %s
         ON CONFLICT (article_id, asset_name) DO NOTHING;
         """
         execute_values(cur, sql, impacts)
         conn.commit()
         inserted = cur.rowcount
+
+        # --- Trigger LLM Supply Chain Discovery for high-impact headlines (|score| >= 0.7) ---
+        for imp in impacts:
+            score = imp[6]
+            ticker_val = imp[11]
+            if ticker_val and abs(score) >= 0.7:
+                try:
+                    from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                    discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+                except Exception as llm_err:
+                    print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
 
         # --- Compute spillover impacts (graph-based + thematic) ---
         spillover_inserted = 0
@@ -138,7 +152,7 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
 
             # Graph-based spillover
             engine = _get_spillover_engine()
-            graph_spills = engine.run(article_id, asset_dicts)
+            graph_spills = engine.run(article_id, asset_dicts, published_ts=now_ts)
 
             # Thematic spillover
             detector = _get_thematic_detector()
@@ -146,14 +160,13 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 article_id, asset_dicts, title, summary or "",
             )
 
-            # Merge and insert (dedup on article_id, asset_name handled by ON CONFLICT)
+            # Merge and insert
             all_spills = graph_spills + thematic_spills
             if all_spills:
                 execute_values(cur, sql, all_spills)
                 conn.commit()
                 spillover_inserted = cur.rowcount
         except Exception as spill_err:
-            # Non-fatal: log and continue
             print(f"  [Thread] [Warning] Spillover skipped for article {article_id}: {spill_err}")
 
         # --- Mark article as 'scored' ---

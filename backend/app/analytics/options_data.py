@@ -8,6 +8,20 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import List, Dict, Optional, Tuple
 
+try:
+    from curl_cffi.requests import Session as CurlSession
+    def _get_yf_session():
+        sess = CurlSession(impersonate="chrome")
+        sess.verify = False
+        sess.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        })
+        return sess
+except Exception:
+    def _get_yf_session():
+        return None
+
 @dataclass
 class OptionContract:
     strike: float
@@ -63,27 +77,39 @@ class OptionsDataProvider(ABC):
 
 class YFinanceOptionsProvider(OptionsDataProvider):
     def fetch_underlying_price(self, ticker: str) -> float:
+        session = _get_yf_session()
         try:
             print(f"[CASINO_OPTIONS] Fetching underlying price for {ticker} from yfinance")
-            t = yf.Ticker(ticker)
+            t = yf.Ticker(ticker, session=session) if session else yf.Ticker(ticker)
             history = t.history(period="1d")
-            if history.empty:
-                info = t.info
-                if 'currentPrice' in info:
-                    return info['currentPrice']
-                elif 'regularMarketPrice' in info:
-                    return info['regularMarketPrice']
-                else:
-                    raise ValueError(f"No price data available for {ticker}")
-            return float(history['Close'].iloc[-1])
+            if not history.empty and 'Close' in history:
+                return float(history['Close'].iloc[-1])
+            info = t.info or {}
+            if 'currentPrice' in info and info['currentPrice']:
+                return float(info['currentPrice'])
+            elif 'regularMarketPrice' in info and info['regularMarketPrice']:
+                return float(info['regularMarketPrice'])
         except Exception as e:
-            print(f"[CASINO_OPTIONS] Error fetching underlying price for {ticker}: {e}")
-            raise
+            print(f"[CASINO_OPTIONS] Error fetching underlying price for {ticker} from yfinance: {e}")
+
+        # DB Fallback
+        try:
+            from .signal_fusion import get_recent_prices
+            df = get_recent_prices(ticker, days=10)
+            if df is not None and not df.empty and 'close' in df:
+                price = float(df['close'].iloc[-1])
+                print(f"[CASINO_OPTIONS] Fetched underlying price from DB for {ticker}: {price}")
+                return price
+        except Exception as ex:
+            print(f"[CASINO_OPTIONS] DB fallback price error for {ticker}: {ex}")
+
+        raise ValueError(f"Could not fetch underlying price for {ticker}")
 
     def get_expirations(self, ticker: str) -> List[date]:
         try:
+            session = _get_yf_session()
             print(f"[CASINO_OPTIONS] Fetching expirations for {ticker} from yfinance")
-            t = yf.Ticker(ticker)
+            t = yf.Ticker(ticker, session=session) if session else yf.Ticker(ticker)
             opts = t.options
             if not opts:
                 print(f"[CASINO_OPTIONS] Warning: No options available for {ticker}")
@@ -118,8 +144,9 @@ class YFinanceOptionsProvider(OptionsDataProvider):
 
     def fetch_chain(self, ticker: str) -> OptionsChain:
         try:
+            session = _get_yf_session()
             print(f"[CASINO_OPTIONS] Fetching full options chain for {ticker} from yfinance")
-            t = yf.Ticker(ticker)
+            t = yf.Ticker(ticker, session=session) if session else yf.Ticker(ticker)
             underlying = self.fetch_underlying_price(ticker)
             str_dates = t.options
             
@@ -172,7 +199,16 @@ class SyntheticOptionsProvider(OptionsDataProvider):
     }
 
     def fetch_underlying_price(self, ticker: str) -> float:
-        return self.DEFAULT_PRICES.get(ticker.upper(), 150.0)
+        if ticker.upper() in self.DEFAULT_PRICES:
+            return self.DEFAULT_PRICES[ticker.upper()]
+        try:
+            from .signal_fusion import get_recent_prices
+            df = get_recent_prices(ticker, days=10)
+            if df is not None and not df.empty and 'close' in df:
+                return float(df['close'].iloc[-1])
+        except Exception:
+            pass
+        return 150.0
 
     def get_expirations(self, ticker: str) -> List[date]:
         from datetime import timedelta

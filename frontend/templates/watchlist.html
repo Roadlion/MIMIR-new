@@ -1,13 +1,631 @@
 {% extends "base.html" %}
 
-{% block title %}MIMIR — Watchlist{% endblock %}
+{% block title %}MIMIR — Watchlist Monitor & Management{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <div class="bg-[#111820] border border-[#1A2A30] p-6 rounded-lg">
-        <h1 class="text-3xl font-bold text-[#00A6B2]"><i class="fas fa-chart-bar mr-2"></i>Watchlist</h1>
-        <p class="text-[#4A6A70] mt-2">Market and macroeconomic indicator watchlist.</p>
-        <p class="text-sm text-[#D6E5E3] mt-4">Customize this watchlist by editing <code class="bg-[#0A0E12] px-2 py-1 rounded text-xs text-[#00A6B2]">frontend/templates/watchlist.html</code>.</p>
+    <!-- Top Summary Metrics Bar -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="card hover-card-elevate flex flex-col justify-between py-4 px-5">
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] uppercase">
+                <span>Monitored Assets</span>
+                <i class="fas fa-list text-[#00A6B2]"></i>
+            </div>
+            <div class="mt-2 flex items-baseline gap-2">
+                <span id="metric-total-count" class="text-2xl font-bold font-mono text-[#D6E5E3]">0</span>
+                <span class="text-xs text-[#4A6A70] font-mono">active</span>
+            </div>
+        </div>
+
+        <div class="card hover-card-elevate flex flex-col justify-between py-4 px-5">
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] uppercase">
+                <span>Starred Favorites</span>
+                <i class="fas fa-star text-[#FFD740]"></i>
+            </div>
+            <div class="mt-2 flex items-baseline gap-2">
+                <span id="metric-starred-count" class="text-2xl font-bold font-mono text-[#FFD740]">0</span>
+                <span class="text-xs text-[#4A6A70] font-mono">prioritized</span>
+            </div>
+        </div>
+
+        <div class="card hover-card-elevate flex flex-col justify-between py-4 px-5">
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] uppercase">
+                <span>Bullish Ratio</span>
+                <i class="fas fa-[#00E676] fa-chart-line text-[#00E676]"></i>
+            </div>
+            <div class="mt-2 flex items-baseline gap-2">
+                <span id="metric-bullish-ratio" class="text-2xl font-bold font-mono text-[#00E676]">0%</span>
+                <span class="text-xs text-[#4A6A70] font-mono">positive bias</span>
+            </div>
+        </div>
+
+        <div class="card hover-card-elevate flex flex-col justify-between py-4 px-5">
+            <div class="flex items-center justify-between text-xs font-mono text-[#4A6A70] uppercase">
+                <span>Top Mover (24h)</span>
+                <i class="fas fa-[#00A6B2] fa-bolt text-[#00A6B2]"></i>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span id="metric-top-mover" class="text-xl font-bold font-mono text-[#D6E5E3]">--</span>
+                <span id="metric-top-mover-change" class="text-xs font-mono px-2 py-0.5 rounded font-semibold text-[#8A9E9B] bg-[#1A2A30]">--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Management Toolbar Header -->
+    <div class="card p-5 space-y-4">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#1A2A30] pb-4">
+            <div>
+                <h1 class="text-xl font-bold text-[#D6E5E3] font-mono flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#00A6B2] animate-status-pulse"></span>
+                    Watchlist Intelligence & Portfolio Monitor
+                </h1>
+                <p class="text-xs text-[#4A6A70] font-mono mt-1">
+                    Synchronized with your home page dashboard. Monitor real-time prices, LLM sentiment, and technical setups.
+                </p>
+            </div>
+
+            <!-- Global Action Controls -->
+            <div class="flex items-center gap-2">
+                <button id="btn-sync-now" class="px-3 py-1.5 rounded text-xs font-mono bg-[#1A2A30] text-[#00A6B2] border border-[#00A6B2]/20 hover:border-[#00A6B2]/50 hover:bg-[#1f333b] transition-all cursor-pointer flex items-center gap-1.5">
+                    <i class="fas fa-sync-alt"></i> Sync Now
+                </button>
+                <button id="btn-reset-watchlist" class="px-3 py-1.5 rounded text-xs font-mono bg-[#FF5252]/10 text-[#FF5252] border border-[#FF5252]/20 hover:bg-[#FF5252]/20 transition-all cursor-pointer flex items-center gap-1.5">
+                    <i class="fas fa-undo"></i> Reset
+                </button>
+            </div>
+        </div>
+
+        <!-- Search & Quick-Add Bar -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+            <!-- Search Input with Auto-complete Dropdown -->
+            <div class="lg:col-span-5 relative">
+                <div class="relative flex items-center">
+                    <i class="fas fa-search absolute left-3 text-xs text-[#4A6A70] pointer-events-none"></i>
+                    <input type="text" id="wl-add-input" 
+                        class="w-full bg-[#0A0E12] border border-[#1A2A30] rounded-lg pl-8 pr-20 py-2 text-xs font-mono text-[#D6E5E3] placeholder-[#4A6A70] focus:border-[#00A6B2] focus:outline-none transition-colors"
+                        placeholder="Search ticker or name to add (e.g. AAPL, NVDA)..." autocomplete="off">
+                    <button id="btn-add-ticker" class="absolute right-1 px-3 py-1 bg-[#00A6B2] hover:bg-[#00c5d3] text-[#091013] text-xs font-mono font-bold rounded transition-colors">
+                        + Add
+                    </button>
+                </div>
+                <div id="wl-add-dropdown" class="hidden absolute left-0 right-0 top-full mt-1 bg-[#0D1418] border border-[#1A2A30] rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto font-mono text-xs"></div>
+            </div>
+
+            <!-- Quick Add Chips -->
+            <div class="lg:col-span-7 flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                <span class="text-[#4A6A70] text-[11px] mr-1">Quick Add:</span>
+                <button class="wl-chip" data-ticker="AAPL">+ AAPL</button>
+                <button class="wl-chip" data-ticker="NVDA">+ NVDA</button>
+                <button class="wl-chip" data-ticker="TSLA">+ TSLA</button>
+                <button class="wl-chip" data-ticker="MSFT">+ MSFT</button>
+                <button class="wl-chip" data-ticker="BTC-USD">+ BTC</button>
+                <button class="wl-chip" data-ticker="ETH-USD">+ ETH</button>
+                <button class="wl-chip" data-ticker="SPY">+ SPY</button>
+                <button class="wl-chip" data-ticker="QQQ">+ QQQ</button>
+                <button class="wl-chip" data-ticker="CORN">+ CORN</button>
+            </div>
+        </div>
+
+        <!-- Filter Tabs & Sort Controls Bar -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+            <!-- Category Tabs -->
+            <div class="flex items-center gap-1 overflow-x-auto text-xs font-mono scrollbar-none pb-1 sm:pb-0" id="wl-filter-tabs">
+                <button class="px-3 py-1.5 rounded border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 font-bold cursor-pointer transition-colors active-tab" data-filter="ALL">All</button>
+                <button class="px-3 py-1.5 rounded border border-[#1A2A30] text-[#8A9E9B] hover:text-[#D6E5E3] cursor-pointer transition-colors" data-filter="STARRED">⭐ Starred</button>
+                <button class="px-3 py-1.5 rounded border border-[#1A2A30] text-[#8A9E9B] hover:text-[#D6E5E3] cursor-pointer transition-colors" data-filter="EQUITY">Equities</button>
+                <button class="px-3 py-1.5 rounded border border-[#1A2A30] text-[#8A9E9B] hover:text-[#D6E5E3] cursor-pointer transition-colors" data-filter="CRYPTO">Crypto</button>
+                <button class="px-3 py-1.5 rounded border border-[#1A2A30] text-[#8A9E9B] hover:text-[#D6E5E3] cursor-pointer transition-colors" data-filter="COMMODITY">Commodities</button>
+                <button class="px-3 py-1.5 rounded border border-[#1A2A30] text-[#8A9E9B] hover:text-[#D6E5E3] cursor-pointer transition-colors" data-filter="FOREX">Forex</button>
+            </div>
+
+            <!-- Sort By Selector -->
+            <div class="flex items-center gap-2 text-xs font-mono">
+                <span class="text-[#4A6A70]">Sort by:</span>
+                <select id="wl-sort-select" class="bg-[#0A0E12] border border-[#1A2A30] text-[#D6E5E3] rounded px-2 py-1 focus:border-[#00A6B2] focus:outline-none">
+                    <option value="STARRED">Starred First</option>
+                    <option value="PRICE_CHANGE_DESC">24h Change (High → Low)</option>
+                    <option value="PRICE_CHANGE_ASC">24h Change (Low → High)</option>
+                    <option value="SENTIMENT_DESC">Sentiment (Bullish First)</option>
+                    <option value="TICKER_ASC">Ticker (A → Z)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Watchlist Asset Monitoring Table -->
+    <div class="card p-0 overflow-hidden">
+        <div class="overflow-x-auto scrollbar-thin">
+            <table class="w-full text-left border-collapse font-mono text-xs">
+                <thead>
+                    <tr class="bg-[#0D1418] border-b border-[#1A2A30] text-[#4A6A70] uppercase tracking-wider">
+                        <th class="py-3 px-4 w-12 text-center">Fav</th>
+                        <th class="py-3 px-4">Asset / Ticker</th>
+                        <th class="py-3 px-4 text-right">Price (24h)</th>
+                        <th class="py-3 px-4 text-right">24h Change</th>
+                        <th class="py-3 px-4 text-center">Sentiment Conviction</th>
+                        <th class="py-3 px-4 text-center">Technical Setup</th>
+                        <th class="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="wl-table-body" class="divide-y divide-[#1A2A30]/40">
+                    <!-- Empty State -->
+                    <tr id="wl-empty-row">
+                        <td colspan="7" class="py-12 text-center text-[#4A6A70]">
+                            <div class="flex flex-col items-center gap-2">
+                                <i class="fas fa-star text-2xl text-[#2A4A50]"></i>
+                                <span class="text-sm font-bold text-[#8A9E9B]">Your watchlist is empty</span>
+                                <span class="text-xs">Search for tickers above or click quick-add chips to start monitoring.</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Shared localStorage keys
+    const WATCHLIST_KEY = 'mimir_watchlist';
+    const WATCHLIST_STARRED_KEY = 'mimir_starred_tickers';
+    const TICKER_INFO_CACHE_KEY = 'mimir_ticker_info_cache';
+
+    const DEFAULT_WATCHLIST = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD'];
+
+    let priceData = {};
+    let sentimentData = {};
+    let currentFilter = 'ALL';
+    let currentSort = 'STARRED';
+
+    function getWatchlist() {
+        try {
+            const items = JSON.parse(localStorage.getItem(WATCHLIST_KEY));
+            return Array.isArray(items) && items.length > 0 ? items : DEFAULT_WATCHLIST;
+        } catch {
+            return DEFAULT_WATCHLIST;
+        }
+    }
+
+    function saveWatchlist(list) {
+        localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+        window.dispatchEvent(new Event('storage'));
+    }
+
+    function getStarred() {
+        try {
+            return JSON.parse(localStorage.getItem(WATCHLIST_STARRED_KEY)) || [];
+        } catch { return []; }
+    }
+
+    function saveStarred(list) {
+        localStorage.setItem(WATCHLIST_STARRED_KEY, JSON.stringify(list));
+        window.dispatchEvent(new Event('storage'));
+    }
+
+    function getTickerInfoCache() {
+        try {
+            return JSON.parse(localStorage.getItem(TICKER_INFO_CACHE_KEY)) || {};
+        } catch { return {}; }
+    }
+
+    function saveTickerInfoCache(cache) {
+        localStorage.setItem(TICKER_INFO_CACHE_KEY, JSON.stringify(cache));
+    }
+
+    function addToWatchlist(ticker) {
+        const t = ticker.trim().toUpperCase();
+        if (!t) return;
+        const list = getWatchlist();
+        if (!list.includes(t)) {
+            list.push(t);
+            saveWatchlist(list);
+        }
+        refreshData();
+    }
+
+    function removeFromWatchlist(ticker) {
+        let list = getWatchlist();
+        list = list.filter(t => t !== ticker);
+        saveWatchlist(list);
+
+        let starred = getStarred();
+        starred = starred.filter(t => t !== ticker);
+        saveStarred(starred);
+
+        renderWatchlist();
+    }
+
+    function toggleStar(ticker) {
+        let starred = getStarred();
+        if (starred.includes(ticker)) {
+            starred = starred.filter(t => t !== ticker);
+        } else {
+            starred.push(ticker);
+        }
+        saveStarred(starred);
+        renderWatchlist();
+    }
+
+    function getCurrencySymbol(ticker) {
+        const t = ticker.toUpperCase();
+        if (t.endsWith('.BK')) return '฿';
+        if (t.endsWith('.NS')) return '₹';
+        if (t.endsWith('.L')) return '£';
+        if (t.endsWith('.PA') || t.endsWith('.DE') || t.endsWith('.AS') || t.endsWith('.MI')) return '€';
+        if (t.endsWith('.KS') || t.endsWith('.KQ')) return '₩';
+        if (t.endsWith('.HK')) return 'HK$';
+        if (t.endsWith('.T')) return '¥';
+        return '$';
+    }
+
+    function getAssetCategory(ticker) {
+        const t = ticker.toUpperCase();
+        if (t.endsWith('-USD')) return 'CRYPTO';
+        if (t.endsWith('=X')) return 'FOREX';
+        if (t.endsWith('=F') || ['CORN', 'WEAT', 'SOYB', 'BDRY'].includes(t)) return 'COMMODITY';
+        return 'EQUITY';
+    }
+
+    // --- API Data Fetching ---
+    async function loadPrices() {
+        const list = getWatchlist();
+        if (list.length === 0) return;
+        try {
+            const res = await fetch(`/api/v1/prices/ticker-changes?tickers=${list.join(',')}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.tickers) {
+                    data.tickers.forEach(t => {
+                        priceData[t.ticker] = t;
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('Error fetching watchlist prices:', e);
+        }
+    }
+
+    async function loadSentiments() {
+        const list = getWatchlist();
+        if (list.length === 0) return;
+        try {
+            const res = await fetch(`/api/v1/ticker-sentiments?tickers=${list.join(',')}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.tickers) {
+                    data.tickers.forEach(t => {
+                        sentimentData[t.ticker] = t;
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('Error fetching watchlist sentiments:', e);
+        }
+    }
+
+    async function loadLogos() {
+        const list = getWatchlist();
+        const cache = getTickerInfoCache();
+        const uncached = list.filter(t => !(t in cache) || !('long_name' in cache[t]));
+        if (uncached.length === 0) return;
+
+        try {
+            const res = await fetch(`/api/v1/prices/logos?tickers=${uncached.join(',')}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.tickers) {
+                    saveTickerInfoCache({ ...cache, ...data.tickers });
+                }
+            }
+        } catch (e) {
+            console.error('Error fetching logos:', e);
+        }
+    }
+
+    async function refreshData() {
+        await Promise.all([loadPrices(), loadSentiments(), loadLogos()]);
+        renderWatchlist();
+    }
+
+    // --- Rendering ---
+    function renderWatchlist() {
+        const list = getWatchlist();
+        const starred = getStarred();
+        const cache = getTickerInfoCache();
+
+        // Update Top Metrics
+        document.getElementById('metric-total-count').textContent = list.length;
+        document.getElementById('metric-starred-count').textContent = starred.length;
+
+        let bullishCount = 0;
+        let topMoverTicker = '--';
+        let topMoverChange = 0;
+
+        list.forEach(t => {
+            const s = sentimentData[t];
+            if (s && s.current_sentiment > 0.05) bullishCount++;
+            const p = priceData[t];
+            if (p && Math.abs(p.change_percent) > Math.abs(topMoverChange)) {
+                topMoverChange = p.change_percent;
+                topMoverTicker = t;
+            }
+        });
+
+        const ratio = list.length > 0 ? Math.round((bullishCount / list.length) * 100) : 0;
+        document.getElementById('metric-bullish-ratio').textContent = `${ratio}%`;
+
+        const topMoverEl = document.getElementById('metric-top-mover');
+        const topMoverChangeEl = document.getElementById('metric-top-mover-change');
+        topMoverEl.textContent = topMoverTicker;
+        if (topMoverTicker !== '--') {
+            const sign = topMoverChange >= 0 ? '+' : '';
+            topMoverChangeEl.textContent = `${sign}${topMoverChange.toFixed(2)}%`;
+            topMoverChangeEl.className = `text-xs font-mono px-2 py-0.5 rounded font-semibold ${topMoverChange >= 0 ? 'bg-[#00E676]/10 text-[#00E676]' : 'bg-[#FF5252]/10 text-[#FF5252]'}`;
+        }
+
+        // Filtering
+        let filtered = list.filter(t => {
+            if (currentFilter === 'STARRED') return starred.includes(t);
+            if (currentFilter === 'ALL') return true;
+            return getAssetCategory(t) === currentFilter;
+        });
+
+        // Sorting
+        filtered.sort((a, b) => {
+            if (currentSort === 'STARRED') {
+                const aStar = starred.includes(a);
+                const bStar = starred.includes(b);
+                if (aStar && !bStar) return -1;
+                if (!aStar && bStar) return 1;
+                return a.localeCompare(b);
+            }
+            if (currentSort === 'PRICE_CHANGE_DESC') {
+                const pa = priceData[a]?.change_percent || 0;
+                const pb = priceData[b]?.change_percent || 0;
+                return pb - pa;
+            }
+            if (currentSort === 'PRICE_CHANGE_ASC') {
+                const pa = priceData[a]?.change_percent || 0;
+                const pb = priceData[b]?.change_percent || 0;
+                return pa - pb;
+            }
+            if (currentSort === 'SENTIMENT_DESC') {
+                const sa = sentimentData[a]?.current_sentiment || -999;
+                const sb = sentimentData[b]?.current_sentiment || -999;
+                return sb - sa;
+            }
+            if (currentSort === 'TICKER_ASC') {
+                return a.localeCompare(b);
+            }
+            return 0;
+        });
+
+        // Table Render
+        const tbody = document.getElementById('wl-table-body');
+        const emptyRow = document.getElementById('wl-empty-row');
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '';
+            tbody.appendChild(emptyRow);
+            emptyRow.classList.remove('hidden');
+            return;
+        }
+
+        emptyRow.classList.add('hidden');
+        tbody.innerHTML = filtered.map(t => {
+            const isStar = starred.includes(t);
+            const p = priceData[t];
+            const s = sentimentData[t];
+            const info = cache[t] || {};
+            const logo = info.logo_url || '';
+            const name = info.long_name || t;
+            const category = getAssetCategory(t);
+            const currSym = getCurrencySymbol(t);
+
+            const priceStr = p ? `${currSym}${Number(p.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '—';
+            const changeVal = p ? p.change_percent : 0;
+            const changeSign = changeVal >= 0 ? '+' : '';
+            const changeClass = changeVal >= 0 ? 'text-[#00E676] bg-[#00E676]/10 border-[#00E676]/20' : 'text-[#FF5252] bg-[#FF5252]/10 border-[#FF5252]/20';
+
+            const sentVal = s && s.current_sentiment !== null ? s.current_sentiment : null;
+            const sentStr = sentVal !== null ? sentVal.toFixed(2) : '0.00';
+            let sentBadge = 'bg-[#1A2A30] text-[#8A9E9B]';
+            let sentDir = 'NEUTRAL';
+            if (sentVal > 0.05) { sentBadge = 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'; sentDir = 'BULLISH'; }
+            else if (sentVal < -0.05) { sentBadge = 'bg-[#FF5252]/10 text-[#FF5252] border-[#FF5252]/20'; sentDir = 'BEARISH'; }
+
+            const logoHtml = logo 
+                ? `<img src="${logo}" alt="${t}" class="w-7 h-7 rounded object-contain bg-[#111A20] border border-[#1A2A30]" onerror="this.outerHTML='<div class=\\'w-7 h-7 rounded bg-[#1A2A30] flex items-center justify-center font-bold text-[#00A6B2]\\'>${t.substring(0,2)}</div>'">`
+                : `<div class="w-7 h-7 rounded bg-[#1A2A30] flex items-center justify-center font-bold text-[#00A6B2]">${t.substring(0,2)}</div>`;
+
+            return `
+                <tr class="hover:bg-[#111A20]/60 transition-colors">
+                    <!-- Fav Star -->
+                    <td class="py-3 px-4 text-center">
+                        <button class="btn-star text-sm hover:scale-110 transition-transform cursor-pointer" data-ticker="${t}">
+                            <i class="${isStar ? 'fas fa-star text-[#FFD740]' : 'far fa-star text-[#4A6A70] hover:text-[#FFD740]'}"></i>
+                        </button>
+                    </td>
+
+                    <!-- Asset Name / Ticker -->
+                    <td class="py-3 px-4">
+                        <a href="/asset/${t}" class="flex items-center gap-3 group">
+                            ${logoHtml}
+                            <div class="flex flex-col min-w-0">
+                                <span class="font-bold text-[#D6E5E3] group-hover:text-[#00A6B2] transition-colors">${t}</span>
+                                <span class="text-[11px] text-[#4A6A70] truncate max-w-[180px]">${name}</span>
+                            </div>
+                            <span class="text-[9px] px-1.5 py-0.5 rounded bg-[#1A2A30] text-[#8A9E9B] font-mono ml-1">${category}</span>
+                        </a>
+                    </td>
+
+                    <!-- Price -->
+                    <td class="py-3 px-4 text-right font-bold text-[#D6E5E3]">
+                        ${priceStr}
+                    </td>
+
+                    <!-- 24h Change -->
+                    <td class="py-3 px-4 text-right">
+                        <span class="px-2 py-0.5 rounded border text-[11px] font-semibold ${changeClass}">
+                            ${changeSign}${changeVal.toFixed(2)}%
+                        </span>
+                    </td>
+
+                    <!-- Sentiment -->
+                    <td class="py-3 px-4 text-center">
+                        <div class="flex items-center justify-center gap-2">
+                            <span class="font-bold text-[#D6E5E3]">${sentStr}</span>
+                            <span class="px-1.5 py-0.5 rounded border text-[9px] font-bold ${sentBadge}">${sentDir}</span>
+                        </div>
+                    </td>
+
+                    <!-- Technical Setup -->
+                    <td class="py-3 px-4 text-center">
+                        <span class="px-2 py-0.5 rounded bg-[#1A2A30] text-[#00A6B2] text-[10px]">ALIGNED</span>
+                    </td>
+
+                    <!-- Actions -->
+                    <td class="py-3 px-4 text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            <a href="/asset/${t}" class="px-2 py-1 rounded bg-[#1A2A30] text-[#00A6B2] hover:bg-[#00A6B2] hover:text-[#091013] transition-colors text-[11px]" title="View details">
+                                View
+                            </a>
+                            <button class="btn-remove px-2 py-1 rounded bg-[#FF5252]/10 text-[#FF5252] hover:bg-[#FF5252]/20 transition-colors text-[11px] cursor-pointer" data-ticker="${t}" title="Remove">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        // Event bindings
+        tbody.querySelectorAll('.btn-star').forEach(btn => {
+            btn.addEventListener('click', () => toggleStar(btn.dataset.ticker));
+        });
+
+        tbody.querySelectorAll('.btn-remove').forEach(btn => {
+            btn.addEventListener('click', () => removeFromWatchlist(btn.dataset.ticker));
+        });
+    }
+
+    // --- Search & Add Event Listeners ---
+    const addInput = document.getElementById('wl-add-input');
+    const addDropdown = document.getElementById('wl-add-dropdown');
+    const addBtn = document.getElementById('btn-add-ticker');
+    let searchTimer = null;
+
+    addInput.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        const q = addInput.value.trim().toUpperCase();
+        if (!q) {
+            addDropdown.classList.add('hidden');
+            addDropdown.innerHTML = '';
+            return;
+        }
+
+        searchTimer = setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/v1/prices/search?q=${encodeURIComponent(q)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.results && data.results.length > 0) {
+                        addDropdown.innerHTML = data.results.map(r => `
+                            <div class="wl-search-row flex items-center justify-between p-2 hover:bg-[#111A20] cursor-pointer border-b border-[#1A2A30]/50 last:border-b-0" data-ticker="${r.ticker}">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-bold text-[#00A6B2]">${r.ticker}</span>
+                                    <span class="text-[#8A9E9B] text-[11px] truncate max-w-[200px]">${r.long_name}</span>
+                                </div>
+                                <span class="text-[#00A6B2] text-[10px]">+ Add</span>
+                            </div>
+                        `).join('');
+                        addDropdown.classList.remove('hidden');
+
+                        addDropdown.querySelectorAll('.wl-search-row').forEach(row => {
+                            row.addEventListener('click', () => {
+                                addToWatchlist(row.dataset.ticker);
+                                addInput.value = '';
+                                addDropdown.classList.add('hidden');
+                            });
+                        });
+                    } else {
+                        addDropdown.innerHTML = `<div class="p-3 text-center text-[#4A6A70]">No matching assets found</div>`;
+                        addDropdown.classList.remove('hidden');
+                    }
+                }
+            } catch (e) {
+                console.error('Search error:', e);
+            }
+        }, 200);
+    });
+
+    addBtn.addEventListener('click', () => {
+        if (addInput.value.trim()) {
+            addToWatchlist(addInput.value.trim());
+            addInput.value = '';
+            addDropdown.classList.add('hidden');
+        }
+    });
+
+    addInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && addInput.value.trim()) {
+            addToWatchlist(addInput.value.trim());
+            addInput.value = '';
+            addDropdown.classList.add('hidden');
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#wl-add-input') && !e.target.closest('#wl-add-dropdown')) {
+            addDropdown.classList.add('hidden');
+        }
+    });
+
+    // Preset Chips
+    document.querySelectorAll('.wl-chip').forEach(chip => {
+        chip.addEventListener('click', () => addToWatchlist(chip.dataset.ticker));
+    });
+
+    // Filter Tabs
+    document.querySelectorAll('#wl-filter-tabs button').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('#wl-filter-tabs button').forEach(t => {
+                t.className = 'px-3 py-1.5 rounded border border-[#1A2A30] text-[#8A9E9B] hover:text-[#D6E5E3] cursor-pointer transition-colors';
+            });
+            tab.className = 'px-3 py-1.5 rounded border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 font-bold cursor-pointer transition-colors active-tab';
+            currentFilter = tab.dataset.filter;
+            renderWatchlist();
+        });
+    });
+
+    // Sort Selector
+    document.getElementById('wl-sort-select').addEventListener('change', (e) => {
+        currentSort = e.target.value;
+        renderWatchlist();
+    });
+
+    // Action Controls
+    document.getElementById('btn-sync-now').addEventListener('click', () => {
+        refreshData();
+    });
+
+    document.getElementById('btn-reset-watchlist').addEventListener('click', () => {
+        if (confirm('Reset your watchlist to default tickers?')) {
+            saveWatchlist(DEFAULT_WATCHLIST);
+            saveStarred([]);
+            refreshData();
+        }
+    });
+
+    // Storage event listener for cross-tab / cross-component sync
+    window.addEventListener('storage', () => {
+        refreshData();
+    });
+
+    // Initial Load & Interval Polling (15s)
+    refreshData();
+    setInterval(refreshData, 15000);
+});
+</script>
 {% endblock %}

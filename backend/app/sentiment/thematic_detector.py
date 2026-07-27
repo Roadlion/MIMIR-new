@@ -28,7 +28,10 @@ THEMATIC_PATTERNS = [
         "theme": "war_middle_east",
         "decay": 0.20,
         "direction_override": None,  # follows article sentiment
-        "affected": ["LMT", "RTX", "GD", "NOC", "XLE", "GLD", "BDRY"],
+        "affected_skip": ["LMT", "RTX", "BA"],
+        "affected_tier2": ["GD", "HII"],
+        "affected_tier3": ["KTOS", "BWXT"],
+        "affected": ["GD", "HII", "KTOS", "BWXT", "XLE", "GLD", "BDRY"],
     },
     # --- Trade War / Tariffs ---
     {
@@ -38,7 +41,10 @@ THEMATIC_PATTERNS = [
         "theme": "trade_war",
         "decay": 0.15,
         "direction_override": None,
-        "affected": ["SPY", "EEM", "XLY", "XLI", "FXI"],
+        "affected_skip": ["SPY", "QQQ"],
+        "affected_tier2": ["EEM", "FXI"],
+        "affected_tier3": ["XLY", "XLI"],
+        "affected": ["EEM", "FXI", "XLY", "XLI"],
     },
     # --- Oil Supply Shock ---
     {
@@ -48,7 +54,10 @@ THEMATIC_PATTERNS = [
         "theme": "oil_shock",
         "decay": 0.20,
         "direction_override": None,
-        "affected": ["XLE", "XOP", "USO", "GLD", "BDRY"],
+        "affected_skip": ["XLE"],
+        "affected_tier2": ["XOP", "USO"],
+        "affected_tier3": ["GLD", "BDRY"],
+        "affected": ["XOP", "USO", "GLD", "BDRY"],
     },
     # --- Agriculture / Weather Shock ---
     {
@@ -58,6 +67,9 @@ THEMATIC_PATTERNS = [
         "theme": "agriculture_shock",
         "decay": 0.15,
         "direction_override": None,
+        "affected_skip": [],
+        "affected_tier2": ["WEAT", "CORN", "SOYB"],
+        "affected_tier3": ["MOO", "DBA"],
         "affected": ["WEAT", "CORN", "SOYB", "MOO", "DBA"],
     },
     # --- Regulatory / Antitrust ---
@@ -68,7 +80,10 @@ THEMATIC_PATTERNS = [
         "theme": "regulatory_action",
         "decay": 0.10,
         "direction_override": "bearish",  # regulatory action is almost always negative
-        "affected": ["SPY", "XLK", "XLC"],
+        "affected_skip": ["SPY"],
+        "affected_tier2": ["XLK"],
+        "affected_tier3": ["XLC"],
+        "affected": ["XLK", "XLC"],
     },
     # --- Health Crisis / Pandemic ---
     {
@@ -78,7 +93,10 @@ THEMATIC_PATTERNS = [
         "theme": "health_crisis",
         "decay": 0.15,
         "direction_override": None,
-        "affected": ["XLV", "PFE", "MRNA", "SPY"],
+        "affected_skip": ["PFE", "SPY"],
+        "affected_tier2": ["MRNA"],
+        "affected_tier3": ["XLV"],
+        "affected": ["MRNA", "XLV"],
     },
     # --- Monetary Policy Shift ---
     {
@@ -88,7 +106,10 @@ THEMATIC_PATTERNS = [
         "theme": "monetary_policy_shift",
         "decay": 0.20,
         "direction_override": None,
-        "affected": ["TLT", "DX-Y.NYB", "SPY", "GLD", "IEF"],
+        "affected_skip": ["SPY"],
+        "affected_tier2": ["TLT", "DX-Y.NYB"],
+        "affected_tier3": ["GLD", "IEF"],
+        "affected": ["TLT", "DX-Y.NYB", "GLD", "IEF"],
     },
     # --- Banking Crisis ---
     {
@@ -98,7 +119,10 @@ THEMATIC_PATTERNS = [
         "theme": "banking_crisis",
         "decay": 0.20,
         "direction_override": "bearish",
-        "affected": ["XLF", "KBE", "SPY", "GLD"],
+        "affected_skip": ["SPY"],
+        "affected_tier2": ["XLF"],
+        "affected_tier3": ["KBE", "GLD"],
+        "affected": ["XLF", "KBE", "GLD"],
     },
     # --- Tech / AI Breakthrough ---
     {
@@ -108,7 +132,10 @@ THEMATIC_PATTERNS = [
         "theme": "ai_breakthrough",
         "decay": 0.18,
         "direction_override": "bullish",
-        "affected": ["NVDA", "XLK", "QQQ", "SMH", "AMD"],
+        "affected_skip": ["NVDA", "AMD", "AVGO", "SMH"],
+        "affected_tier2": ["VRT", "ETN", "POWL", "EMR"],
+        "affected_tier3": ["MOD", "GNRC", "AMPH"],
+        "affected": ["VRT", "ETN", "POWL", "EMR", "MOD", "GNRC", "AMPH"],
     },
     # --- Semiconductor / Chip News ---
     {
@@ -118,7 +145,10 @@ THEMATIC_PATTERNS = [
         "theme": "chip_restriction",
         "decay": 0.15,
         "direction_override": "bearish",
-        "affected": ["NVDA", "AMD", "INTC", "SMH", "SOXX"],
+        "affected_skip": ["NVDA", "AMD", "INTC", "SMH", "SOXX"],
+        "affected_tier2": ["VRT", "ON"],
+        "affected_tier3": ["MOD", "AMPH"],
+        "affected": ["VRT", "ON", "MOD", "AMPH"],
     },
 ]
 

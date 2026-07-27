@@ -80,6 +80,12 @@
                 <div id="searchDropdown" class="hidden absolute right-0 top-full mt-2 w-72 lg:w-80 bg-[#0A161C] border border-[#1A2A30] rounded-lg shadow-xl z-50 overflow-hidden"></div>
             </div>
             <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock">--:--:--</span></span>
+            <button onclick="triggerMimirBriefing()" class="px-3 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded hover:bg-[#00A6B2]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(0,166,178,0.2)]">
+                <i class="fas fa-volume-high animate-pulse text-[#00A6B2]"></i> Mimir's Briefing
+            </button>
+            <button id="mimirMicBtn" onclick="toggleMimirVoiceMic()" title="Voice Command Mic" class="px-2.5 py-1 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
+                <i class="fas fa-microphone"></i>
+            </button>
             <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
                 <i class="fas fa-sync-alt mr-1"></i> Refresh
             </button>
@@ -120,13 +126,31 @@
 
     <script src="/static/js/main.js?v=1.0.2"></script>
     <script>
-    // Ticker search with debounce
+    // Active navbar route highlighter
+    document.addEventListener('DOMContentLoaded', () => {
+        const currentPath = window.location.pathname;
+        const navLinks = document.querySelectorAll('.nav-link, .nav-dropdown-menu a');
+        navLinks.forEach(link => {
+            if (link.getAttribute('href') === currentPath) {
+                link.classList.add('active');
+                const parentDropdown = link.closest('.nav-dropdown');
+                if (parentDropdown) {
+                    const trigger = parentDropdown.querySelector('.nav-dropdown-trigger');
+                    if (trigger) trigger.classList.add('active');
+                }
+            }
+        });
+    });
+
+    // Ticker search with debounce & keyboard navigation
     const searchInput = document.getElementById('searchInput');
     const dropdown = document.getElementById('searchDropdown');
     let searchTimer;
+    let selectedSearchIdx = -1;
 
     searchInput.addEventListener('input', () => {
         clearTimeout(searchTimer);
+        selectedSearchIdx = -1;
         const q = searchInput.value.trim();
         if (q.length < 1) {
             dropdown.classList.add('hidden');
@@ -143,8 +167,8 @@
                     dropdown.innerHTML = '<div class="p-3 text-xs text-[#4A6A70] text-center font-mono">No tickers found</div>';
                     return;
                 }
-                dropdown.innerHTML = data.results.map(r => `
-                    <a href="/asset/${r.ticker}" class="flex items-center gap-3 px-4 py-2.5 hover:bg-[#111A20] transition-colors border-b border-[#1A2A30]/50 last:border-b-0">
+                dropdown.innerHTML = data.results.map((r, idx) => `
+                    <a href="/asset/${r.ticker}" data-idx="${idx}" class="search-result-item flex items-center gap-3 px-4 py-2.5 hover:bg-[#111A20] transition-colors border-b border-[#1A2A30]/50 last:border-b-0">
                         <img src="${r.logo_url}" alt="${r.ticker}" class="w-7 h-7 rounded object-contain bg-[#111A20]" onerror="this.style.display='none'">
                         <div class="flex flex-col min-w-0">
                             <span class="text-sm font-mono font-bold text-[#00A6B2]">${r.ticker}</span>
@@ -165,12 +189,145 @@
     });
 
     document.addEventListener('keydown', (e) => {
+        // Press '/' hotkey anywhere (except inside inputs) to focus search bar
+        if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            searchInput.focus();
+            return;
+        }
+
         if (e.key === 'Escape') {
             dropdown.classList.add('hidden');
             searchInput.blur();
+            return;
+        }
+
+        // Arrow Key & Enter Navigation for search dropdown
+        if (!dropdown.classList.contains('hidden')) {
+            const items = dropdown.querySelectorAll('.search-result-item');
+            if (items.length === 0) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedSearchIdx = (selectedSearchIdx + 1) % items.length;
+                highlightSearchItem(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedSearchIdx = (selectedSearchIdx - 1 + items.length) % items.length;
+                highlightSearchItem(items);
+            } else if (e.key === 'Enter' && selectedSearchIdx >= 0 && selectedSearchIdx < items.length) {
+                e.preventDefault();
+                items[selectedSearchIdx].click();
+            }
         }
     });
+
+    function highlightSearchItem(items) {
+        items.forEach((item, idx) => {
+            if (idx === selectedSearchIdx) {
+                item.classList.add('bg-[#111A20]', 'border-l-2', 'border-l-[#00A6B2]');
+            } else {
+                item.classList.remove('bg-[#111A20]', 'border-l-2', 'border-l-[#00A6B2]');
+            }
+        });
+    }
     </script>
+
+    <!-- MIMIR Jarvis Voice & Portfolio Briefing Modal -->
+    <div id="mimirJarvisModal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="bg-[#0A161C] border border-[#00A6B2] w-full max-w-2xl rounded-xl shadow-[0_0_50px_rgba(0,166,178,0.25)] overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <!-- Header Bar -->
+            <div class="px-5 py-4 border-b border-[#1A2A30] flex items-center justify-between bg-[#060A0D]">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-[#00A6B2]/20 border border-[#00A6B2] flex items-center justify-center">
+                        <i class="fas fa-tree text-[#00A6B2] text-sm animate-pulse"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold text-[#D6E5E3] font-mono tracking-wide">MIMIR BRIEFING HUD</h3>
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-[#00A6B2]/20 text-[#00A6B2] border border-[#00A6B2]/30">SMARTEST MAN ALIVE</span>
+                        </div>
+                        <p id="jarvisMarketSummary" class="text-xs text-[#4A6A70] font-mono mt-0.5">Fetching market intelligence from Valhalla...</p>
+                    </div>
+                </div>
+                
+                <button onclick="closeJarvisModal()" class="w-7 h-7 rounded hover:bg-[#1A2A30] text-[#4A6A70] hover:text-[#D6E5E3] flex items-center justify-center transition-colors">
+                    <i class="fas fa-times text-xs"></i>
+                </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-5 overflow-y-auto space-y-4">
+                
+                <!-- Loading State -->
+                <div id="jarvisLoadingState" class="py-12 flex flex-col items-center justify-center gap-3 text-center">
+                    <div class="flex items-center gap-1.5 h-8">
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0s;"></span>
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0.15s;"></span>
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0.3s;"></span>
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0.45s;"></span>
+                    </div>
+                    <p class="text-xs font-mono text-[#00A6B2] uppercase tracking-wider">Consulting Mimir's Oracle & Synthesizing Voice...</p>
+                    <p class="text-[11px] text-[#4A6A70] font-mono">Analyzing overnight news, sentiment velocity, and portfolio impacts.</p>
+                </div>
+
+                <!-- Main Content State -->
+                <div id="jarvisContentState" class="hidden space-y-4">
+                    
+                    <!-- Audio Visualizer Waveform Bar -->
+                    <div class="bg-[#060A0D] border border-[#1A2A30] rounded-lg p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="flex items-end gap-1 h-6">
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-3 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-6 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-4 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-5 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-2 rounded"></span>
+                            </div>
+                            <span class="text-xs font-mono text-[#00A6B2] font-semibold">Mimir's Scottish Audio Digest</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <button onclick="triggerMimirBriefing()" class="px-2.5 py-1 text-xs border border-[#1A2A30] rounded hover:border-[#00A6B2] text-[#D6E5E3] transition-colors font-mono">
+                                <i class="fas fa-rotate-right mr-1"></i> Re-Synthesize
+                            </button>
+                            <button onclick="stopMimirAudio()" class="px-2.5 py-1 text-xs border border-[#1A2A30] rounded hover:border-red-500 text-red-400 transition-colors font-mono">
+                                <i class="fas fa-stop mr-1"></i> Stop Audio
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Spoken Transcript -->
+                    <div>
+                        <h4 class="text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Mimir's Spoken Transcript</h4>
+                        <div id="jarvisVoiceScript" class="bg-[#060A0D] border border-[#1A2A30] rounded-lg p-4 text-xs font-sans text-[#D6E5E3] leading-relaxed italic border-l-4 border-l-[#00A6B2]">
+                            "Loading transcript..."
+                        </div>
+                    </div>
+
+                    <!-- Portfolio Digest Cards -->
+                    <div>
+                        <h4 class="text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Overnight Position Digest</h4>
+                        <div id="jarvisPortfolioDigest" class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-5 py-3 border-t border-[#1A2A30] bg-[#060A0D] flex items-center justify-between text-xs text-[#4A6A70] font-mono">
+                <span><i class="fas fa-microphone mr-1 text-[#00A6B2]"></i> Voice Commands: "Read market briefing" | "Stop audio"</span>
+                <button onclick="closeJarvisModal()" class="px-3 py-1 bg-[#1A2A30] hover:bg-[#2A3A40] text-[#D6E5E3] rounded transition-colors">
+                    Close HUD
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/mimir_jarvis.js"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

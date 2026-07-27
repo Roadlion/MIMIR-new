@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest, trade_alerts, research, casino, paper_trading
+from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest, trade_alerts, research, casino, paper_trading, voice
 from .config import get_settings
 
 settings = get_settings()
@@ -37,6 +37,7 @@ app.include_router(paper_trading.router, prefix="/api/v1/paper-trading", tags=["
 app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
 app.include_router(backtest.router)
 app.include_router(casino.router, prefix="/api/v1/casino", tags=["casino"])
+app.include_router(voice.router)
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(BASE_DIR, "frontend", "static")

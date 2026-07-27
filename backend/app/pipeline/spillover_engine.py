@@ -36,52 +36,43 @@ class SpilloverEngine:
         self,
         article_id: int,
         direct_impacts: List[Dict],
+        published_ts: Optional[datetime] = None,
     ) -> List[Tuple]:
         """
         For each direct impact, find relationship graph targets and
-        compute spillover scores.
-
-        Args:
-            article_id: The raw_articles.id
-            direct_impacts: List of dicts with keys:
-                asset_name, asset_category, sentiment_score, confidence,
-                ticker, country, region, sub_category
-
-        Returns:
-            List of tuples ready for INSERT into mimir_sentiment_impacts:
-            (article_id, asset_name, asset_category, sub_category,
-             country, region, sentiment_score, confidence, direction,
-             magnitude, reasoning, ticker, policy_signal,
-             is_spillover, spillover_source_article_id, spillover_source_asset)
+        compute diffusion-aware spillover scores.
         """
+        if published_ts is None:
+            published_ts = datetime.now(timezone.utc)
+
         spillovers: List[Tuple] = []
-        # Track which (asset_name) targets we already have direct impacts for
+        best_spillovers: Dict[str, Dict] = {}
         direct_keys = self._direct_impact_keys(direct_impacts)
 
         for impact in direct_impacts:
             source_keys = self._impact_to_source_keys(impact)
             for source_key in source_keys:
+                skip_list = set(self.graph.get_skip_list(source_key))
                 targets = self.graph.get_spillover_targets(source_key)
                 for target_type, target_key, rel_decay in targets:
-                    # Resolve target identity
                     target_asset_name = target_key
                     target_ticker = None
                     if target_type == "ticker":
                         target_ticker = target_key
-                        # ponytail: use ticker as asset_name if no name mapping exists
                         target_asset_name = target_key
                     elif target_type == "asset_name":
                         target_ticker, _ = resolve_ticker(target_key)
                     else:
-                        # 'sector', 'economy' etc. — skip, these are source keys not targets
                         continue
 
-                    # Dedup: skip if already directly tagged in this article
+                    # Skip Tier 1 frontline tickers (Trade the ripple, not the splash)
+                    if target_ticker and target_ticker.upper() in skip_list:
+                        continue
+
                     dedup_key = target_asset_name.upper()
                     if dedup_key in direct_keys:
                         continue
 
-                    # Compute spillover score
                     cap = self._resolve_cap(impact)
                     effective_decay = min(rel_decay, cap)
                     spill_score = impact.get("sentiment_score", 0.0) * effective_decay
@@ -89,50 +80,44 @@ class SpilloverEngine:
                     if abs(spill_score) < NOISE_FLOOR:
                         continue
 
-                    # Confidence: inherit from source, discounted
-                    spill_confidence = round(
-                        impact.get("confidence", 0.5) * 0.8, 3
-                    )
+                    # Compute activation date with 2-day default diffusion delay for spillovers
+                    diff_days = 2
+                    activation_date = published_ts + timedelta(days=diff_days)
 
-                    # Direction from score
-                    if spill_score > 0.05:
-                        direction = "bullish"
-                    elif spill_score < -0.05:
-                        direction = "bearish"
-                    else:
-                        direction = "neutral"
+                    prev_cand = best_spillovers.get(dedup_key)
+                    if prev_cand is None or abs(spill_score) > abs(prev_cand["spill_score"]):
+                        spill_confidence = round(impact.get("confidence", 0.5) * 0.8, 3)
+                        direction = "bullish" if spill_score > 0.05 else ("bearish" if spill_score < -0.05 else "neutral")
+                        magnitude = "LOW" if abs(spill_score) < 0.15 else "MEDIUM"
+                        reasoning = (
+                            f"Spillover from {impact.get('asset_name', source_key)} "
+                            f"(score={impact.get('sentiment_score', 0):.3f}, "
+                            f"decay={effective_decay:.2f}, diff_days={diff_days})"
+                        )
+                        best_spillovers[dedup_key] = {
+                            "tuple": (
+                                article_id,
+                                target_asset_name,
+                                self._infer_category(impact, target_asset_name),
+                                None,  # sub_category
+                                impact.get("country"),
+                                impact.get("region"),
+                                round(spill_score, 4),
+                                spill_confidence,
+                                direction,
+                                magnitude,
+                                reasoning,
+                                target_ticker,
+                                None,  # policy_signal
+                                True,  # is_spillover
+                                article_id,  # spillover_source_article_id
+                                impact.get("asset_name", source_key),  # spillover_source_asset
+                                activation_date,  # activation_date
+                            ),
+                            "spill_score": spill_score
+                        }
 
-                    # Magnitude
-                    magnitude = "LOW" if abs(spill_score) < 0.15 else "MEDIUM"
-
-                    reasoning = (
-                        f"Spillover from {impact.get('asset_name', source_key)} "
-                        f"(score={impact.get('sentiment_score', 0):.3f}, "
-                        f"decay={effective_decay:.2f})"
-                    )
-
-                    spillovers.append((
-                        article_id,
-                        target_asset_name,
-                        self._infer_category(impact, target_asset_name),
-                        None,  # sub_category
-                        impact.get("country"),
-                        impact.get("region"),
-                        round(spill_score, 4),
-                        spill_confidence,
-                        direction,
-                        magnitude,
-                        reasoning,
-                        target_ticker,
-                        None,  # policy_signal
-                        True,  # is_spillover
-                        article_id,  # spillover_source_article_id
-                        impact.get("asset_name", source_key),  # spillover_source_asset
-                    ))
-
-                    # Track dedup across all spillovers within this article
-                    direct_keys.add(dedup_key)
-
+        spillovers = [item["tuple"] for item in best_spillovers.values()]
         logger.debug(
             "Article %d: %d direct → %d spillover impacts",
             article_id, len(direct_impacts), len(spillovers),

@@ -3,11 +3,23 @@
 {% block title %}MIMIR — Shadow Portfolio & AI Advisor{% endblock %}
 
 {% block head_extra %}
+<!-- Load amCharts 5 Libraries -->
+<script src="https://cdn.amcharts.com/lib/5/index.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/xy.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/percent.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/themes/Animated.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/themes/Dark.js"></script>
+
 <style>
     /* Invert calendar picker indicator icon to white for dark theme datetime boxes */
-    input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+    input[type="date"]::-webkit-calendar-picker-indicator {
         filter: invert(1);
         cursor: pointer;
+    }
+    .am5-tooltip-container {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 11px !important;
     }
 </style>
 {% endblock %}
@@ -96,7 +108,7 @@
                                 <th class="px-5 py-3">Total Cost</th>
                                 <th class="px-5 py-3">Current Value</th>
                                 <th class="px-5 py-3">Unrealized P&L</th>
-                                <th class="px-5 py-3">Dividends</th>
+                                <th class="px-5 py-3">Portfolio Weight</th>
                             </tr>
                         </thead>
                         <tbody id="holdingsTableBody" class="text-sm font-mono text-[#D6E5E3]">
@@ -331,15 +343,235 @@
 
         <!-- Tab 3: Analytics & History -->
         <div id="contentAnalytics" class="hidden space-y-6">
-            <div class="card p-6 bg-[#111C21]">
-                <div class="bg-[#111C21] pb-3 border-b border-[#1A2A30] flex justify-between items-center mb-4">
-                    <h2 class="text-sm font-mono text-[#00A6B2] uppercase tracking-wider"><i class="fas fa-chart-line mr-1"></i> Portfolio Value & Profit History (30 Days)</h2>
-                    <span class="text-xs text-[#00A6B2] font-mono">Real-time Cost vs Value</span>
+            
+            <!-- Controls & Date Range Filter Toolbar -->
+            <div class="card p-4 bg-[#111C21] border border-[#1A2A30] flex flex-wrap items-center justify-between gap-4 font-mono">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-[#4A6A70] uppercase font-bold mr-1"><i class="fas fa-calendar-alt text-[#00A6B2] mr-1.5"></i> Time Horizon:</span>
+                    <div class="flex bg-[#0A0E12] border border-[#1A2A30] rounded p-1 gap-1" id="timePeriodButtons">
+                        <button onclick="setAnalyticsPeriod('1w')" class="period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]" data-period="1w">1W</button>
+                        <button onclick="setAnalyticsPeriod('1m')" class="period-btn px-3 py-1 text-xs rounded transition-colors bg-[#00A6B2] text-[#0C1417] font-bold" data-period="1m">1M</button>
+                        <button onclick="setAnalyticsPeriod('3m')" class="period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]" data-period="3m">3M</button>
+                        <button onclick="setAnalyticsPeriod('6m')" class="period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]" data-period="6m">6M</button>
+                        <button onclick="setAnalyticsPeriod('1y')" class="period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]" data-period="1y">1Y</button>
+                        <button onclick="setAnalyticsPeriod('ytd')" class="period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]" data-period="ytd">YTD</button>
+                        <button onclick="setAnalyticsPeriod('all')" class="period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]" data-period="all">ALL</button>
+                    </div>
                 </div>
-                <div class="w-full h-[400px] relative">
-                    <canvas id="portfolioHistoryChart"></canvas>
+
+                <!-- Custom Date Range Form -->
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-1.5 text-xs text-[#8BA4A8]">
+                        <span>From:</span>
+                        <input type="date" id="analyticsStartDate" class="bg-[#0A0E12] border border-[#1A2A30] rounded px-2.5 py-1 text-xs text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                        <span>To:</span>
+                        <input type="date" id="analyticsEndDate" class="bg-[#0A0E12] border border-[#1A2A30] rounded px-2.5 py-1 text-xs text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                        <button onclick="applyCustomAnalyticsDates()" class="px-3 py-1 bg-[#1A2A30] hover:bg-[#00A6B2] hover:text-[#0C1417] text-[#D6E5E3] text-xs font-bold rounded transition-colors">
+                            Apply
+                        </button>
+                    </div>
+                    
+                    <!-- Benchmark Select -->
+                    <div class="flex items-center gap-1.5 text-xs text-[#8BA4A8] border-l border-[#1A2A30] pl-3">
+                        <span>VS:</span>
+                        <select id="analyticsBenchmarkSelect" onchange="loadAnalyticsChart()" class="bg-[#0A0E12] border border-[#1A2A30] rounded px-2 py-1 text-xs text-[#FFB300] font-bold focus:border-[#00A6B2] focus:outline-none">
+                            <option value="SPY">S&P 500 (SPY)</option>
+                            <option value="QQQ">Nasdaq 100 (QQQ)</option>
+                            <option value="DIA">Dow Jones (DIA)</option>
+                            <option value="BTC-USD">Bitcoin (BTC)</option>
+                        </select>
+                    </div>
                 </div>
             </div>
+
+            <!-- "BEAT THE MARKET" Hero Banner -->
+            <div id="beatMarketBanner" class="card p-5 bg-gradient-to-r from-[#111C21] via-[#0E171B] to-[#111C21] border border-[#1A2A30] flex flex-wrap items-center justify-between gap-4 font-mono">
+                <div class="flex items-center gap-4">
+                    <div id="beatMarketIcon" class="w-12 h-12 rounded-full bg-[#00E676]/10 border border-[#00E676]/30 flex items-center justify-center text-[#00E676] text-xl">
+                        <i class="fas fa-trophy"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span id="beatMarketBadge" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40 uppercase tracking-wide">
+                                BEATING THE MARKET
+                            </span>
+                            <span class="text-xs text-[#8BA4A8]" id="beatMarketSubtitle">Over selected period vs S&P 500</span>
+                        </div>
+                        <h3 class="text-xl font-bold text-[#E8F1F0] mt-1" id="beatMarketHeading">
+                            Portfolio: <span id="kpiPortRet" class="text-[#00E676]">+0.00%</span> vs SPY: <span id="kpiBmRet" class="text-[#FFB300]">+0.00%</span>
+                        </h3>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-6 border-l border-[#1A2A30] pl-6">
+                    <div>
+                        <span class="text-[10px] text-[#4A6A70] uppercase block">Generated Alpha</span>
+                        <span id="kpiAlphaVal" class="text-2xl font-bold text-[#00E676]">+0.00%</span>
+                    </div>
+                    <div>
+                        <span class="text-[10px] text-[#4A6A70] uppercase block">Win Rate</span>
+                        <span id="kpiWinRate" class="text-lg font-bold text-[#D6E5E3]">0.0%</span>
+                    </div>
+                    <div>
+                        <span class="text-[10px] text-[#4A6A70] uppercase block">Max Drawdown</span>
+                        <span id="kpiMaxDD" class="text-lg font-bold text-[#FF5252]">0.00%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Quantitative Metric Cards (Grid of 4) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
+                <!-- Card 1: Equity & Net Return -->
+                <div class="card p-4 bg-[#111C21] border border-[#1A2A30] space-y-2">
+                    <div class="flex justify-between items-center text-xs text-[#4A6A70]">
+                        <span class="uppercase">PORTFOLIO VALUE</span>
+                        <i class="fas fa-wallet text-[#00A6B2]"></i>
+                    </div>
+                    <div class="text-2xl font-bold text-[#E8F1F0]" id="cardPortValue">$0.00</div>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-[#4A6A70]">Cost Basis: <span id="cardCostBasis" class="text-[#8BA4A8]">$0.00</span></span>
+                        <span id="cardNetPL" class="font-bold text-[#00E676]">+$0.00 (+0.0%)</span>
+                    </div>
+                </div>
+
+                <!-- Card 2: Risk-Adjusted Efficiency -->
+                <div class="card p-4 bg-[#111C21] border border-[#1A2A30] space-y-2">
+                    <div class="flex justify-between items-center text-xs text-[#4A6A70]">
+                        <span class="uppercase">SHARPE & SORTINO</span>
+                        <i class="fas fa-shield-halved text-[#E040FB]"></i>
+                    </div>
+                    <div class="flex items-baseline gap-2">
+                        <span class="text-2xl font-bold text-[#E040FB]" id="cardSharpe">0.00</span>
+                        <span class="text-xs text-[#4A6A70]">Sharpe Ratio</span>
+                    </div>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-[#4A6A70]">Sortino: <span id="cardSortino" class="text-[#D6E5E3]">0.00</span></span>
+                        <span class="text-[#4A6A70]">Vol (Ann.): <span id="cardVolatility" class="text-[#00E5F2]">0.00%</span></span>
+                    </div>
+                </div>
+
+                <!-- Card 3: Trading Statistics -->
+                <div class="card p-4 bg-[#111C21] border border-[#1A2A30] space-y-2">
+                    <div class="flex justify-between items-center text-xs text-[#4A6A70]">
+                        <span class="uppercase">PROFIT FACTOR</span>
+                        <i class="fas fa-chart-pie text-[#00E676]"></i>
+                    </div>
+                    <div class="text-2xl font-bold text-[#00E676]" id="cardProfitFactor">0.00</div>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-[#4A6A70]">Best Day: <span id="cardBestDay" class="text-[#00E676]">+$0.00</span></span>
+                        <span class="text-[#4A6A70]">Worst: <span id="cardWorstDay" class="text-[#FF5252]">-$0.00</span></span>
+                    </div>
+                </div>
+
+                <!-- Card 4: Yield & Drag -->
+                <div class="card p-4 bg-[#111C21] border border-[#1A2A30] space-y-2">
+                    <div class="flex justify-between items-center text-xs text-[#4A6A70]">
+                        <span class="uppercase">DIVIDENDS & FEES</span>
+                        <i class="fas fa-hand-holding-dollar text-[#FFB300]"></i>
+                    </div>
+                    <div class="text-2xl font-bold text-[#FFB300]" id="cardDividends">$0.00</div>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-[#4A6A70]">Brokerage/Taxes:</span>
+                        <span id="cardFees" class="font-bold text-[#FF5252]">$0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Performance Chart (amCharts 5) -->
+            <div class="card p-6 bg-[#111C21] border border-[#1A2A30] space-y-4">
+                <div class="flex flex-wrap justify-between items-center pb-3 border-b border-[#1A2A30]">
+                    <div>
+                        <h2 class="text-sm font-mono text-[#00A6B2] uppercase font-bold tracking-wider">
+                            <i class="fas fa-chart-line mr-1.5"></i> Cumulative Return vs Market Benchmark (amCharts 5)
+                        </h2>
+                        <p class="text-xs text-[#4A6A70] font-mono mt-0.5">Real-time normalized percentage performance comparison against benchmark</p>
+                    </div>
+
+                    <!-- Chart Mode Toggle -->
+                    <div class="flex items-center gap-2 font-mono text-xs">
+                        <button onclick="toggleChartMode('pct')" id="btnChartModePct" class="px-3 py-1 rounded bg-[#00A6B2] text-[#0C1417] font-bold transition-colors">
+                            % Return
+                        </button>
+                        <button onclick="toggleChartMode('dollar')" id="btnChartModeDollar" class="px-3 py-1 rounded bg-[#1A2A30] text-[#D6E5E3] hover:text-[#00E5F2] transition-colors">
+                            $ Dollar Value
+                        </button>
+                    </div>
+                </div>
+
+                <!-- amCharts 5 Chart Div -->
+                <div class="w-full h-[450px] relative" id="amPortfolioChartDiv">
+                    <div id="amPortfolioChart" class="w-full h-full"></div>
+                </div>
+            </div>
+
+            <!-- Middle Row Grid: Daily P&L Column Chart & Asset Allocation Donut Chart -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Daily P&L Bar Chart -->
+                <div class="card p-6 bg-[#111C21] border border-[#1A2A30] space-y-3">
+                    <div class="pb-3 border-b border-[#1A2A30] flex justify-between items-center">
+                        <h2 class="text-sm font-mono text-[#00A6B2] uppercase font-bold tracking-wider">
+                            <i class="fas fa-chart-column mr-1.5"></i> Daily Gain / Loss ($)
+                        </h2>
+                        <span class="text-xs text-[#4A6A70] font-mono">Daily Dollar Volatility</span>
+                    </div>
+                    <div class="w-full h-[320px]" id="amDailyPnLChart"></div>
+                </div>
+
+                <!-- Asset Allocation Donut Chart -->
+                <div class="card p-6 bg-[#111C21] border border-[#1A2A30] space-y-3">
+                    <div class="pb-3 border-b border-[#1A2A30] flex justify-between items-center">
+                        <h2 class="text-sm font-mono text-[#00A6B2] uppercase font-bold tracking-wider">
+                            <i class="fas fa-pie-chart mr-1.5"></i> Holdings Asset Allocation
+                        </h2>
+                        <span class="text-xs text-[#4A6A70] font-mono">Portfolio Weight Distribution</span>
+                    </div>
+                    <div class="w-full h-[320px]" id="amAllocationChart"></div>
+                </div>
+            </div>
+
+            <!-- Bottom Section: Monthly Performance Matrix & Risk Parameters Table -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Monthly Matrix (2 Cols) -->
+                <div class="lg:col-span-2 card p-6 bg-[#111C21] border border-[#1A2A30] space-y-3 font-mono">
+                    <div class="pb-3 border-b border-[#1A2A30] flex justify-between items-center">
+                        <h2 class="text-sm text-[#00A6B2] uppercase font-bold tracking-wider">
+                            <i class="fas fa-calendar-days mr-1.5"></i> Monthly Performance & Alpha Breakdown
+                        </h2>
+                        <span class="text-xs text-[#4A6A70]">Historical Return Matrix</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-[#0A0E12] text-[#4A6A70] uppercase border-b border-[#1A2A30]">
+                                <tr>
+                                    <th class="px-4 py-2.5">Month</th>
+                                    <th class="px-4 py-2.5 text-right">Portfolio Return</th>
+                                    <th class="px-4 py-2.5 text-right">Benchmark (SPY)</th>
+                                    <th class="px-4 py-2.5 text-right">Alpha</th>
+                                    <th class="px-4 py-2.5 text-center">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="monthlyMatrixTableBody" class="divide-y divide-[#1A2A30]/50 text-[#D6E5E3]">
+                                <tr>
+                                    <td colspan="5" class="px-4 py-6 text-center text-[#4A6A70]">Loading monthly returns matrix...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Asset Weightings & Quick Stats List (1 Col) -->
+                <div class="card p-6 bg-[#111C21] border border-[#1A2A30] space-y-3 font-mono">
+                    <div class="pb-3 border-b border-[#1A2A30]">
+                        <h2 class="text-sm text-[#00A6B2] uppercase font-bold tracking-wider">
+                            <i class="fas fa-list-check mr-1.5"></i> Asset Breakdown & Weights
+                        </h2>
+                    </div>
+                    <div id="assetBreakdownList" class="space-y-2.5 text-xs max-h-[340px] overflow-y-auto pr-1">
+                        <p class="text-[#4A6A70] text-center py-4">Loading position weights...</p>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
     
@@ -415,10 +647,19 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    function sanitizeAdvice(html) {
+        if (!html) return "";
+        return html
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+            .replace(/<link[^>]*rel=["']stylesheet["'][^>]*>/gi, "")
+            .replace(/<\/?(?:html|head|body)[^>]*>/gi, "");
+    }
+
     let currentLedgerPage = 1;
     const ledgerPageSize = 10;
     let cachedHoldings = {};
-    let cachedAdvice = localStorage.getItem("mimir_portfolio_advice");
+    let cachedAdvice = sanitizeAdvice(localStorage.getItem("mimir_portfolio_advice"));
     let portfolioChartInstance = null;
     window.portfolioLogos = {};
 
@@ -712,7 +953,7 @@
         const content = document.getElementById("aiContent");
         
         if (!force && cachedAdvice) {
-            content.innerHTML = cachedAdvice;
+            content.innerHTML = sanitizeAdvice(cachedAdvice);
             loading.classList.add("hidden");
             empty.classList.add("hidden");
             content.classList.remove("hidden");
@@ -728,9 +969,10 @@
             if (!res.ok) throw new Error("Advice generation failed");
             const data = await res.json();
             
-            cachedAdvice = data.advice;
-            localStorage.setItem("mimir_portfolio_advice", cachedAdvice);
-            content.innerHTML = cachedAdvice;
+            const cleanAdvice = sanitizeAdvice(data.advice);
+            cachedAdvice = cleanAdvice;
+            localStorage.setItem("mimir_portfolio_advice", cleanAdvice);
+            content.innerHTML = cleanAdvice;
             loading.classList.add("hidden");
             content.classList.remove("hidden");
         } catch (err) {
@@ -789,15 +1031,18 @@
         if (activeHoldingsKeys.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
+                    <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No positions loaded. Add transactions below to start.</td>
                 </tr>
             `;
             return;
         }
+
+        const totalPortfolioVal = activeHoldingsKeys.reduce((sum, t) => sum + (holdings[t].current_value || 0), 0);
         
         activeHoldingsKeys.sort().forEach(ticker => {
             const h = holdings[ticker];
             const plColor = h.profit_loss >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            const weightPct = totalPortfolioVal > 0 ? ((h.current_value / totalPortfolioVal) * 100).toFixed(2) : "0.00";
             
             const cleanTicker = ticker.replace(/-USD$/, '');
             const logoInfo = window.portfolioLogos[ticker] || {};
@@ -817,125 +1062,471 @@
                 <td class="px-5 py-3 text-[#4A6A70]">${formatCurrency(h.total_cost)}</td>
                 <td class="px-5 py-3">${formatCurrency(h.current_value)}</td>
                 <td class="px-5 py-3 font-bold ${plColor}">${formatCurrency(h.profit_loss)} (${h.profit_loss_pct.toFixed(2)}%)</td>
-                <td class="px-5 py-3 font-bold text-[#E040FB]">${h.dividends_received > 0 ? formatCurrency(h.dividends_received) : "-"}</td>
+                <td class="px-5 py-3 font-bold text-[#00E5F2]">${weightPct}%</td>
             `;
             tbody.appendChild(tr);
         });
     }
 
-    async function loadAnalyticsChart() {
+    let currentAnalyticsPeriod = "1m";
+    let currentChartMode = "pct";
+    let cachedAnalyticsData = null;
+
+    let amRootPortfolio = null;
+    let amRootDaily = null;
+    let amRootAllocation = null;
+
+    function setAnalyticsPeriod(period) {
+        currentAnalyticsPeriod = period;
+        document.querySelectorAll("#timePeriodButtons .period-btn").forEach(btn => {
+            if (btn.dataset.period === period) {
+                btn.className = "period-btn px-3 py-1 text-xs rounded transition-colors bg-[#00A6B2] text-[#0C1417] font-bold";
+            } else {
+                btn.className = "period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]";
+            }
+        });
+        document.getElementById("analyticsStartDate").value = "";
+        document.getElementById("analyticsEndDate").value = "";
+        loadAnalyticsChart();
+    }
+
+    function applyCustomAnalyticsDates() {
+        const s = document.getElementById("analyticsStartDate").value;
+        const e = document.getElementById("analyticsEndDate").value;
+        if (!s || !e) {
+            alert("Please select both start date and end date.");
+            return;
+        }
+        document.querySelectorAll("#timePeriodButtons .period-btn").forEach(btn => {
+            btn.className = "period-btn px-3 py-1 text-xs rounded transition-colors text-[#4A6A70] hover:text-[#00E5F2]";
+        });
+        loadAnalyticsChart(s, e);
+    }
+
+    function toggleChartMode(mode) {
+        currentChartMode = mode;
+        const btnPct = document.getElementById("btnChartModePct");
+        const btnDollar = document.getElementById("btnChartModeDollar");
+        if (mode === "pct") {
+            btnPct.className = "px-3 py-1 rounded bg-[#00A6B2] text-[#0C1417] font-bold transition-colors";
+            btnDollar.className = "px-3 py-1 rounded bg-[#1A2A30] text-[#D6E5E3] hover:text-[#00E5F2] transition-colors";
+        } else {
+            btnDollar.className = "px-3 py-1 rounded bg-[#00A6B2] text-[#0C1417] font-bold transition-colors";
+            btnPct.className = "px-3 py-1 rounded bg-[#1A2A30] text-[#D6E5E3] hover:text-[#00E5F2] transition-colors";
+        }
+        if (cachedAnalyticsData) {
+            renderAmPortfolioChart(cachedAnalyticsData);
+        }
+    }
+
+    async function loadAnalyticsChart(customStart = null, customEnd = null) {
         try {
-            const res = await fetch("/api/v1/portfolio/history");
-            if (!res.ok) throw new Error("Could not load portfolio history");
-            const history = await res.json();
-            
-            if (history.length === 0) return;
-            
-            const labels = history.map(h => h.date);
-            const portfolioValues = history.map(h => h.portfolio_value);
-            const profits = history.map(h => h.profit_loss);
-            
-            const ctx = document.getElementById("portfolioHistoryChart").getContext("2d");
-            if (portfolioChartInstance) {
-                portfolioChartInstance.destroy();
+            const benchmarkSelect = document.getElementById("analyticsBenchmarkSelect");
+            const benchmark = benchmarkSelect ? benchmarkSelect.value : "SPY";
+            let url = `/api/v1/portfolio/history?period=${currentAnalyticsPeriod}&benchmark=${benchmark}`;
+            if (customStart && customEnd) {
+                url = `/api/v1/portfolio/history?start_date=${customStart}&end_date=${customEnd}&benchmark=${benchmark}`;
             }
             
-            portfolioChartInstance = new Chart(ctx, {
-                type: "line",
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: "Portfolio Value ($)",
-                            data: portfolioValues,
-                            borderColor: "#00A6B2",
-                            backgroundColor: "rgba(0, 166, 178, 0.1)",
-                            borderWidth: 2,
-                            fill: true,
-                            tension: 0.2,
-                            yAxisID: "y-value"
-                        },
-                        {
-                            label: "Unrealized P&L ($)",
-                            data: profits,
-                            borderColor: "#00E676",
-                            backgroundColor: "rgba(0, 230, 118, 0.05)",
-                            borderWidth: 2,
-                            fill: false,
-                            tension: 0.2,
-                            yAxisID: "y-pl"
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            grid: {
-                                color: "rgba(26, 42, 48, 0.5)"
-                            },
-                            ticks: {
-                                color: "#8BA4A8",
-                                font: { family: "monospace", size: 10 }
-                            }
-                        },
-                        "y-value": {
-                            type: "linear",
-                            position: "left",
-                            grid: {
-                                color: "rgba(26, 42, 48, 0.5)"
-                            },
-                            ticks: {
-                                color: "#00A6B2",
-                                font: { family: "monospace", size: 10 },
-                                callback: function(value) {
-                                    return "$" + value.toLocaleString();
-                                }
-                            }
-                        },
-                        "y-pl": {
-                            type: "linear",
-                            position: "right",
-                            grid: {
-                                drawOnChartArea: false
-                            },
-                            ticks: {
-                                color: "#00E676",
-                                font: { family: "monospace", size: 10 },
-                                callback: function(value) {
-                                    return "$" + value.toLocaleString();
-                                }
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            labels: {
-                                color: "#D6E5E3",
-                                font: { family: "monospace", size: 11 }
-                            }
-                        },
-                        tooltip: {
-                            mode: "index",
-                            intersect: false,
-                            backgroundColor: "#111C21",
-                            titleFont: { family: "monospace", size: 12, weight: "bold" },
-                            bodyFont: { family: "monospace", size: 11 },
-                            borderColor: "#1A2A30",
-                            borderWidth: 1,
-                            callbacks: {
-                                label: function(context) {
-                                    return context.dataset.label.split(" ")[0] + ": $" + context.raw.toLocaleString();
-                                }
-                            }
-                        }
-                    }
-                }
-            });
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("Could not load portfolio analytics data");
+            const data = await res.json();
+            
+            // Fallback if data is raw list for backward compatibility
+            if (Array.isArray(data)) {
+                cachedAnalyticsData = { history: data, metrics: {}, allocation: [], monthly_matrix: [] };
+            } else {
+                cachedAnalyticsData = data;
+            }
+
+            const metrics = cachedAnalyticsData.metrics || {};
+            const history = cachedAnalyticsData.history || [];
+            const allocation = cachedAnalyticsData.allocation || [];
+            const monthlyMatrix = cachedAnalyticsData.monthly_matrix || [];
+
+            // 1. Update Beat Market Banner
+            updateBeatMarketBanner(metrics);
+
+            // 2. Update KPI Metric Cards
+            updateKPICards(metrics);
+
+            // 3. Render amCharts 5 Main Equity / Performance Chart
+            renderAmPortfolioChart(cachedAnalyticsData);
+
+            // 4. Render amCharts 5 Daily P&L Chart
+            renderAmDailyPnLChart(history);
+
+            // 5. Render amCharts 5 Asset Allocation Donut Chart
+            renderAmAllocationChart(allocation);
+
+            // 6. Update Monthly Matrix & Asset Breakdown List
+            renderMonthlyMatrix(monthlyMatrix);
+            renderAssetBreakdownList(allocation);
+
         } catch (err) {
-            console.error("Error drawing analytics chart:", err);
+            console.error("Error loading analytics chart suite:", err);
         }
+    }
+
+    function updateBeatMarketBanner(m) {
+        const isBeat = m.beat_market;
+        const badge = document.getElementById("beatMarketBadge");
+        const alphaVal = document.getElementById("kpiAlphaVal");
+        const portRet = document.getElementById("kpiPortRet");
+        const bmRet = document.getElementById("kpiBmRet");
+        const winRate = document.getElementById("kpiWinRate");
+        const maxDD = document.getElementById("kpiMaxDD");
+        const icon = document.getElementById("beatMarketIcon");
+
+        if (!badge) return;
+
+        const alphaSign = (m.alpha || 0) >= 0 ? "+" : "";
+        const portSign = (m.portfolio_return_pct || 0) >= 0 ? "+" : "";
+        const bmSign = (m.benchmark_return_pct || 0) >= 0 ? "+" : "";
+
+        if (isBeat) {
+            badge.textContent = "BEATING THE MARKET";
+            badge.className = "px-2.5 py-0.5 rounded text-xs font-bold bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40 uppercase tracking-wide";
+            icon.className = "w-12 h-12 rounded-full bg-[#00E676]/10 border border-[#00E676]/30 flex items-center justify-center text-[#00E676] text-xl";
+            alphaVal.className = "text-2xl font-bold text-[#00E676]";
+        } else {
+            badge.textContent = "LAGGING THE MARKET";
+            badge.className = "px-2.5 py-0.5 rounded text-xs font-bold bg-[#FF5252]/20 text-[#FF5252] border border-[#FF5252]/40 uppercase tracking-wide";
+            icon.className = "w-12 h-12 rounded-full bg-[#FF5252]/10 border border-[#FF5252]/30 flex items-center justify-center text-[#FF5252] text-xl";
+            alphaVal.className = "text-2xl font-bold text-[#FF5252]";
+        }
+
+        alphaVal.textContent = `${alphaSign}${m.alpha || 0.0}%`;
+        portRet.textContent = `${portSign}${m.portfolio_return_pct || 0.0}%`;
+        portRet.className = (m.portfolio_return_pct >= 0) ? "text-[#00E676]" : "text-[#FF5252]";
+        bmRet.textContent = `${bmSign}${m.benchmark_return_pct || 0.0}%`;
+        winRate.textContent = `${m.win_rate_pct || 0}%`;
+        maxDD.textContent = `${m.max_drawdown_pct || 0}%`;
+    }
+
+    function updateKPICards(m) {
+        if (!document.getElementById("cardPortValue")) return;
+        document.getElementById("cardPortValue").textContent = formatCurrency(m.current_value || 0);
+        document.getElementById("cardCostBasis").textContent = formatCurrency(m.current_cost || 0);
+        
+        const unPL = m.current_unrealized_pl || 0;
+        const unPLPct = m.current_unrealized_pl_pct || 0;
+        const plSign = unPL >= 0 ? "+" : "";
+        const cardNetPL = document.getElementById("cardNetPL");
+        cardNetPL.textContent = `${plSign}${formatCurrency(unPL)} (${plSign}${unPLPct}%)`;
+        cardNetPL.className = unPL >= 0 ? "font-bold text-[#00E676]" : "font-bold text-[#FF5252]";
+
+        document.getElementById("cardSharpe").textContent = m.sharpe_ratio || "0.00";
+        document.getElementById("cardSortino").textContent = m.sortino_ratio || "0.00";
+        document.getElementById("cardVolatility").textContent = `${m.annualized_volatility_pct || 0.0}%`;
+
+        document.getElementById("cardProfitFactor").textContent = m.profit_factor || "0.00";
+        const bestD = m.best_day_dollar || 0;
+        const worstD = m.worst_day_dollar || 0;
+        document.getElementById("cardBestDay").textContent = `+${formatCurrency(bestD)}`;
+        document.getElementById("cardWorstDay").textContent = formatCurrency(worstD);
+
+        document.getElementById("cardDividends").textContent = formatCurrency(m.total_dividends || 0);
+        document.getElementById("cardFees").textContent = formatCurrency(m.total_fees || 0);
+    }
+
+    function renderAmPortfolioChart(data) {
+        if (amRootPortfolio) {
+            amRootPortfolio.dispose();
+            amRootPortfolio = null;
+        }
+        
+        const history = data.history || [];
+        if (history.length === 0 || !document.getElementById("amPortfolioChart")) return;
+
+        const root = am5.Root.new("amPortfolioChart");
+        amRootPortfolio = root;
+        root.setThemes([am5themes_Animated.new(root), am5themes_Dark.new(root)]);
+
+        const chart = root.container.children.push(
+            am5xy.XYChart.new(root, {
+                panX: true,
+                panY: false,
+                wheelX: "panX",
+                wheelY: "zoomX",
+                pinchZoomX: true
+            })
+        );
+
+        const cursor = chart.set("cursor", am5xy.XYCursor.new(root, {
+            behavior: "none"
+        }));
+        cursor.lineY.set("visible", false);
+
+        const xAxis = chart.xAxes.push(
+            am5xy.DateAxis.new(root, {
+                baseInterval: { timeUnit: "day", count: 1 },
+                renderer: am5xy.AxisRendererX.new(root, { minGridDistance: 50 }),
+                tooltip: am5.Tooltip.new(root, {})
+            })
+        );
+
+        const yAxis = chart.yAxes.push(
+            am5xy.ValueAxis.new(root, {
+                renderer: am5xy.AxisRendererY.new(root, {})
+            })
+        );
+
+        const chartData = history.map(item => {
+            const dateMs = new Date(item.date).getTime();
+            return {
+                date: dateMs,
+                portfolioVal: item.portfolio_value,
+                costBasis: item.cost_basis,
+                profitPct: item.profit_loss_pct,
+                bmPct: item.benchmark_return_pct
+            };
+        });
+
+        if (currentChartMode === "pct") {
+            const series1 = chart.series.push(
+                am5xy.LineSeries.new(root, {
+                    name: "Portfolio Return (%)",
+                    xAxis: xAxis,
+                    yAxis: yAxis,
+                    valueYField: "profitPct",
+                    valueXField: "date",
+                    stroke: am5.color(0x00A6B2),
+                    fill: am5.color(0x00A6B2),
+                    tooltip: am5.Tooltip.new(root, {
+                        labelText: "Portfolio: {valueY}%"
+                    })
+                })
+            );
+            series1.strokes.template.setAll({ strokeWidth: 2 });
+            series1.fills.template.setAll({ fillOpacity: 0.15, visible: true });
+            series1.data.setAll(chartData);
+
+            const bmTicker = (data.metrics && data.metrics.benchmark_ticker) ? data.metrics.benchmark_ticker : "SPY";
+            const series2 = chart.series.push(
+                am5xy.LineSeries.new(root, {
+                    name: `${bmTicker} Return (%)`,
+                    xAxis: xAxis,
+                    yAxis: yAxis,
+                    valueYField: "bmPct",
+                    valueXField: "date",
+                    stroke: am5.color(0xFFB300),
+                    tooltip: am5.Tooltip.new(root, {
+                        labelText: "Benchmark: {valueY}%"
+                    })
+                })
+            );
+            series2.strokes.template.setAll({ strokeWidth: 2, strokeDasharray: [4, 4] });
+            series2.data.setAll(chartData);
+        } else {
+            const series1 = chart.series.push(
+                am5xy.LineSeries.new(root, {
+                    name: "Portfolio Value ($)",
+                    xAxis: xAxis,
+                    yAxis: yAxis,
+                    valueYField: "portfolioVal",
+                    valueXField: "date",
+                    stroke: am5.color(0x00A6B2),
+                    fill: am5.color(0x00A6B2),
+                    tooltip: am5.Tooltip.new(root, {
+                        labelText: "Value: ${valueY}"
+                    })
+                })
+            );
+            series1.strokes.template.setAll({ strokeWidth: 2 });
+            series1.fills.template.setAll({ fillOpacity: 0.15, visible: true });
+            series1.data.setAll(chartData);
+
+            const series2 = chart.series.push(
+                am5xy.LineSeries.new(root, {
+                    name: "Cost Basis ($)",
+                    xAxis: xAxis,
+                    yAxis: yAxis,
+                    valueYField: "costBasis",
+                    valueXField: "date",
+                    stroke: am5.color(0x8BA4A8),
+                    tooltip: am5.Tooltip.new(root, {
+                        labelText: "Cost: ${valueY}"
+                    })
+                })
+            );
+            series2.strokes.template.setAll({ strokeWidth: 1.5, strokeDasharray: [3, 3] });
+            series2.data.setAll(chartData);
+        }
+
+        chart.set("scrollbarX", am5.Scrollbar.new(root, { orientation: "horizontal" }));
+        const legend = chart.children.push(am5.Legend.new(root, { centerX: am5.p50, x: am5.p50 }));
+        legend.data.setAll(chart.series.values);
+        chart.appear(1000, 100);
+    }
+
+    function renderAmDailyPnLChart(history) {
+        if (amRootDaily) {
+            amRootDaily.dispose();
+            amRootDaily = null;
+        }
+        if (!history || history.length <= 1 || !document.getElementById("amDailyPnLChart")) return;
+
+        const root = am5.Root.new("amDailyPnLChart");
+        amRootDaily = root;
+        root.setThemes([am5themes_Animated.new(root), am5themes_Dark.new(root)]);
+
+        const chart = root.container.children.push(
+            am5xy.XYChart.new(root, { panX: true, panY: false, wheelX: "panX", wheelY: "zoomX" })
+        );
+
+        const xAxis = chart.xAxes.push(
+            am5xy.CategoryAxis.new(root, {
+                categoryField: "date",
+                renderer: am5xy.AxisRendererX.new(root, { minGridDistance: 40 })
+            })
+        );
+
+        const yAxis = chart.yAxes.push(
+            am5xy.ValueAxis.new(root, { renderer: am5xy.AxisRendererY.new(root, {}) })
+        );
+
+        const barData = [];
+        for (let i = 1; i < history.length; i++) {
+            const capInjected = (history[i].cost_basis || 0) - (history[i-1].cost_basis || 0);
+            const diff = history[i].portfolio_value - history[i-1].portfolio_value - capInjected;
+            barData.push({ date: history[i].date, pnl: Math.round(diff * 100) / 100 });
+        }
+
+        xAxis.data.setAll(barData);
+
+        const series = chart.series.push(
+            am5xy.ColumnSeries.new(root, {
+                name: "Daily P&L",
+                xAxis: xAxis,
+                yAxis: yAxis,
+                valueYField: "pnl",
+                categoryXField: "date",
+                tooltip: am5.Tooltip.new(root, { labelText: "{categoryX}: ${valueY}" })
+            })
+        );
+
+        series.columns.template.adapters.add("fill", function(fill, target) {
+            if (target.dataItem) {
+                return target.dataItem.get("valueY") >= 0 ? am5.color(0x00E676) : am5.color(0xFF5252);
+            }
+            return fill;
+        });
+
+        series.columns.template.adapters.add("stroke", function(stroke, target) {
+            if (target.dataItem) {
+                return target.dataItem.get("valueY") >= 0 ? am5.color(0x00E676) : am5.color(0xFF5252);
+            }
+            return stroke;
+        });
+
+        series.data.setAll(barData);
+        chart.appear(1000, 100);
+    }
+
+    function renderAmAllocationChart(allocation) {
+        if (amRootAllocation) {
+            amRootAllocation.dispose();
+            amRootAllocation = null;
+        }
+        if (!allocation || allocation.length === 0 || !document.getElementById("amAllocationChart")) return;
+
+        const root = am5.Root.new("amAllocationChart");
+        amRootAllocation = root;
+        root.setThemes([am5themes_Animated.new(root), am5themes_Dark.new(root)]);
+
+        const chart = root.container.children.push(
+            am5percent.PieChart.new(root, { endAngle: 270, innerRadius: am5.percent(60) })
+        );
+
+        const series = chart.series.push(
+            am5percent.PieSeries.new(root, { valueField: "market_value", categoryField: "ticker", endAngle: 270 })
+        );
+
+        series.states.create("hidden", { endAngle: -90 });
+
+        const pieData = allocation.map(a => ({ ticker: a.ticker, market_value: a.market_value }));
+
+        series.data.setAll(pieData);
+        series.labels.template.set("forceHidden", true);
+        series.ticks.template.set("forceHidden", true);
+
+        const legend = chart.children.push(am5.Legend.new(root, {
+            centerY: am5.percent(50),
+            y: am5.percent(50),
+            layout: root.verticalLayout
+        }));
+
+        legend.data.setAll(series.dataItems);
+        chart.appear(1000, 100);
+    }
+
+    function renderMonthlyMatrix(matrix) {
+        const tbody = document.getElementById("monthlyMatrixTableBody");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+        if (!matrix || matrix.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-4 text-center text-[#4A6A70]">No historical monthly data found.</td></tr>`;
+            return;
+        }
+
+        matrix.forEach(row => {
+            const tr = document.createElement("tr");
+            tr.className = "hover:bg-[#1A2A30]/30 transition-colors";
+            
+            const portSign = row.portfolio_return_pct >= 0 ? "+" : "";
+            const bmSign = row.benchmark_return_pct >= 0 ? "+" : "";
+            const alphaSign = row.alpha >= 0 ? "+" : "";
+            
+            const portClass = row.portfolio_return_pct >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            const alphaClass = row.alpha >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            
+            const statusBadge = row.beat_market
+                ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/30 uppercase">OUTPERFORM</span>`
+                : `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FF5252]/20 text-[#FF5252] border border-[#FF5252]/30 uppercase">UNDERPERFORM</span>`;
+
+            tr.innerHTML = `
+                <td class="px-4 py-2.5 font-bold text-[#E8F1F0]">${row.month}</td>
+                <td class="px-4 py-2.5 text-right font-bold ${portClass}">${portSign}${row.portfolio_return_pct}%</td>
+                <td class="px-4 py-2.5 text-right text-[#FFB300] font-bold">${bmSign}${row.benchmark_return_pct}%</td>
+                <td class="px-4 py-2.5 text-right font-bold ${alphaClass}">${alphaSign}${row.alpha}%</td>
+                <td class="px-4 py-2.5 text-center">${statusBadge}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderAssetBreakdownList(allocation) {
+        const container = document.getElementById("assetBreakdownList");
+        if (!container) return;
+        container.innerHTML = "";
+        if (!allocation || allocation.length === 0) {
+            container.innerHTML = `<p class="text-[#4A6A70] text-center py-4">No open positions.</p>`;
+            return;
+        }
+
+        allocation.forEach(item => {
+            const div = document.createElement("div");
+            div.className = "flex items-center justify-between p-2.5 bg-[#0A0E12] rounded border border-[#1A2A30]";
+            
+            const unPLSign = item.unrealized_pl >= 0 ? "+" : "";
+            const unPLClass = item.unrealized_pl >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+
+            div.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#00A6B2]"></span>
+                    <div>
+                        <span class="font-bold text-[#E8F1F0] text-xs">${item.ticker}</span>
+                        <span class="text-[10px] text-[#4A6A70] block">${item.quantity} units @ ${formatCurrency(item.current_price)}</span>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span class="font-bold text-[#D6E5E3] text-xs">${formatCurrency(item.market_value)} (${item.weight_pct}%)</span>
+                    <span class="text-[10px] ${unPLClass} block">${unPLSign}${formatCurrency(item.unrealized_pl)}</span>
+                </div>
+            `;
+            container.appendChild(div);
+        });
     }
 
     function renderLedger() {
