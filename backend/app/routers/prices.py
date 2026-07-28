@@ -50,6 +50,34 @@ def _get_tls_session():
         _tls.session = sess
     return _tls.session
 
+SECTOR_PEER_MAP = {
+    "technology": ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMD", "INTC", "CRM", "ADBE", "ORCL"],
+    "healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK", "LLY", "TMO", "ABT", "AMGN", "BMY"],
+    "financial-services": ["JPM", "BAC", "GS", "MS", "WFC", "C", "BLK", "SCHW", "AXP", "USB"],
+    "consumer-cyclical": ["AMZN", "TSLA", "HD", "NKE", "MCD", "SBUX", "TGT", "LOW", "BKNG", "MAR"],
+    "consumer-defensive": ["PG", "KO", "PEP", "WMT", "COST", "CL", "MDLZ", "GIS", "KHC", "SJM"],
+    "energy": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL"],
+    "industrials": ["CAT", "UNP", "BA", "HON", "GE", "RTX", "DE", "LMT", "MMM", "UPS"],
+    "communication-services": ["GOOGL", "META", "DIS", "NFLX", "CMCSA", "T", "VZ", "TMUS", "CHTR", "EA"],
+    "utilities": ["NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "ED", "WEC"],
+    "real-estate": ["AMT", "PLD", "CCI", "EQIX", "SPG", "PSA", "O", "WELL", "DLR", "AVB"],
+    "basic-materials": ["LIN", "APD", "SHW", "ECL", "DD", "NEM", "FCX", "NUE", "DOW", "PPG"]
+}
+
+def get_country_flag(country_name: str) -> str:
+    """Convert country name to emoji flag."""
+    COUNTRY_FLAGS = {
+        "United States": "🇺🇸", "China": "🇨🇳", "Japan": "🇯🇵", "United Kingdom": "🇬🇧",
+        "Germany": "🇩🇪", "France": "🇫🇷", "Canada": "🇨🇦", "Australia": "🇦🇺",
+        "South Korea": "🇰🇷", "India": "🇮🇳", "Brazil": "🇧🇷", "Taiwan": "🇹🇼",
+        "Switzerland": "🇨🇭", "Netherlands": "🇳🇱", "Sweden": "🇸🇪", "Ireland": "🇮🇪",
+        "Israel": "🇮🇱", "Singapore": "🇸🇬", "Hong Kong": "🇭🇰", "Thailand": "🇹🇭",
+        "Norway": "🇳🇴", "Denmark": "🇩🇰", "Finland": "🇫🇮", "Spain": "🇪🇸",
+        "Italy": "🇮🇹", "Mexico": "🇲🇽", "Indonesia": "🇮🇩", "Malaysia": "🇲🇾",
+        "Philippines": "🇵🇭", "New Zealand": "🇳🇿"
+    }
+    return COUNTRY_FLAGS.get(country_name, "🌐")
+
 DEFAULT_TICKERS = [
     # Stock Indices
     "SPY", "QQQ", "^DJI", "^VIX", "^N225", "000300.SS", "^KS11", "^SET50.BK", 
@@ -597,6 +625,18 @@ def get_candles(
     try:
         cur.execute(sql, params)
         candles = cur.fetchall()
+        
+        # Fallback: if minute table returned 0 candles for short intervals, try hourly
+        if not candles and is_minute:
+            cur.execute(f"""
+                SELECT 
+                    timestamp AS time,
+                    open, high, low, close, volume
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = %s AND timestamp >= %s
+                ORDER BY timestamp ASC
+            """, (ticker, start_time))
+            candles = cur.fetchall()
         
         # Fetch historical sentiments
         sent_rows = []
@@ -1688,10 +1728,11 @@ def get_ticker_details(ticker: str, nocache: bool = False):
     # Fetch peers from the database
     peers_list = []
     try:
-        # Find default peers in the same index or sector
-        peers_candidates = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "QCOM", "INTC"]
-        if ticker_symbol in peers_candidates:
-            peers_candidates.remove(ticker_symbol)
+        # Dynamic sector-aware peer selection
+        sector_key = info.get('sectorKey', '').lower() if info else ''
+        peers_candidates = SECTOR_PEER_MAP.get(sector_key, ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "QCOM", "INTC"])
+        peers_candidates = [p for p in peers_candidates if p != ticker_symbol]
+        peers_candidates = peers_candidates[:6]  # Take top 6 sector peers
             
         conn = get_db_connection_dict()
         cur = conn.cursor()
@@ -1720,7 +1761,7 @@ def get_ticker_details(ticker: str, nocache: bool = False):
                 COALESCE(p.prev_price, l.latest_price) as prev_price
             FROM latest_prices l
             LEFT JOIN prev_prices p ON l.ticker = p.ticker
-        """, (peers_candidates[:4],))
+        """, (peers_candidates,))
         peer_rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -1734,6 +1775,11 @@ def get_ticker_details(ticker: str, nocache: bool = False):
                 "price": round(lp, 2),
                 "change_percent": round(pch, 2)
             })
+        
+        # If no peers found in DB, still return the candidates with placeholder data
+        if not peers_list:
+            for pc in peers_candidates[:4]:
+                peers_list.append({"ticker": pc, "price": 0.0, "change_percent": 0.0})
     except Exception as peer_err:
         print(f"[DETAILS] Peers fetch error: {peer_err}")
 
@@ -1782,14 +1828,107 @@ def get_ticker_details(ticker: str, nocache: bool = False):
     except Exception as fin_err:
         print(f"[DETAILS] Financial parsing error: {fin_err}")
 
+    # Quarterly financial statements
+    quarterly_financials = {"years": [], "revenue": [], "gross_profit": [], "ebitda": [], "net_income": [], "eps": [], "operating_cash_flow": [], "capex": [], "free_cash_flow": []}
+    try:
+        q_fin = ticker_obj.quarterly_income_stmt
+        q_cf = ticker_obj.quarterly_cash_flow
+        
+        def get_row(df, keys):
+            for k in keys:
+                for index_val in df.index:
+                    if str(index_val).strip().lower() == k.strip().lower():
+                        return df.loc[index_val]
+            return None
+
+        if q_fin is not None and not q_fin.empty:
+            q_years = [col.strftime('%Y-%m-%d') if hasattr(col, 'strftime') else str(col) for col in q_fin.columns]
+            quarterly_financials["years"] = q_years
+            
+            q_rev = get_row(q_fin, ['Total Revenue', 'Revenue'])
+            quarterly_financials["revenue"] = [float(v) if pd.notna(v) else 0.0 for v in q_rev] if q_rev is not None else [0.0]*len(q_years)
+            q_gp = get_row(q_fin, ['Gross Profit'])
+            quarterly_financials["gross_profit"] = [float(v) if pd.notna(v) else 0.0 for v in q_gp] if q_gp is not None else [0.0]*len(q_years)
+            q_ebitda = get_row(q_fin, ['EBITDA'])
+            quarterly_financials["ebitda"] = [float(v) if pd.notna(v) else 0.0 for v in q_ebitda] if q_ebitda is not None else [0.0]*len(q_years)
+            q_ni = get_row(q_fin, ['Net Income', 'Net Income Common Stockholders'])
+            quarterly_financials["net_income"] = [float(v) if pd.notna(v) else 0.0 for v in q_ni] if q_ni is not None else [0.0]*len(q_years)
+            q_eps = get_row(q_fin, ['Diluted EPS', 'Basic EPS'])
+            quarterly_financials["eps"] = [float(v) if pd.notna(v) else 0.0 for v in q_eps] if q_eps is not None else [0.0]*len(q_years)
+            
+            if q_cf is not None and not q_cf.empty:
+                q_ocf = get_row(q_cf, ['Operating Cash Flow', 'Total Cash From Operating Activities'])
+                quarterly_financials["operating_cash_flow"] = [float(v) if pd.notna(v) else 0.0 for v in q_ocf] if q_ocf is not None else [0.0]*len(q_years)
+                q_capex = get_row(q_cf, ['Capital Expenditure', 'Capital Expenditures'])
+                quarterly_financials["capex"] = [float(v) if pd.notna(v) else 0.0 for v in q_capex] if q_capex is not None else [0.0]*len(q_years)
+                q_fcf_ocf = quarterly_financials["operating_cash_flow"]
+                q_fcf_capex = quarterly_financials["capex"]
+                quarterly_financials["free_cash_flow"] = [round(q_fcf_ocf[i] + q_fcf_capex[i], 2) if i < len(q_fcf_capex) else 0.0 for i in range(len(q_fcf_ocf))]
+    except Exception as q_fin_err:
+        print(f"[DETAILS] Quarterly financials error: {q_fin_err}")
+
+    # Balance sheet data
+    balance_sheet_data = {"years": [], "total_assets": [], "total_liabilities": [], "total_equity": [], "current_assets": [], "current_liabilities": [], "long_term_debt": [], "cash_and_equivalents": []}
+    try:
+        bs = ticker_obj.balance_sheet
+        if bs is not None and not bs.empty:
+            bs_years = [col.strftime('%Y-%m-%d') if hasattr(col, 'strftime') else str(col) for col in bs.columns]
+            balance_sheet_data["years"] = bs_years
+            
+            ta = get_row(bs, ['Total Assets'])
+            balance_sheet_data["total_assets"] = [float(v) if pd.notna(v) else 0.0 for v in ta] if ta is not None else [0.0]*len(bs_years)
+            tl = get_row(bs, ['Total Liabilities Net Minority Interest', 'Total Liab'])
+            balance_sheet_data["total_liabilities"] = [float(v) if pd.notna(v) else 0.0 for v in tl] if tl is not None else [0.0]*len(bs_years)
+            te = get_row(bs, ['Total Equity Gross Minority Interest', 'Stockholders Equity', 'Total Stockholders Equity'])
+            balance_sheet_data["total_equity"] = [float(v) if pd.notna(v) else 0.0 for v in te] if te is not None else [0.0]*len(bs_years)
+            ca = get_row(bs, ['Current Assets'])
+            balance_sheet_data["current_assets"] = [float(v) if pd.notna(v) else 0.0 for v in ca] if ca is not None else [0.0]*len(bs_years)
+            cl = get_row(bs, ['Current Liabilities'])
+            balance_sheet_data["current_liabilities"] = [float(v) if pd.notna(v) else 0.0 for v in cl] if cl is not None else [0.0]*len(bs_years)
+            ltd = get_row(bs, ['Long Term Debt'])
+            balance_sheet_data["long_term_debt"] = [float(v) if pd.notna(v) else 0.0 for v in ltd] if ltd is not None else [0.0]*len(bs_years)
+            cash = get_row(bs, ['Cash And Cash Equivalents', 'Cash'])
+            balance_sheet_data["cash_and_equivalents"] = [float(v) if pd.notna(v) else 0.0 for v in cash] if cash is not None else [0.0]*len(bs_years)
+    except Exception as bs_err:
+        print(f"[DETAILS] Balance sheet error: {bs_err}")
+
+    # Cash flow statement data  
+    cash_flow_data = {"years": [], "operating_cash_flow": [], "investing_cash_flow": [], "financing_cash_flow": [], "free_cash_flow": [], "capex": [], "dividends_paid": [], "share_buyback": []}
+    try:
+        cf_stmt = ticker_obj.cash_flow
+        if cf_stmt is not None and not cf_stmt.empty:
+            cf_years = [col.strftime('%Y-%m-%d') if hasattr(col, 'strftime') else str(col) for col in cf_stmt.columns]
+            cash_flow_data["years"] = cf_years
+            
+            ocf = get_row(cf_stmt, ['Operating Cash Flow', 'Total Cash From Operating Activities'])
+            cash_flow_data["operating_cash_flow"] = [float(v) if pd.notna(v) else 0.0 for v in ocf] if ocf is not None else [0.0]*len(cf_years)
+            icf = get_row(cf_stmt, ['Investing Cash Flow', 'Total Cashflows From Investing Activities'])
+            cash_flow_data["investing_cash_flow"] = [float(v) if pd.notna(v) else 0.0 for v in icf] if icf is not None else [0.0]*len(cf_years)
+            fcf_stmt = get_row(cf_stmt, ['Financing Cash Flow', 'Total Cash From Financing Activities'])
+            cash_flow_data["financing_cash_flow"] = [float(v) if pd.notna(v) else 0.0 for v in fcf_stmt] if fcf_stmt is not None else [0.0]*len(cf_years)
+            capex = get_row(cf_stmt, ['Capital Expenditure', 'Capital Expenditures'])
+            cash_flow_data["capex"] = [float(v) if pd.notna(v) else 0.0 for v in capex] if capex is not None else [0.0]*len(cf_years)
+            div = get_row(cf_stmt, ['Common Stock Dividend Paid', 'Payment Of Dividends', 'Dividends Paid'])
+            cash_flow_data["dividends_paid"] = [float(v) if pd.notna(v) else 0.0 for v in div] if div is not None else [0.0]*len(cf_years)
+            buyback = get_row(cf_stmt, ['Repurchase Of Capital Stock', 'Common Stock Payments'])
+            cash_flow_data["share_buyback"] = [float(v) if pd.notna(v) else 0.0 for v in buyback] if buyback is not None else [0.0]*len(cf_years)
+            # Calculate FCF from OCF + CapEx
+            ocf_vals = cash_flow_data["operating_cash_flow"]
+            capex_vals = cash_flow_data["capex"]
+            cash_flow_data["free_cash_flow"] = [round(ocf_vals[i] + capex_vals[i], 2) if i < len(capex_vals) else 0.0 for i in range(len(ocf_vals))]
+    except Exception as cf_err:
+        print(f"[DETAILS] Cash flow error: {cf_err}")
+
     # Final payload
     details_payload = {
         "ticker": ticker_symbol,
         "long_name": long_name,
         "sector": sector,
-        "industry": industry,
+        "industry": info.get("industry", industry) if info else industry,
         "country": country,
+        "country_flag": get_country_flag(info.get("country", country) if info else country),
         "exchange": exchange,
+        "website": info.get("website", "") if info else "",
         "summary": summary,
         "ceo": ceo,
         "employees": employees,
@@ -1803,6 +1942,16 @@ def get_ticker_details(ticker: str, nocache: bool = False):
         "volume": volume,
         "market_cap": market_cap,
         "pe_ratio": pe_ratio,
+        "forward_pe": info.get("forwardPE", "N/A") if info else "N/A",
+        "peg_ratio": info.get("pegRatio", "N/A") if info else "N/A",
+        "beta": info.get("beta", 0.0) if info else 0.0,
+        "profit_margin": round(info.get("profitMargins", 0.0) * 100, 2) if info and info.get("profitMargins") else "N/A",
+        "return_on_equity": round(info.get("returnOnEquity", 0.0) * 100, 2) if info and info.get("returnOnEquity") else "N/A",
+        "debt_to_equity": info.get("debtToEquity", "N/A") if info else "N/A",
+        "revenue_per_share": info.get("revenuePerShare", "N/A") if info else "N/A",
+        "free_cash_flow": info.get("freeCashflow", 0) if info else 0,
+        "earnings_growth": round(info.get("earningsGrowth", 0.0) * 100, 2) if info and info.get("earningsGrowth") else "N/A",
+        "revenue_growth": round(info.get("revenueGrowth", 0.0) * 100, 2) if info and info.get("revenueGrowth") else "N/A",
         "dividend_yield": div_yield_pct,
         "fifty_two_week_low": round(low_52w, 2),
         "fifty_two_week_high": round(high_52w, 2),
@@ -1820,13 +1969,178 @@ def get_ticker_details(ticker: str, nocache: bool = False):
         "bearish_view": bearish_view,
         "recent_articles": db_articles,
         "peers": peers_list,
-        "financials": financials_data
+        "financials": financials_data,
+        "quarterly_financials": quarterly_financials,
+        "balance_sheet": balance_sheet_data,
+        "cash_flow_statement": cash_flow_data
     }
     
     # Store in cache only if successfully fetched positive price
     if details_payload["price"] > 0.0:
         _ticker_details_cache[ticker_symbol] = {"data": details_payload, "fetched_at": now}
     return details_payload
+
+@router.get("/prices/price-movements/{ticker}")
+def get_price_movements(ticker: str, days: int = Query(30, ge=1, le=90)):
+    """
+    Detect significant daily price movements and correlate with news articles.
+    Returns a timeline of notable price events with associated news.
+    """
+    movements = []
+    try:
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        
+        # Get daily price changes over the period
+        cur.execute(f"""
+            WITH daily_prices AS (
+                SELECT 
+                    date_trunc('day', timestamp) AS trade_date,
+                    (array_agg(open ORDER BY timestamp ASC))[1] AS day_open,
+                    MAX(high) AS day_high,
+                    MIN(low) AS day_low,
+                    (array_agg(close ORDER BY timestamp DESC))[1] AS day_close,
+                    SUM(volume) AS day_volume
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = %s AND timestamp >= NOW() - INTERVAL '{days} days'
+                GROUP BY 1
+                ORDER BY trade_date ASC
+            ),
+            daily_changes AS (
+                SELECT 
+                    trade_date,
+                    day_open,
+                    day_close,
+                    day_high,
+                    day_low,
+                    day_volume,
+                    LAG(day_close) OVER (ORDER BY trade_date) AS prev_close,
+                    CASE 
+                        WHEN LAG(day_close) OVER (ORDER BY trade_date) > 0 
+                        THEN ((day_close - LAG(day_close) OVER (ORDER BY trade_date)) / LAG(day_close) OVER (ORDER BY trade_date)) * 100
+                        ELSE 0 
+                    END AS change_pct
+                FROM daily_prices
+            )
+            SELECT * FROM daily_changes
+            WHERE ABS(change_pct) >= 1.5
+            ORDER BY trade_date DESC
+            LIMIT 10
+        """, (ticker,))
+        
+        significant_days = cur.fetchall()
+        
+        for day in significant_days:
+            trade_date = day["trade_date"]
+            change_pct = float(day["change_pct"])
+            
+            # Find correlated news articles within ±36 hours of this day
+            cur.execute(f"""
+                SELECT DISTINCT ON (a.title)
+                    a.title,
+                    a.source_name AS source,
+                    a.link AS url,
+                    a.published_ts,
+                    COALESCE(s.sentiment_score, 0) AS sentiment,
+                    s.direction,
+                    s.magnitude
+                FROM {settings.mimir_schema}.mimir_raw_articles a
+                LEFT JOIN {settings.mimir_schema}.mimir_sentiment_impacts s 
+                    ON a.id = s.article_id AND (s.ticker = %s OR s.asset_name ILIKE %s)
+                WHERE a.published_ts BETWEEN %s - INTERVAL '36 hours' AND %s + INTERVAL '12 hours'
+                    AND (s.ticker = %s OR s.asset_name ILIKE %s OR a.title ILIKE %s)
+                ORDER BY a.title, ABS(COALESCE(s.sentiment_score, 0)) DESC
+                LIMIT 3
+            """, (ticker, f"%{ticker}%", trade_date, trade_date, ticker, f"%{ticker}%", f"%{ticker}%"))
+            
+            articles = cur.fetchall()
+            
+            movement = {
+                "date": trade_date.strftime("%Y-%m-%d") if hasattr(trade_date, 'strftime') else str(trade_date),
+                "open": round(float(day["day_open"]), 2),
+                "close": round(float(day["day_close"]), 2),
+                "high": round(float(day["day_high"]), 2),
+                "low": round(float(day["day_low"]), 2),
+                "change_pct": round(change_pct, 2),
+                "direction": "bullish" if change_pct > 0 else "bearish",
+                "volume": int(day["day_volume"]) if day["day_volume"] else 0,
+                "articles": [{
+                    "title": art["title"],
+                    "source": art["source"] or "Unknown",
+                    "url": art["url"] or "#",
+                    "sentiment": round(float(art["sentiment"]), 3) if art["sentiment"] else 0,
+                    "direction": art["direction"] or ("bullish" if float(art["sentiment"] or 0) > 0 else "bearish"),
+                    "published": art["published_ts"].strftime("%Y-%m-%d %H:%M") if hasattr(art["published_ts"], 'strftime') else str(art["published_ts"])
+                } for art in articles]
+            }
+            movements.append(movement)
+        
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[PRICE-MOVEMENTS] Error for {ticker}: {e}")
+    
+    return {"ticker": ticker, "movements": movements}
+
+@router.get("/prices/earnings-history/{ticker}")
+def get_earnings_history(ticker: str):
+    """
+    Return structured quarterly earnings history with EPS and revenue estimates vs actuals.
+    """
+    quarters = []
+    try:
+        session = _get_yf_session()
+        ticker_obj = yf.Ticker(ticker, session=session)
+        
+        # Try to get earnings dates and history
+        try:
+            earnings_dates = ticker_obj.earnings_dates
+            if earnings_dates is not None and not earnings_dates.empty:
+                for idx, row in earnings_dates.head(8).iterrows():
+                    date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)
+                    est_eps = float(row.get('EPS Estimate', 0)) if pd.notna(row.get('EPS Estimate')) else None
+                    act_eps = float(row.get('Reported EPS', 0)) if pd.notna(row.get('Reported EPS')) else None
+                    surprise_pct = float(row.get('Surprise(%)', 0)) if pd.notna(row.get('Surprise(%)')) else None
+                    
+                    quarters.append({
+                        "date": date_str,
+                        "estimated_eps": est_eps,
+                        "actual_eps": act_eps,
+                        "surprise_pct": surprise_pct,
+                        "is_future": act_eps is None,
+                        "beat": act_eps > est_eps if (act_eps is not None and est_eps is not None) else None
+                    })
+        except Exception as ed_err:
+            print(f"[EARNINGS] earnings_dates error: {ed_err}")
+        
+        # Also try quarterly earnings for revenue data
+        try:
+            q_earnings = ticker_obj.quarterly_earnings
+            if q_earnings is not None and not q_earnings.empty:
+                for i, (idx, row) in enumerate(q_earnings.head(8).iterrows()):
+                    revenue = float(row.get('Revenue', 0)) if pd.notna(row.get('Revenue')) else None
+                    earnings = float(row.get('Earnings', 0)) if pd.notna(row.get('Earnings')) else None
+                    if i < len(quarters):
+                        quarters[i]["revenue"] = revenue
+                        quarters[i]["earnings"] = earnings
+                    else:
+                        quarters.append({
+                            "date": str(idx),
+                            "revenue": revenue,
+                            "earnings": earnings,
+                            "estimated_eps": None,
+                            "actual_eps": None,
+                            "surprise_pct": None,
+                            "is_future": False,
+                            "beat": None
+                        })
+        except Exception as qe_err:
+            print(f"[EARNINGS] quarterly_earnings error: {qe_err}")
+            
+    except Exception as e:
+        print(f"[EARNINGS] Error for {ticker}: {e}")
+    
+    return {"ticker": ticker, "quarters": quarters}
 
 from backend.app.analytics import financial_skills
 

@@ -327,7 +327,185 @@
         </div>
     </div>
 
+    <!-- Global Portfolio Trade Alert Notification Pop-up Toast Container -->
+    <div id="portfolioAlertToastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-md w-full pointer-events-none"></div>
+
     <script src="/static/js/mimir_jarvis.js"></script>
+    <script>
+        // --- PORTFOLIO TRADE ALERT MONITOR & SOUND NOTIFIER ---
+        (function() {
+            let portfolioTickers = new Set();
+            let notifiedAlertIds = new Set(JSON.parse(sessionStorage.getItem("notified_portfolio_alerts") || "[]"));
+
+            function playPortfolioAlertChime() {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    const ctx = new AudioContext();
+                    
+                    const playTone = (freq, start, duration, gainVal = 0.2) => {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(freq, start);
+                        gain.gain.setValueAtTime(gainVal, start);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start(start);
+                        osc.stop(start + duration);
+                    };
+
+                    const now = ctx.currentTime;
+                    // Dual chord chime: D5 -> A5 -> D6
+                    playTone(587.33, now, 0.2, 0.25);
+                    playTone(880.00, now + 0.12, 0.25, 0.25);
+                    playTone(1174.66, now + 0.28, 0.45, 0.3);
+                } catch (e) {
+                    console.warn("Portfolio alert audio playback error:", e);
+                }
+            }
+
+            async function fetchPortfolioTickers() {
+                try {
+                    const res = await fetch("/api/v1/portfolio/tickers");
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    if (data.tickers && Array.isArray(data.tickers)) {
+                        portfolioTickers = new Set(data.tickers.map(t => t.toUpperCase()));
+                        window.userPortfolioTickers = portfolioTickers;
+                    }
+                } catch (e) {
+                    console.error("Error fetching portfolio tickers:", e);
+                }
+            }
+
+            function showPortfolioAlertToast(alert) {
+                const container = document.getElementById("portfolioAlertToastContainer");
+                if (!container) return;
+
+                const isBuy = alert.signal_type.toUpperCase() === "BUY";
+                const actionColor = isBuy ? "#00E676" : "#FF5252";
+                const actionBg = isBuy ? "rgba(0, 230, 118, 0.15)" : "rgba(255, 82, 82, 0.15)";
+                const borderGlow = isBuy ? "rgba(0, 230, 118, 0.5)" : "rgba(255, 82, 82, 0.5)";
+
+                const toast = document.createElement("div");
+                toast.className = "pointer-events-auto bg-[#0A161C]/95 border-2 rounded-xl p-4 shadow-2xl backdrop-blur-md transition-all duration-500 transform translate-y-4 opacity-0 font-mono";
+                toast.style.borderColor = borderGlow;
+                toast.style.boxShadow = `0 10px 30px ${actionBg}`;
+
+                toast.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00E5F2]/20 border border-[#00E5F2]/40 text-[#00E5F2] flex items-center gap-1 shadow-[0_0_8px_rgba(0,229,242,0.4)]">
+                                <i class="fas fa-briefcase text-[10px]"></i> IN YOUR PORTFOLIO
+                            </span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold" style="background: ${actionBg}; color: ${actionColor}; border: 1px solid ${actionColor}">
+                                ${alert.signal_type.toUpperCase()}
+                            </span>
+                        </div>
+                        <button onclick="this.parentElement.parentElement.remove()" class="text-[#8BA4A8] hover:text-[#D6E5E3] font-bold text-sm px-1">&times;</button>
+                    </div>
+
+                    <div class="flex justify-between items-baseline mb-2">
+                        <h4 class="text-base font-extrabold text-[#D6E5E3] tracking-wide flex items-center gap-2">
+                            ${alert.ticker}
+                            <span class="text-xs font-normal text-[#4A6A70]">Trigger: $${parseFloat(alert.trigger_price || 0).toFixed(2)}</span>
+                        </h4>
+                        <span class="text-xs font-bold text-[#00E676]">${alert.win_rate ? parseFloat(alert.win_rate).toFixed(1) + '% Win Rate' : ''}</span>
+                    </div>
+
+                    <p class="text-xs text-[#8BA4A8] line-clamp-2 mb-3 leading-relaxed">
+                        ${alert.reason || 'Trade signal alert detected for stock held in your portfolio.'}
+                    </p>
+
+                    <div class="flex items-center justify-between pt-2 border-t border-[#1A2A30]">
+                        <span class="text-[10px] text-[#4A6A70]">RSI: ${alert.rsi_value ? parseFloat(alert.rsi_value).toFixed(1) : 'N/A'}</span>
+                        <div class="flex gap-2">
+                            <button onclick="window.markAlertAsRead(${alert.id}, this)" class="px-2.5 py-1 bg-[#1A2A30] hover:bg-[#2A3A40] text-[#00E5F2] border border-[#00E5F2]/30 text-xs font-bold rounded transition-all flex items-center gap-1">
+                                <i class="fas fa-check-circle text-[10px]"></i> Mark Read
+                            </button>
+                            <a href="/alerts" class="px-3 py-1 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] text-xs font-bold rounded transition-all flex items-center gap-1">
+                                <i class="fas fa-external-link-alt text-[10px]"></i> View Alert
+                            </a>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(toast);
+
+                requestAnimationFrame(() => {
+                    toast.classList.remove("translate-y-4", "opacity-0");
+                });
+
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.classList.add("opacity-0", "translate-y-4");
+                        setTimeout(() => toast.remove(), 500);
+                    }
+                }, 12000);
+            }
+
+            async function checkPortfolioAlerts() {
+                if (portfolioTickers.size === 0) {
+                    await fetchPortfolioTickers();
+                }
+                if (portfolioTickers.size === 0) return;
+
+                try {
+                    const res = await fetch("/api/v1/alerts/pending");
+                    if (!res.ok) return;
+                    const alerts = await res.json();
+
+                    let soundPlayed = false;
+                    alerts.forEach(alert => {
+                        if (!alert || !alert.ticker || !alert.id) return;
+                        const t = alert.ticker.toUpperCase();
+                        if (portfolioTickers.has(t) && !notifiedAlertIds.has(alert.id)) {
+                            notifiedAlertIds.add(alert.id);
+                            sessionStorage.setItem("notified_portfolio_alerts", JSON.stringify(Array.from(notifiedAlertIds)));
+                            
+                            showPortfolioAlertToast(alert);
+                            if (!soundPlayed) {
+                                playPortfolioAlertChime();
+                                soundPlayed = true;
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.error("Error checking portfolio trade alerts:", e);
+                }
+            }
+
+            async function markAlertAsRead(alertId, btnEl) {
+                try {
+                    notifiedAlertIds.add(alertId);
+                    sessionStorage.setItem("notified_portfolio_alerts", JSON.stringify(Array.from(notifiedAlertIds)));
+                    localStorage.setItem("read_alert_" + alertId, "true");
+                    
+                    if (btnEl) {
+                        const toast = btnEl.closest('.pointer-events-auto');
+                        if (toast) toast.remove();
+                    }
+                    
+                    await fetch(`/api/v1/alerts/${alertId}/read`, { method: "POST" });
+                } catch (e) {
+                    console.error("Error marking alert as read:", e);
+                }
+            }
+
+            window.checkPortfolioAlerts = checkPortfolioAlerts;
+            window.playPortfolioAlertChime = playPortfolioAlertChime;
+            window.markAlertAsRead = markAlertAsRead;
+
+            document.addEventListener("DOMContentLoaded", () => {
+                fetchPortfolioTickers().then(() => {
+                    checkPortfolioAlerts();
+                    setInterval(checkPortfolioAlerts, 20000);
+                });
+            });
+        })();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

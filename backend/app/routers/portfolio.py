@@ -113,6 +113,65 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
                 
     return prices
 
+@router.get("/portfolio/tickers")
+def get_portfolio_tickers():
+    """Returns a list of distinct active tickers currently held in real and paper portfolios."""
+    tickers = set()
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        schema = settings.mimir_schema
+        # 1. Real portfolio active tickers
+        cur.execute(f"""
+            SELECT ticker, transaction_type, quantity
+            FROM {schema}.mimir_portfolio
+            WHERE (source IS NULL OR source = 'MANUAL' OR source = '')
+        """)
+        rows = cur.fetchall()
+        holdings = {}
+        for r in rows:
+            t = r["ticker"].upper()
+            q = float(r["quantity"])
+            ttype = (r["transaction_type"] or "BUY").upper()
+            if t not in holdings:
+                holdings[t] = 0.0
+            if ttype == "BUY":
+                holdings[t] += q
+            elif ttype == "SELL":
+                holdings[t] -= q
+        for t, qty in holdings.items():
+            if qty > 0.0001:
+                tickers.add(t)
+
+        # 2. Paper portfolio active tickers
+        cur.execute(f"""
+            SELECT ticker, transaction_type, quantity
+            FROM {schema}.mimir_paper_portfolio
+        """)
+        rows_p = cur.fetchall()
+        holdings_p = {}
+        for r in rows_p:
+            t = r["ticker"].upper()
+            q = float(r["quantity"])
+            ttype = (r["transaction_type"] or "BUY").upper()
+            if t not in holdings_p:
+                holdings_p[t] = 0.0
+            if ttype == "BUY":
+                holdings_p[t] += q
+            elif ttype == "SELL":
+                holdings_p[t] -= q
+        for t, qty in holdings_p.items():
+            if qty > 0.0001:
+                tickers.add(t)
+
+    except Exception as e:
+        print(f"[PORTFOLIO TICKERS ERROR] {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+    return {"tickers": sorted(list(tickers))}
+
 @router.get("/portfolio", response_model=PortfolioSummary)
 def get_portfolio():
     # Fetch total API costs
@@ -167,7 +226,7 @@ def get_portfolio():
         
     # Get current prices from yfinance
     tickers = list(raw_holdings.keys())
-    current_prices = fetch_current_prices(tickers)
+    current_prices = fetch_current_prices(tickers) or {}
     
     holdings = {}
     total_cost = 0.0

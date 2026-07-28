@@ -44,6 +44,40 @@
         </div>
     </div>
 
+    <!-- Summary Metrics Cards Grid -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 font-mono">
+        <div class="glass-card rounded-lg p-4 border border-[#1A2A30] bg-[#0A161C]/80">
+            <span class="text-xs text-[#4A6A70] uppercase font-semibold block">Pending Queue</span>
+            <div class="flex items-baseline gap-2 mt-1">
+                <span id="metricPendingCount" class="text-2xl font-black text-[#D6E5E3]">0</span>
+                <span class="text-[10px] text-[#8BA4A8]">Active Alerts</span>
+            </div>
+        </div>
+        <div class="glass-card rounded-lg p-4 border border-[#00A6B2]/30 bg-[#0A161C]/80">
+            <span class="text-xs text-[#00A6B2] uppercase font-semibold block">High Conviction</span>
+            <div class="flex items-baseline gap-2 mt-1">
+                <span id="metricHighConviction" class="text-2xl font-black text-[#00E5F2]">0</span>
+                <span class="text-[10px] text-[#00E5F2]/70">Win Rate &ge; 55%</span>
+            </div>
+        </div>
+        <div class="glass-card rounded-lg p-4 border border-[#00E5F2]/40 bg-[#0A161C]/80 shadow-[0_0_12px_rgba(0,229,242,0.1)]">
+            <span class="text-xs text-[#00E5F2] uppercase font-semibold block flex items-center gap-1">
+                <i class="fas fa-briefcase text-[10px]"></i> In Portfolio
+            </span>
+            <div class="flex items-baseline gap-2 mt-1">
+                <span id="metricInPortfolio" class="text-2xl font-black text-[#00E5F2]">0</span>
+                <span class="text-[10px] text-[#8BA4A8]">Held Stocks</span>
+            </div>
+        </div>
+        <div class="glass-card rounded-lg p-4 border border-[#1A2A30] bg-[#0A161C]/80">
+            <span class="text-xs text-[#4A6A70] uppercase font-semibold block">Avg Conviction</span>
+            <div class="flex items-baseline gap-2 mt-1">
+                <span id="metricAvgWinRate" class="text-2xl font-black text-[#00E676]">0%</span>
+                <span class="text-[10px] text-[#00E676]/70">Est. Win Rate</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Paper Trading Engine Control Bar -->
     <div class="glass-card rounded-lg border border-[#00A6B2]/40 p-4 mb-6 neon-pulse">
         <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -104,7 +138,8 @@
             <!-- Filter Dropdown -->
             <select id="filterSelect" class="bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] px-3 py-1.5 rounded text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
                 <option value="all">Filter: All Alerts</option>
-                <option value="high_conviction">🏆 High Conviction Only (Win Rate >= 60%)</option>
+                <option value="high_conviction">⚡ High Conviction Only (Win Rate &ge; 55%)</option>
+                <option value="in_portfolio">💼 In Portfolio Stocks Only</option>
                 <option value="buy">BUY Signals Only</option>
                 <option value="sell">SELL Signals Only</option>
             </select>
@@ -120,6 +155,9 @@
 
         <div class="flex items-center gap-3 w-full md:w-auto justify-end">
             <span id="alertCountBadge" class="text-xs font-mono text-[#8BA4A8]">0 Pending</span>
+            <button id="markAllReadBtn" class="px-3 py-1.5 bg-[#00E5F2]/10 border border-[#00E5F2]/30 hover:bg-[#00E5F2]/20 text-[#00E5F2] font-semibold rounded text-xs font-mono transition-all flex items-center gap-1.5">
+                <i class="fas fa-check-double"></i> Mark All Read
+            </button>
             <button id="bulkDismissBtn" class="px-3 py-1.5 bg-[#FF5252]/10 border border-[#FF5252]/40 hover:bg-[#FF5252]/20 text-[#FF5252] font-semibold rounded text-xs font-mono transition-all flex items-center gap-1.5">
                 <i class="fas fa-broom"></i> Purge Low Conviction (<55%)
             </button>
@@ -217,6 +255,40 @@
                 <button type="submit" class="flex-grow py-2 bg-[#00E5F2] hover:bg-[#00C5D2] text-[#060A0D] font-bold rounded font-mono transition-all">
                     Save Parameters
                 </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Trade Signal Modal -->
+<div id="editSignalModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-[#111C21] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4 font-mono">
+        <div class="flex justify-between items-center border-b border-[#1A2A30] pb-3">
+            <h3 class="text-sm font-bold text-[#D6E5E3] flex items-center gap-2">
+                <i class="fas fa-edit text-[#00E5F2]"></i> Edit Trade Signal Parameters
+            </h3>
+            <button id="closeEditSignalBtn" class="text-[#8BA4A8] hover:text-[#D6E5E3] text-lg font-bold">&times;</button>
+        </div>
+        <form id="editSignalForm" class="space-y-4 text-xs">
+            <input type="hidden" id="editSignalId">
+            <div>
+                <label class="font-bold text-[#D6E5E3] block mb-1">Ticker</label>
+                <input type="text" id="editSignalTicker" readonly class="w-full bg-[#081115] border border-[#1A2A30] text-[#00E5F2] font-bold rounded px-3 py-2 text-xs focus:outline-none cursor-not-allowed">
+            </div>
+            <div>
+                <label class="font-bold text-[#D6E5E3] block mb-1">Signal Action</label>
+                <select id="editSignalType" class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                    <option value="BUY">BUY</option>
+                    <option value="SELL">SELL</option>
+                </select>
+            </div>
+            <div>
+                <label class="font-bold text-[#D6E5E3] block mb-1">Trigger Price ($)</label>
+                <input type="number" id="editSignalPrice" step="0.01" min="0.01" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-[#1A2A30]">
+                <button type="button" id="cancelEditSignalBtn" class="px-4 py-2 border border-[#1A2A30] hover:bg-[#1A2A30]/50 text-[#8BA4A8] rounded font-bold transition-all">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-bold rounded transition-all">Save Signal Edits</button>
             </div>
         </form>
     </div>
@@ -332,6 +404,19 @@
             // Base filter
             alerts = alerts.filter(a => !a.avg_pnl || Math.abs(parseFloat(a.avg_pnl)) > 0);
 
+            // Update Summary Metrics Grid
+            const totalPending = alerts.length;
+            const highConvictionCount = alerts.filter(a => a.win_rate && parseFloat(a.win_rate) >= 55.0).length;
+            const inPortfolioCount = alerts.filter(a => window.userPortfolioTickers && window.userPortfolioTickers.has(a.ticker.toUpperCase())).length;
+            
+            const winRates = alerts.map(a => parseFloat(a.win_rate || 50.0));
+            const avgWinRate = winRates.length ? (winRates.reduce((a, b) => a + b, 0) / winRates.length).toFixed(1) + '%' : '0%';
+
+            document.getElementById("metricPendingCount").innerText = totalPending;
+            document.getElementById("metricHighConviction").innerText = highConvictionCount;
+            document.getElementById("metricInPortfolio").innerText = inPortfolioCount;
+            document.getElementById("metricAvgWinRate").innerText = avgWinRate;
+
             // Search filter
             const searchVal = searchInput.value.trim().toUpperCase();
             if (searchVal) {
@@ -341,7 +426,9 @@
             // Filter dropdown
             const filterVal = filterSelect.value;
             if (filterVal === "high_conviction") {
-                alerts = alerts.filter(a => a.win_rate && a.win_rate >= 60.0);
+                alerts = alerts.filter(a => a.win_rate && parseFloat(a.win_rate) >= 55.0);
+            } else if (filterVal === "in_portfolio") {
+                alerts = alerts.filter(a => window.userPortfolioTickers && window.userPortfolioTickers.has(a.ticker.toUpperCase()));
             } else if (filterVal === "buy") {
                 alerts = alerts.filter(a => a.signal_type.toUpperCase() === "BUY");
             } else if (filterVal === "sell") {
@@ -377,8 +464,10 @@
             listEl.classList.remove("hidden");
 
             alerts.forEach(alert => {
+                const isPortfolioStock = window.userPortfolioTickers && window.userPortfolioTickers.has(alert.ticker.toUpperCase());
+
                 const card = document.createElement("div");
-                card.className = "glass-card rounded-lg border border-[#1A2A30] p-6 transition-all hover:border-[#2A4048]";
+                card.className = `glass-card rounded-lg border p-6 transition-all ${isPortfolioStock ? 'border-[#00E5F2]/60 shadow-[0_0_15px_rgba(0,229,242,0.15)] bg-[#00E5F2]/[0.02]' : 'border-[#1A2A30] hover:border-[#2A4048]'}`;
                 
                 const isBuy = alert.signal_type.toUpperCase() === "BUY";
                 const signalColor = isBuy ? "#00E676" : "#FF5252";
@@ -393,6 +482,11 @@
                     convictionBadge = `<span class="px-2.5 py-0.5 rounded text-[11px] font-extrabold bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-400/50 text-amber-300 flex items-center gap-1"><i class="fas fa-trophy"></i> S-TIER CONVICTION</span>`;
                 } else if (winRate && winRate >= 55) {
                     convictionBadge = `<span class="px-2.5 py-0.5 rounded text-[11px] font-bold bg-[#00A6B2]/20 border border-[#00E5F2]/40 text-[#00E5F2] flex items-center gap-1"><i class="fas fa-bolt"></i> HIGH CONVICTION</span>`;
+                }
+
+                let portfolioBadge = '';
+                if (isPortfolioStock) {
+                    portfolioBadge = `<span class="px-2.5 py-0.5 rounded text-[11px] font-bold bg-[#00E5F2]/20 border border-[#00E5F2]/50 text-[#00E5F2] flex items-center gap-1 shadow-[0_0_10px_rgba(0,229,242,0.4)] animate-pulse"><i class="fas fa-briefcase"></i> IN PORTFOLIO</span>`;
                 }
 
                 let mainReason = alert.reason || "No analysis details provided.";
@@ -427,7 +521,8 @@
                                     <span class="text-sm text-[#4A6A70] font-mono">Trigger Price: $${parseFloat(alert.trigger_price).toFixed(2)}</span>
                                 </div>
                                 
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-2">
+                                    ${portfolioBadge}
                                     ${convictionBadge}
                                     <div class="text-right text-xs font-mono text-[#8BA4A8]">
                                         <i class="far fa-clock text-[#00A6B2]"></i> ${ts.relative}
@@ -495,11 +590,14 @@
                                     class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-1 text-xs font-mono focus:outline-none focus:border-[#00A6B2]">
                             </div>
                             <div class="flex gap-2 w-full">
-                                <button onclick="approveSignal(${alert.id})" class="flex-grow py-2 bg-[#00E676] hover:bg-[#00c564] text-[#060A0D] font-bold rounded text-xs font-mono transition-all shadow-lg flex items-center justify-center gap-1">
+                                <button onclick="approveSignal(${alert.id})" class="flex-grow py-2 bg-[#00E676] hover:bg-[#00c564] text-[#060A0D] font-bold rounded text-xs font-mono transition-all shadow-lg flex items-center justify-center gap-1" title="Approve and execute paper trade">
                                     <i class="fas fa-play"></i> Paper Trade
                                 </button>
-                                <button onclick="rejectSignal(${alert.id})" class="px-3 py-2 border border-[#FF5252] text-[#FF5252] hover:bg-[rgba(255,82,82,0.1)] rounded text-xs font-mono transition-all">
-                                    Dismiss
+                                <button onclick="markReadSignal(${alert.id})" class="px-2.5 py-2 border border-[#00A6B2] text-[#00E5F2] hover:bg-[#00A6B2]/20 rounded text-xs font-mono transition-all" title="Mark Read (Dismiss notification popups)">
+                                    <i class="fas fa-check"></i>
+                                </button>
+                                <button onclick="rejectSignal(${alert.id})" class="px-2.5 py-2 border border-[#FF5252] text-[#FF5252] hover:bg-[rgba(255,82,82,0.1)] rounded text-xs font-mono transition-all" title="Dismiss Alert">
+                                    <i class="fas fa-times"></i>
                                 </button>
                             </div>
                         </div>
@@ -543,6 +641,34 @@
                 alert("Network error: " + err);
             }
         };
+
+        window.markReadSignal = async (id) => {
+            try {
+                if (window.markAlertAsRead) {
+                    await window.markAlertAsRead(id);
+                } else {
+                    await fetch(`/api/v1/alerts/${id}/read`, { method: "POST" });
+                }
+                fetchAlerts();
+            } catch (err) {
+                alert("Error marking signal as read: " + err);
+            }
+        };
+
+        const markAllReadBtn = document.getElementById("markAllReadBtn");
+        if (markAllReadBtn) {
+            markAllReadBtn.addEventListener("click", async () => {
+                if (!confirm("Are you sure you want to mark all pending alerts as read?")) return;
+                try {
+                    const res = await fetch("/api/v1/alerts/mark-all-read", { method: "POST" });
+                    const data = await res.json();
+                    alert(data.message || "All signals marked as read.");
+                    fetchAlerts();
+                } catch (err) {
+                    alert("Error: " + err);
+                }
+            });
+        }
 
         runAutoTradeBtn.addEventListener("click", async () => {
             runAutoTradeBtn.disabled = true;

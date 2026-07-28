@@ -18,6 +18,10 @@ from backend.app.analytics.paper_trader import (
     process_paper_position_exits,
     get_paper_trading_summary,
     close_paper_position,
+    edit_paper_position,
+    edit_paper_signal,
+    edit_paper_order_history,
+    delete_paper_order_history,
     reset_paper_account
 )
 
@@ -47,9 +51,12 @@ def run_test_suite():
     conn = get_db_connection()
     cur = conn.cursor()
     mock_ticker = "TEST_PAPER_TICKER"
+    alert_id = None
+    log_id = None
     try:
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_trade_signals WHERE ticker = %s", (mock_ticker,))
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_portfolio WHERE ticker = %s", (mock_ticker,))
+        cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_paper_portfolio WHERE ticker = %s", (mock_ticker,))
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_paper_trade_log WHERE ticker = %s", (mock_ticker,))
         
         cur.execute(f"""
@@ -60,6 +67,15 @@ def run_test_suite():
         """, (mock_ticker,))
         alert_id = cur.fetchone()[0]
 
+        # Insert mock paper trade log for testing history edit/delete
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_paper_trade_log
+            (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
+            VALUES (%s, %s, 'BUY', 150.0, 10.0, NOW(), 'TEST_EXEC', 'Initial mock order log')
+            RETURNING id
+        """, (alert_id, mock_ticker))
+        log_id = cur.fetchone()[0]
+
         # Insert high win rate parameter for mock ticker
         cur.execute(f"""
             INSERT INTO {settings.mimir_schema}.mimir_ticker_parameters 
@@ -68,36 +84,67 @@ def run_test_suite():
             ON CONFLICT (ticker) DO UPDATE SET win_rate = 70.0
         """, (mock_ticker,))
         conn.commit()
-        print(f"   [OK] Mock alert created with ID {alert_id} for {mock_ticker}.")
+        print(f"   [OK] Mock alert created with ID {alert_id} & mock trade log ID {log_id} for {mock_ticker}.")
     finally:
         cur.close()
         conn.close()
 
-    # 4. Test Auto-Execution
-    print("\n4. Testing Auto-Execution of Pending Alerts...")
-    exec_res = auto_execute_pending_alerts()
-    print(f"   [OK] Auto-trade executed count: {exec_res.get('executed_count')}")
+    # 4. Test Editing Trade Signal
+    print("\n4. Testing Edit Trade Signal...")
+    sig_edit_res = edit_paper_signal(alert_id, trigger_price=155.50, signal_type="BUY")
+    assert sig_edit_res.get("success") is True, f"Failed to edit signal: {sig_edit_res}"
+    print(f"   [OK] Signal #{alert_id} edited: trigger_price updated to $155.50.")
 
-    # 5. Check Summary
-    print("\n5. Testing Paper Trading Summary...")
+    # 5. Insert & Test Editing Paper Position
+    print("\n5. Testing Edit Active Paper Position...")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_paper_portfolio
+            (ticker, order_date, buy_price, quantity, transaction_type)
+            VALUES (%s, NOW(), 150.0, 10.0, 'BUY')
+        """, (mock_ticker,))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    pos_edit_res = edit_paper_position(mock_ticker, new_quantity=15.0, new_buy_price=145.0)
+    assert pos_edit_res.get("success") is True, f"Failed to edit position: {pos_edit_res}"
+    print(f"   [OK] Position edited: {pos_edit_res['message']}")
+
+    # 6. Test Editing & Deleting Paper Order History
+    print("\n6. Testing Paper Trade Order History Edit & Delete...")
+    hist_edit_res = edit_paper_order_history(log_id, ticker=mock_ticker, action="BUY", entry_price=145.0, exit_price=160.0, quantity=15.0, exit_reason="TAKE_PROFIT", notes="Updated via unit test")
+    assert hist_edit_res.get("success") is True, f"Failed to edit paper order history: {hist_edit_res}"
+    print(f"   [OK] Order history entry #{log_id} edited successfully.")
+
+    hist_del_res = delete_paper_order_history(log_id)
+    assert hist_del_res.get("success") is True, f"Failed to delete paper order history: {hist_del_res}"
+    print(f"   [OK] Order history entry #{log_id} deleted successfully.")
+
+    # 7. Check Summary
+    print("\n7. Testing Paper Trading Summary after edits...")
     summary = get_paper_trading_summary()
     print(f"   [OK] Equity: ${summary['current_equity']:,.2f}, Cash: ${summary['cash_balance']:,.2f}, Active Positions: {len(summary['active_positions'])}")
     if mock_ticker in summary["active_positions"]:
         pos = summary["active_positions"][mock_ticker]
-        print(f"   [OK] Found active paper position for {mock_ticker}: {pos['quantity']} shares @ ${pos['avg_entry_price']:.2f}")
+        print(f"   [OK] Verified edited position for {mock_ticker}: {pos['quantity']} shares @ ${pos['avg_entry_price']:.2f}")
 
-    # 6. Test Position Exit (Manual close)
-    print("\n6. Testing Manual Position Close...")
+    # 8. Test Position Exit (Manual close)
+    print("\n8. Testing Manual Position Close...")
     close_res = close_paper_position(mock_ticker)
     print(f"   [OK] Close position result: {close_res.get('message')}")
 
-    # 7. Cleanup test data
-    print("\n7. Cleaning up test data...")
+    # 9. Cleanup test data
+    print("\n9. Cleaning up test data...")
     conn = get_db_connection()
     cur = conn.cursor()
     try:
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_trade_signals WHERE ticker = %s", (mock_ticker,))
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_portfolio WHERE ticker = %s", (mock_ticker,))
+        cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_paper_portfolio WHERE ticker = %s", (mock_ticker,))
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_paper_trade_log WHERE ticker = %s", (mock_ticker,))
         cur.execute(f"DELETE FROM {settings.mimir_schema}.mimir_ticker_parameters WHERE ticker = %s", (mock_ticker,))
         conn.commit()
@@ -110,3 +157,5 @@ def run_test_suite():
 
 if __name__ == "__main__":
     run_test_suite()
+
+

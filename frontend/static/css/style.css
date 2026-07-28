@@ -1182,3 +1182,96 @@ a:hover {
     background: rgba(0, 166, 178, 0.08);
 }
 
+/* =============================================
+   FINANCE ASSET PAGE COMPONENT STYLES
+   ============================================= */
+
+/* Price Movement Timeline */
+.price-movement-timeline .timeline-event:last-child {
+    border-left-color: transparent;
+}
+
+/* Sentiment Badge Pills */
+.sentiment-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    border: 1px solid;
+}
+.sentiment-pill.bullish { color: #10B981; background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); }
+.sentiment-pill.bearish { color: #FF5252; background: rgba(255, 82, 82, 0.1); border-color: rgba(255, 82, 82, 0.3); }
+.sentiment-pill.neutral { color: #FFD740; background: rgba(255, 215, 64, 0.1); border-color: rgba(255, 215, 64, 0.3); }
+
+/* Regime Badge Indicators */
+.regime-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Finance Card Skeleton Loading */
+.finance-skeleton {
+    background: linear-gradient(90deg, #111A20 25%, #1A2A30 50%, #111A20 75%);
+    background-size: 200% 100%;
+    animation: financeShimmer 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+@keyframes financeShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Financial Statement Tab Transition */
+#fin-body-rows tr {
+    animation: finRowFadeIn 0.2s ease-out;
+}
+@keyframes finRowFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Earnings Quarter Picker */
+#earnings-quarter-picker span:hover {
+    border-color: #00A6B2 !important;
+    color: #00E5F2 !important;
+}
+
+/* Peer Card Hover */
+#peers-container a:hover {
+    background: rgba(0, 166, 178, 0.04);
+    border-radius: 4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    margin-left: -4px;
+    margin-right: -4px;
+}
+
+/* Enhanced Story Card */
+#stories-grid .glass-card {
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#stories-grid .glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 166, 178, 0.2);
+}
+
+/* Price Movement Event Dots */
+.price-movement-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    position: absolute;
+    left: -7px;
+    top: 2px;
+    box-shadow: 0 0 8px rgba(0, 166, 178, 0.3);
+}

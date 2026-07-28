@@ -720,8 +720,29 @@
                 loadSessions(); // Re-render sidebar to show new title
             }
             
-            // Reload session messages so all user prompts have valid database IDs for editing
-            await loadSessionData(currentSessionId, currentSessionTitle.textContent);
+            // Attach database user_message_id to the user card DOM element
+            if (data.user_message_id) {
+                const unattachedCards = chatHistory.querySelectorAll('[id="msg-card-"]');
+                if (unattachedCards.length > 0) {
+                    const lastUserCard = unattachedCards[unattachedCards.length - 1];
+                    lastUserCard.id = `msg-card-${data.user_message_id}`;
+                    const outerDiv = lastUserCard.closest('.py-2');
+                    if (outerDiv) outerDiv.setAttribute('data-msg-id', data.user_message_id);
+                    
+                    const editDiv = document.createElement('div');
+                    editDiv.className = 'flex items-center gap-3 text-[11px] text-[#4A6A70] font-mono mt-1.5 pr-1 opacity-70 group-hover:opacity-100 transition-opacity';
+                    editDiv.innerHTML = `
+                        <button onclick="startEditPrompt('${data.user_message_id}')" class="hover:text-[#00A6B2] transition-colors flex items-center gap-1 cursor-pointer" title="Edit prompt & regenerate answer">
+                            <i class="fas fa-pen text-[10px]"></i> Edit
+                        </button>
+                    `;
+                    lastUserCard.appendChild(editDiv);
+                }
+            }
+
+            // Append assistant response cleanly below user prompt
+            appendMessage('assistant', data.content);
+            exportBtn.classList.remove('hidden');
         } catch (e) {
             console.error(e);
             chatHistory.removeChild(loadingDiv);

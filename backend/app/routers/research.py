@@ -69,7 +69,7 @@ def create_session(session: ChatSessionCreate, db = Depends(get_db)):
 def get_messages(session_id: str, db = Depends(get_db)):
     cur = db.cursor()
     cur.execute(
-        "SELECT id, role, content, metadata, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+        "SELECT id, role, content, metadata, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
         (session_id,)
     )
     messages = [dict(row) for row in cur.fetchall()]
@@ -86,10 +86,11 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
     )
     user_msg_row = cur.fetchone()
     user_msg_id = user_msg_row["id"] if user_msg_row else None
+    db.commit()
     
     # 2. Retrieve history to build context
     cur.execute(
-        "SELECT role, content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+        "SELECT role, content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
         (session_id,)
     )
     history = cur.fetchall()
@@ -209,7 +210,7 @@ def export_session_docx(session_id: str, db = Depends(get_db)):
 
     # Get message history
     cur.execute(
-        "SELECT role, content, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+        "SELECT role, content, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
         (session_id,)
     )
     messages = cur.fetchall()
@@ -273,8 +274,8 @@ def edit_message_and_regenerate(session_id: str, message_id: str, payload: Messa
     
     # 2. Delete all messages created AFTER this message in the session
     cur.execute(
-        "DELETE FROM yggdrasil.mimir_chat_messages WHERE session_id = %s AND created_at > %s",
-        (session_id, created_at)
+        "DELETE FROM yggdrasil.mimir_chat_messages WHERE session_id = %s AND (created_at > %s OR (created_at = %s AND id > %s))",
+        (session_id, created_at, created_at, msg_id_int)
     )
     
     # 3. Update target message content
@@ -286,7 +287,7 @@ def edit_message_and_regenerate(session_id: str, message_id: str, payload: Messa
     
     # 4. Re-fetch session history up to this updated message
     cur.execute(
-        "SELECT role, content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+        "SELECT role, content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
         (session_id,)
     )
     history = cur.fetchall()

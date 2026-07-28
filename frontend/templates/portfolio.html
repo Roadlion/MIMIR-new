@@ -298,15 +298,103 @@
                                 <th class="px-5 py-3">Exit Reason</th>
                                 <th class="px-5 py-3">Realized P&L</th>
                                 <th class="px-5 py-3">Entry Time</th>
+                                <th class="px-5 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="paperLogsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                             <tr>
-                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade logs available yet.</td>
+                                <td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade logs available yet.</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <!-- Edit Paper Position Modal -->
+        <div id="editPaperPosModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-[#111C21] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4 font-mono">
+                <div class="flex justify-between items-center border-b border-[#1A2A30] pb-3">
+                    <h3 class="text-sm font-bold text-[#D6E5E3] flex items-center gap-2">
+                        <i class="fas fa-edit text-[#00E5F2]"></i> Edit Paper Position
+                    </h3>
+                    <button id="closeEditPaperPosBtn" class="text-[#8BA4A8] hover:text-[#D6E5E3] text-lg font-bold">&times;</button>
+                </div>
+                <form id="editPaperPosForm" class="space-y-4 text-xs">
+                    <div>
+                        <label class="font-bold text-[#D6E5E3] block mb-1">Ticker</label>
+                        <input type="text" id="editPosTicker" readonly class="w-full bg-[#081115] border border-[#1A2A30] text-[#00E5F2] font-bold rounded px-3 py-2 text-xs focus:outline-none cursor-not-allowed">
+                    </div>
+                    <div>
+                        <label class="font-bold text-[#D6E5E3] block mb-1">Quantity (Shares)</label>
+                        <input type="number" id="editPosQuantity" step="0.0001" min="0.0001" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                    </div>
+                    <div>
+                        <label class="font-bold text-[#D6E5E3] block mb-1">Avg Entry / Buy Price ($)</label>
+                        <input type="number" id="editPosBuyPrice" step="0.01" min="0.01" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                    </div>
+                    <div class="flex justify-end gap-2 pt-2 border-t border-[#1A2A30]">
+                        <button type="button" id="cancelEditPaperPosBtn" class="px-4 py-2 border border-[#1A2A30] hover:bg-[#1A2A30]/50 text-[#8BA4A8] rounded font-bold transition-all">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-bold rounded transition-all">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Edit Paper Order History Modal -->
+        <div id="editPaperOrderModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-[#111C21] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4 font-mono">
+                <div class="flex justify-between items-center border-b border-[#1A2A30] pb-3">
+                    <h3 class="text-sm font-bold text-[#D6E5E3] flex items-center gap-2">
+                        <i class="fas fa-edit text-[#00E5F2]"></i> Edit Paper Order Entry
+                    </h3>
+                    <button id="closeEditPaperOrderBtn" class="text-[#8BA4A8] hover:text-[#D6E5E3] text-lg font-bold">&times;</button>
+                </div>
+                <form id="editPaperOrderForm" class="space-y-4 text-xs">
+                    <input type="hidden" id="editPaperLogId">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Ticker</label>
+                            <input type="text" id="editPaperOrderTicker" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#00E5F2] font-bold rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                        </div>
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Action</label>
+                            <select id="editPaperOrderAction" class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                                <option value="BUY">BUY</option>
+                                <option value="SELL">SELL</option>
+                                <option value="EDIT">EDIT</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Quantity (Shares)</label>
+                            <input type="number" id="editPaperOrderQty" step="0.0001" min="0.0001" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                        </div>
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Entry Price ($)</label>
+                            <input type="number" id="editPaperOrderEntryPrice" step="0.01" min="0.01" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Exit Price ($)</label>
+                            <input type="number" id="editPaperOrderExitPrice" step="0.01" min="0" placeholder="Optional" class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                        </div>
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Exit Reason</label>
+                            <input type="text" id="editPaperOrderExitReason" placeholder="e.g. TAKE_PROFIT, MANUAL" class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="font-bold text-[#D6E5E3] block mb-1">Notes</label>
+                        <input type="text" id="editPaperOrderNotes" placeholder="Optional notes" class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                    </div>
+                    <div class="flex justify-end gap-2 pt-2 border-t border-[#1A2A30]">
+                        <button type="button" id="cancelEditPaperOrderBtn" class="px-4 py-2 border border-[#1A2A30] hover:bg-[#1A2A30]/50 text-[#8BA4A8] rounded font-bold transition-all">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-bold rounded transition-all">Save Changes</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -1724,9 +1812,14 @@
                     ${pos.unrealized_pnl >= 0 ? '+' : ''}$${pos.unrealized_pnl.toFixed(2)} (${pos.unrealized_pnl_pct.toFixed(2)}%)
                 </td>
                 <td class="px-5 py-3 text-right">
-                    <button onclick="closePaperPos('${pos.ticker}')" class="px-2.5 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all">
-                        Close
-                    </button>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="openEditPaperPosModal('${pos.ticker}', ${pos.quantity}, ${pos.avg_entry_price})" class="px-2.5 py-1 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/40 text-[#00E5F2] border border-[#00A6B2]/40 rounded text-xs font-mono font-bold transition-all">
+                            <i class="fas fa-edit mr-1"></i>Edit
+                        </button>
+                        <button onclick="closePaperPos('${pos.ticker}')" class="px-2.5 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all">
+                            Close
+                        </button>
+                    </div>
                 </td>
             `;
             tbody.appendChild(tr);
@@ -1738,7 +1831,7 @@
         tbody.innerHTML = "";
 
         if (!logs || logs.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade execution logs available yet.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade execution logs available yet.</td></tr>`;
             return;
         }
 
@@ -1761,6 +1854,7 @@
             }
 
             const entryTime = log.entry_time ? new Date(log.entry_time).toLocaleString() : 'N/A';
+            const safeLogJson = JSON.stringify(log).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
 
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
@@ -1773,6 +1867,16 @@
                 <td class="px-5 py-3 text-xs text-[#00E5F2] font-mono">${log.exit_reason || 'ALERT_EXECUTION'}</td>
                 <td class="px-5 py-3 ${pnlClass}">${pnlStr}</td>
                 <td class="px-5 py-3 text-xs text-[#8BA4A8]">${entryTime}</td>
+                <td class="px-5 py-3 text-right">
+                    <div class="flex justify-end gap-1.5">
+                        <button onclick="openEditPaperOrderModal(JSON.parse('${safeLogJson}'))" class="px-2 py-1 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/40 text-[#00E5F2] border border-[#00A6B2]/40 rounded text-xs font-mono font-bold transition-all" title="Edit Paper Order Entry">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="deletePaperOrder(${log.id})" class="px-2 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all" title="Delete Paper Order Entry">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </div>
+                </td>
             `;
             tbody.appendChild(tr);
         });
@@ -1798,6 +1902,46 @@
         }
     };
 
+    window.openEditPaperPosModal = function(ticker, qty, price) {
+        document.getElementById("editPosTicker").value = ticker;
+        document.getElementById("editPosQuantity").value = qty;
+        document.getElementById("editPosBuyPrice").value = price;
+        const modal = document.getElementById("editPaperPosModal");
+        if (modal) modal.classList.remove("hidden");
+    };
+
+    window.openEditPaperOrderModal = function(log) {
+        document.getElementById("editPaperLogId").value = log.id;
+        document.getElementById("editPaperOrderTicker").value = log.ticker;
+        document.getElementById("editPaperOrderAction").value = (log.action || 'BUY').toUpperCase();
+        document.getElementById("editPaperOrderQty").value = log.quantity;
+        document.getElementById("editPaperOrderEntryPrice").value = log.entry_price;
+        document.getElementById("editPaperOrderExitPrice").value = (log.exit_price !== null && log.exit_price !== undefined) ? log.exit_price : '';
+        document.getElementById("editPaperOrderExitReason").value = log.exit_reason || '';
+        document.getElementById("editPaperOrderNotes").value = log.notes || '';
+        
+        const modal = document.getElementById("editPaperOrderModal");
+        if (modal) modal.classList.remove("hidden");
+    };
+
+    window.deletePaperOrder = async function(logId) {
+        if (!confirm(`Are you sure you want to delete paper order entry #${logId}?`)) return;
+        try {
+            const res = await fetch(`/api/v1/paper-trading/order-history/${logId}`, {
+                method: "DELETE"
+            });
+            const data = await res.json();
+            if (res.ok) {
+                alert(data.message || "Order entry deleted.");
+                loadPaperSummary();
+            } else {
+                alert("Error deleting order: " + (data.detail || data.message));
+            }
+        } catch (err) {
+            alert("Delete error: " + err);
+        }
+    };
+
     document.addEventListener("DOMContentLoaded", () => {
         const tabPaper = document.getElementById("tabPaper");
         if (tabPaper) {
@@ -1807,6 +1951,84 @@
         const refreshPaperBtn = document.getElementById("refreshPaperBtn");
         if (refreshPaperBtn) {
             refreshPaperBtn.addEventListener("click", loadPaperSummary);
+        }
+
+        const editPaperPosModal = document.getElementById("editPaperPosModal");
+        const closeEditPaperPosBtn = document.getElementById("closeEditPaperPosBtn");
+        const cancelEditPaperPosBtn = document.getElementById("cancelEditPaperPosBtn");
+        const editPaperPosForm = document.getElementById("editPaperPosForm");
+
+        if (closeEditPaperPosBtn) closeEditPaperPosBtn.addEventListener("click", () => editPaperPosModal.classList.add("hidden"));
+        if (cancelEditPaperPosBtn) cancelEditPaperPosBtn.addEventListener("click", () => editPaperPosModal.classList.add("hidden"));
+
+        if (editPaperPosForm) {
+            editPaperPosForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                const ticker = document.getElementById("editPosTicker").value;
+                const qty = parseFloat(document.getElementById("editPosQuantity").value);
+                const price = parseFloat(document.getElementById("editPosBuyPrice").value);
+
+                try {
+                    const res = await fetch("/api/v1/paper-trading/edit-position", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ ticker: ticker, quantity: qty, buy_price: price })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || data.message || "Failed to update position");
+                    alert(data.message || "Position updated successfully!");
+                    editPaperPosModal.classList.add("hidden");
+                    loadPaperSummary();
+                } catch (err) {
+                    alert("Error: " + err.message);
+                }
+            });
+        }
+
+        const editPaperOrderModal = document.getElementById("editPaperOrderModal");
+        const closeEditPaperOrderBtn = document.getElementById("closeEditPaperOrderBtn");
+        const cancelEditPaperOrderBtn = document.getElementById("cancelEditPaperOrderBtn");
+        const editPaperOrderForm = document.getElementById("editPaperOrderForm");
+
+        if (closeEditPaperOrderBtn) closeEditPaperOrderBtn.addEventListener("click", () => editPaperOrderModal.classList.add("hidden"));
+        if (cancelEditPaperOrderBtn) cancelEditPaperOrderBtn.addEventListener("click", () => editPaperOrderModal.classList.add("hidden"));
+
+        if (editPaperOrderForm) {
+            editPaperOrderForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                const logId = parseInt(document.getElementById("editPaperLogId").value);
+                const ticker = document.getElementById("editPaperOrderTicker").value;
+                const action = document.getElementById("editPaperOrderAction").value;
+                const qty = parseFloat(document.getElementById("editPaperOrderQty").value);
+                const entryPrice = parseFloat(document.getElementById("editPaperOrderEntryPrice").value);
+                const rawExitPrice = document.getElementById("editPaperOrderExitPrice").value;
+                const exitPrice = rawExitPrice !== "" ? parseFloat(rawExitPrice) : null;
+                const exitReason = document.getElementById("editPaperOrderExitReason").value;
+                const notes = document.getElementById("editPaperOrderNotes").value;
+
+                try {
+                    const res = await fetch(`/api/v1/paper-trading/order-history/${logId}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            ticker: ticker,
+                            action: action,
+                            quantity: qty,
+                            entry_price: entryPrice,
+                            exit_price: exitPrice,
+                            exit_reason: exitReason,
+                            notes: notes
+                        })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || data.message || "Failed to update paper order");
+                    alert(data.message || "Paper order entry updated successfully!");
+                    editPaperOrderModal.classList.add("hidden");
+                    loadPaperSummary();
+                } catch (err) {
+                    alert("Error: " + err.message);
+                }
+            });
         }
 
         const resetPaperBtn = document.getElementById("resetPaperAccountBtn");

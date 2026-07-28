@@ -356,7 +356,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
 
         from backend.app.routers.portfolio import fetch_current_prices
         tickers_in_alerts = list(set([a["ticker"].upper() for a in pending_alerts]))
-        live_prices = fetch_current_prices(tickers_in_alerts) if tickers_in_alerts else {}
+        live_prices = (fetch_current_prices(tickers_in_alerts) or {}) if tickers_in_alerts else {}
 
         min_win_rate = float(config.get("min_win_rate", 55.0))
         min_sentiment = float(config.get("min_sentiment_score", 0.0))
@@ -526,7 +526,7 @@ def process_paper_position_exits() -> Dict[str, Any]:
 
         from backend.app.routers.portfolio import fetch_current_prices
         tickers = list(holdings.keys())
-        current_prices = fetch_current_prices(tickers)
+        current_prices = fetch_current_prices(tickers) or {}
 
         gmt_plus_7 = timezone(timedelta(hours=7))
         now_local = datetime.now(gmt_plus_7)
@@ -651,7 +651,7 @@ def get_paper_trading_summary() -> Dict[str, Any]:
 
         from backend.app.routers.portfolio import fetch_current_prices
         tickers = list(raw_holdings.keys())
-        current_prices = fetch_current_prices(tickers)
+        current_prices = fetch_current_prices(tickers) or {}
 
         active_positions = {}
         total_open_cost = 0.0
@@ -785,7 +785,7 @@ def close_paper_position(ticker: str) -> Dict[str, Any]:
         avg_cost = total_cost / net_qty if net_qty > 0 else 0.0
 
         from backend.app.routers.portfolio import fetch_current_prices
-        prices = fetch_current_prices([ticker_clean])
+        prices = fetch_current_prices([ticker_clean]) or {}
         curr_price = prices.get(ticker_clean, avg_cost)
 
         gmt_plus_7 = timezone(timedelta(hours=7))
@@ -846,3 +846,217 @@ def reset_paper_account() -> Dict[str, Any]:
     finally:
         cur.close()
         conn.close()
+
+
+def edit_paper_position(ticker: str, new_quantity: float, new_buy_price: float) -> Dict[str, Any]:
+    """
+    Edits an active open paper trading position's quantity and average entry price.
+    """
+    if not ticker:
+        return {"success": False, "message": "Ticker is required."}
+    if new_quantity <= 0:
+        return {"success": False, "message": "Quantity must be greater than zero."}
+    if new_buy_price <= 0:
+        return {"success": False, "message": "Buy price must be greater than zero."}
+
+    ticker_clean = ticker.strip().upper()
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+
+    try:
+        schema = settings.mimir_schema
+        # Check active holding
+        cur.execute(f"""
+            SELECT id, buy_price, quantity, transaction_type
+            FROM {schema}.mimir_paper_portfolio
+            WHERE UPPER(ticker) = %s
+            ORDER BY order_date ASC
+        """, (ticker_clean,))
+        txs = cur.fetchall()
+
+        net_qty = 0.0
+        for tx in txs:
+            ttype = tx["transaction_type"].upper()
+            q = float(tx["quantity"])
+            if ttype == "BUY":
+                net_qty += q
+            elif ttype == "SELL":
+                net_qty -= q
+
+        if net_qty <= 0.0001:
+            return {"success": False, "message": f"No active paper position found for {ticker_clean}."}
+
+        # Clear active position records and insert updated consolidated position
+        cur.execute(f"DELETE FROM {schema}.mimir_paper_portfolio WHERE UPPER(ticker) = %s", (ticker_clean,))
+
+        gmt_plus_7 = timezone(timedelta(hours=7))
+        now_local = datetime.now(gmt_plus_7)
+
+        cur.execute(f"""
+            INSERT INTO {schema}.mimir_paper_portfolio
+            (ticker, order_date, buy_price, quantity, transaction_type)
+            VALUES (%s, %s, %s, %s, 'BUY')
+        """, (ticker_clean, now_local, new_buy_price, new_quantity))
+
+        cur.execute(f"""
+            INSERT INTO {schema}.mimir_paper_trade_log
+            (ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
+            VALUES (%s, 'EDIT', %s, %s, %s, 'MANUAL_EDIT', %s)
+        """, (ticker_clean, new_buy_price, new_quantity, now_local, f"Position updated to {new_quantity} shares @ ${new_buy_price:.2f}"))
+
+        conn.commit()
+        return {
+            "success": True,
+            "message": f"Successfully updated paper position for {ticker_clean}: {new_quantity} shares @ ${new_buy_price:.2f}.",
+            "ticker": ticker_clean,
+            "quantity": new_quantity,
+            "buy_price": new_buy_price
+        }
+    except Exception as e:
+        conn.rollback()
+        return {"success": False, "message": f"Error editing paper position: {str(e)}"}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def edit_paper_signal(signal_id: int, trigger_price: Optional[float] = None, signal_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Edits a pending trade signal's trigger price and/or signal type before paper execution.
+    """
+    if not signal_id:
+        return {"success": False, "message": "Signal ID is required."}
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+
+    try:
+        schema = settings.mimir_schema
+        cur.execute(f"""
+            SELECT id, ticker, signal_type, trigger_price, status
+            FROM {schema}.mimir_trade_signals
+            WHERE id = %s
+        """, (signal_id,))
+        row = cur.fetchone()
+
+        if not row:
+            return {"success": False, "message": f"Signal #{signal_id} not found."}
+        if row["status"] != "PENDING":
+            return {"success": False, "message": f"Signal #{signal_id} cannot be edited because status is '{row['status']}'."}
+
+        updates = []
+        params = []
+
+        if trigger_price is not None:
+            if trigger_price <= 0:
+                return {"success": False, "message": "Trigger price must be greater than zero."}
+            updates.append("trigger_price = %s")
+            params.append(trigger_price)
+
+        if signal_type is not None:
+            st = signal_type.strip().upper()
+            if st not in ("BUY", "SELL"):
+                return {"success": False, "message": "Signal type must be 'BUY' or 'SELL'."}
+            updates.append("signal_type = %s")
+            params.append(st)
+
+        if not updates:
+            return {"success": False, "message": "No update fields provided."}
+
+        params.append(signal_id)
+        update_sql = f"UPDATE {schema}.mimir_trade_signals SET {', '.join(updates)} WHERE id = %s"
+        cur.execute(update_sql, tuple(params))
+        conn.commit()
+
+        return {
+            "success": True,
+            "message": f"Signal #{signal_id} updated successfully.",
+            "signal_id": signal_id
+        }
+    except Exception as e:
+        conn.rollback()
+        return {"success": False, "message": f"Error editing trade signal: {str(e)}"}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def edit_paper_order_history(log_id: int, ticker: str, action: str, entry_price: float, exit_price: Optional[float] = None, quantity: float = 1.0, exit_reason: Optional[str] = None, notes: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Edits a paper trade order history entry in mimir_paper_trade_log.
+    """
+    if not log_id:
+        return {"success": False, "message": "Order Log ID is required."}
+    if not ticker:
+        return {"success": False, "message": "Ticker is required."}
+    if quantity <= 0:
+        return {"success": False, "message": "Quantity must be greater than zero."}
+    if entry_price <= 0:
+        return {"success": False, "message": "Entry price must be greater than zero."}
+
+    ticker_clean = ticker.strip().upper()
+    action_clean = action.strip().upper()
+
+    realized_pnl = None
+    realized_pnl_pct = None
+    if exit_price is not None and exit_price > 0:
+        realized_pnl = quantity * (exit_price - entry_price) if action_clean in ("BUY", "LONG") else quantity * (entry_price - exit_price)
+        realized_pnl_pct = ((exit_price - entry_price) / entry_price * 100.0) if entry_price > 0 else 0.0
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        schema = settings.mimir_schema
+        cur.execute(f"""
+            SELECT id FROM {schema}.mimir_paper_trade_log WHERE id = %s
+        """, (log_id,))
+        if not cur.fetchone():
+            return {"success": False, "message": f"Paper order record #{log_id} not found."}
+
+        cur.execute(f"""
+            UPDATE {schema}.mimir_paper_trade_log
+            SET ticker = %s,
+                action = %s,
+                entry_price = %s,
+                exit_price = %s,
+                quantity = %s,
+                exit_reason = %s,
+                realized_pnl = %s,
+                realized_pnl_pct = %s,
+                notes = %s
+            WHERE id = %s
+        """, (ticker_clean, action_clean, entry_price, exit_price, quantity, exit_reason, realized_pnl, realized_pnl_pct, notes, log_id))
+        conn.commit()
+        return {"success": True, "message": f"Updated paper trade order #{log_id} successfully."}
+    except Exception as e:
+        conn.rollback()
+        return {"success": False, "message": f"Error updating paper order: {str(e)}"}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def delete_paper_order_history(log_id: int) -> Dict[str, Any]:
+    """
+    Deletes a paper trade order history entry from mimir_paper_trade_log.
+    """
+    if not log_id:
+        return {"success": False, "message": "Order Log ID is required."}
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        schema = settings.mimir_schema
+        cur.execute(f"""
+            DELETE FROM {schema}.mimir_paper_trade_log WHERE id = %s
+        """, (log_id,))
+        conn.commit()
+        return {"success": True, "message": f"Deleted paper trade order #{log_id} successfully."}
+    except Exception as e:
+        conn.rollback()
+        return {"success": False, "message": f"Error deleting paper order: {str(e)}"}
+    finally:
+        cur.close()
+        conn.close()
+
+

@@ -10,6 +10,10 @@ from ..analytics.paper_trader import (
     process_paper_position_exits,
     get_paper_trading_summary,
     close_paper_position,
+    edit_paper_position,
+    edit_paper_signal,
+    edit_paper_order_history,
+    delete_paper_order_history,
     reset_paper_account
 )
 
@@ -29,6 +33,25 @@ class PaperConfigUpdate(BaseModel):
 
 class ClosePositionPayload(BaseModel):
     ticker: str
+
+class EditPositionPayload(BaseModel):
+    ticker: str
+    quantity: float
+    buy_price: float
+
+class EditSignalPayload(BaseModel):
+    signal_id: int
+    trigger_price: Optional[float] = None
+    signal_type: Optional[str] = None
+
+class EditPaperOrderHistoryPayload(BaseModel):
+    ticker: str
+    action: str
+    entry_price: float
+    exit_price: Optional[float] = None
+    quantity: float = 1.0
+    exit_reason: Optional[str] = None
+    notes: Optional[str] = None
 
 @router.get("/config")
 def api_get_paper_config():
@@ -80,6 +103,67 @@ def api_close_paper_position(payload: ClosePositionPayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Close position error: {str(e)}")
 
+@router.post("/edit-position")
+def api_edit_paper_position(payload: EditPositionPayload):
+    """Edits quantity and average entry price for an active paper trading position."""
+    try:
+        res = edit_paper_position(payload.ticker, payload.quantity, payload.buy_price)
+        if not res.get("success", True):
+            raise HTTPException(status_code=400, detail=res.get("message"))
+        return res
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Edit position error: {str(e)}")
+
+@router.post("/edit-signal")
+def api_edit_paper_signal(payload: EditSignalPayload):
+    """Edits trigger price and/or signal type for a pending trade signal."""
+    try:
+        res = edit_paper_signal(payload.signal_id, payload.trigger_price, payload.signal_type)
+        if not res.get("success", True):
+            raise HTTPException(status_code=400, detail=res.get("message"))
+        return res
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Edit signal error: {str(e)}")
+
+@router.put("/order-history/{log_id}")
+def api_edit_paper_order_history(log_id: int, payload: EditPaperOrderHistoryPayload):
+    """Edits a paper trade order history record in mimir_paper_trade_log."""
+    try:
+        res = edit_paper_order_history(
+            log_id=log_id,
+            ticker=payload.ticker,
+            action=payload.action,
+            entry_price=payload.entry_price,
+            exit_price=payload.exit_price,
+            quantity=payload.quantity,
+            exit_reason=payload.exit_reason,
+            notes=payload.notes
+        )
+        if not res.get("success", True):
+            raise HTTPException(status_code=400, detail=res.get("message"))
+        return res
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating paper order history: {str(e)}")
+
+@router.delete("/order-history/{log_id}")
+def api_delete_paper_order_history(log_id: int):
+    """Deletes a paper trade order history record from mimir_paper_trade_log."""
+    try:
+        res = delete_paper_order_history(log_id)
+        if not res.get("success", True):
+            raise HTTPException(status_code=400, detail=res.get("message"))
+        return res
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting paper order history: {str(e)}")
+
 @router.post("/reset")
 def api_reset_paper_account():
     """Resets paper trading portfolio back to starting virtual capital."""
@@ -87,3 +171,5 @@ def api_reset_paper_account():
         return reset_paper_account()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Reset paper account error: {str(e)}")
+
+

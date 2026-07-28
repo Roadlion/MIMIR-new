@@ -172,6 +172,63 @@ def reject_alert(alert_id: int):
         cur.close()
         conn.close()
 
+@router.post("/alerts/{alert_id}/read", response_model=TradeSignalResponse)
+def mark_alert_read(alert_id: int):
+    """Marks a trade signal notification as read so it is dismissed and will not pop up again."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            SELECT id FROM {settings.mimir_schema}.mimir_trade_signals
+            WHERE id = %s
+        """, (alert_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Trade signal not found.")
+            
+        gmt_plus_7 = timezone(timedelta(hours=7))
+        now_local = datetime.now(gmt_plus_7)
+        
+        cur.execute(f"""
+            UPDATE {settings.mimir_schema}.mimir_trade_signals
+            SET status = 'READ', acted_at = %s
+            WHERE id = %s
+            RETURNING id, ticker, signal_type, trigger_price, rsi_value, sentiment_score, 
+                      support_level, resistance_level, reason, status, created_at, acted_at
+        """, (now_local, alert_id))
+        
+        updated_alert = cur.fetchone()
+        conn.commit()
+        return updated_alert
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+@router.post("/alerts/mark-all-read")
+def mark_all_alerts_read():
+    """Marks all pending trade signal notifications as read."""
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        gmt_plus_7 = timezone(timedelta(hours=7))
+        now_local = datetime.now(gmt_plus_7)
+        cur.execute(f"""
+            UPDATE {settings.mimir_schema}.mimir_trade_signals
+            SET status = 'READ', acted_at = %s
+            WHERE status = 'PENDING'
+        """, (now_local,))
+        read_count = cur.rowcount
+        conn.commit()
+        return {"message": f"Marked {read_count} signals as read.", "read_count": read_count}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
 class BulkDismissPayload(BaseModel):
     min_win_rate: float = 55.0
 
