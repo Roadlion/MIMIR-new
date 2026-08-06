@@ -21,19 +21,33 @@
         </div>
     </div>
 
-    <nav class="border-b border-[#1A2A30] px-6 py-3 flex items-center justify-between">
-        <div class="flex items-center gap-6">
+    <nav class="border-b border-[#1A2A30] px-4 lg:px-6 py-3 flex flex-col lg:flex-row lg:items-center justify-between relative z-50">
+        <!-- Brand & Mobile Toggle -->
+        <div class="flex items-center justify-between w-full lg:w-auto">
             <div class="flex items-center gap-2">
                 <span class="text-[#00A6B2] font-bold text-xl font-['JetBrains_Mono']">MIMIR</span>
                 <span class="text-xs text-[#4A6A70] font-mono">v1.0</span>
             </div>
-            <div class="flex gap-1 text-sm">
-                <a href="/" class="nav-link">Dashboard</a>
+            
+            <div class="flex items-center gap-3 lg:hidden">
+                <button onclick="triggerMimirBriefing()" class="px-2 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded font-mono shadow-[0_0_12px_rgba(0,166,178,0.2)]">
+                    <i class="fas fa-volume-high animate-pulse"></i>
+                </button>
+                <button id="mobileMenuBtn" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors p-1">
+                    <i class="fas fa-bars text-lg"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Collapsible Menu (Links + Tools) -->
+        <div id="navMenu" class="hidden lg:flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6 w-full lg:w-auto mt-4 lg:mt-0">
+            <div class="flex flex-col lg:flex-row gap-2 lg:gap-1 text-sm w-full lg:w-auto">
+                <a href="/" class="nav-link w-full lg:w-auto block">Dashboard</a>
 
                 <!-- Portfolio dropdown -->
-                <div class="nav-dropdown">
-                    <button class="nav-dropdown-trigger">Portfolio <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
-                    <div class="nav-dropdown-menu">
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Portfolio <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
                         <a href="/portfolio">Overview</a>
                         <a href="/watchlist">Watchlist</a>
                         <a href="/alerts">Trade Alerts</a>
@@ -41,27 +55,27 @@
                 </div>
 
                 <!-- Markets dropdown -->
-                <div class="nav-dropdown">
-                    <button class="nav-dropdown-trigger">Markets <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
-                    <div class="nav-dropdown-menu">
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Markets <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
                         <a href="/map">Heat Map</a>
                         <a href="/taxonomy">Taxonomy</a>
                     </div>
                 </div>
 
                 <!-- Research dropdown -->
-                <div class="nav-dropdown">
-                    <button class="nav-dropdown-trigger">Research <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
-                    <div class="nav-dropdown-menu">
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Research <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
                         <a href="/articles">Intelligence Feed</a>
                         <a href="/guerilla">Guerilla Quant</a>
                     </div>
                 </div>
 
                 <!-- Tools dropdown -->
-                <div class="nav-dropdown">
-                    <button class="nav-dropdown-trigger">Tools <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
-                    <div class="nav-dropdown-menu">
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Tools <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
                         <a href="/backtest">Simulate</a>
                         <a href="/alphas">Alphas</a>
                         <a href="/oracle">Oracle Assistant</a>
@@ -69,26 +83,43 @@
                     </div>
                 </div>
             </div>
-        </div>
-        <div class="flex items-center gap-4">
-            <!-- Search -->
-            <div class="relative">
-                <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70] pointer-events-none"></i>
-                <input type="text" id="searchInput"
-                    class="w-36 lg:w-44 bg-[#0A161C] border border-[#1A2A30] rounded pl-7 pr-3 py-1 text-xs text-[#D6E5E3] font-mono placeholder-[#4A6A70] focus:border-[#00A6B2] focus:outline-none transition-colors"
-                    placeholder="Search tickers..." autocomplete="off" spellcheck="false">
-                <div id="searchDropdown" class="hidden absolute right-0 top-full mt-2 w-72 lg:w-80 bg-[#0A161C] border border-[#1A2A30] rounded-lg shadow-xl z-50 overflow-hidden"></div>
+            
+            <div class="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 w-full lg:w-auto border-t lg:border-none border-[#1A2A30] pt-4 lg:pt-0">
+                <!-- Search -->
+                <div class="relative w-full lg:w-auto">
+                    <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70] pointer-events-none"></i>
+                    <input type="text" id="searchInput"
+                        class="w-full lg:w-44 bg-[#0A161C] border border-[#1A2A30] rounded pl-7 pr-3 py-2 lg:py-1 text-xs text-[#D6E5E3] font-mono placeholder-[#4A6A70] focus:border-[#00A6B2] focus:outline-none transition-colors"
+                        placeholder="Search tickers..." autocomplete="off" spellcheck="false">
+                    <div id="searchDropdown" class="hidden absolute left-0 right-0 lg:right-0 lg:left-auto top-full mt-2 w-full lg:w-80 bg-[#0A161C] border border-[#1A2A30] rounded-lg shadow-xl z-50 overflow-hidden"></div>
+                </div>
+                
+                <div class="hidden lg:flex items-center gap-4">
+                    <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock">--:--:--</span></span>
+                    <button onclick="triggerMimirBriefing()" class="px-3 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded hover:bg-[#00A6B2]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(0,166,178,0.2)]">
+                        <i class="fas fa-volume-high animate-pulse text-[#00A6B2]"></i> Mimir's Briefing
+                    </button>
+                    <button id="mimirMicBtn" onclick="toggleMimirVoiceMic()" title="Voice Command Mic" class="px-2.5 py-1 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
+                        <i class="fas fa-sync-alt mr-1"></i> Refresh
+                    </button>
+                </div>
+                
+                <!-- Mobile Only Tools -->
+                <div class="flex lg:hidden items-center justify-between w-full mt-2">
+                    <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock-mobile">--:--:--</span></span>
+                    <div class="flex items-center gap-3">
+                        <button id="mimirMicBtn-mobile" onclick="toggleMimirVoiceMic()" class="px-3 py-1.5 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:text-[#00A6B2] bg-[#0A161C]">
+                            <i class="fas fa-microphone"></i> Voice
+                        </button>
+                        <button id="refreshBtn-mobile" class="px-3 py-1.5 text-xs border border-[#2A4A50] rounded bg-[#0A161C] text-[#D6E5E3] hover:text-[#00A6B2]">
+                            <i class="fas fa-sync-alt mr-1"></i> Refresh
+                        </button>
+                    </div>
+                </div>
             </div>
-            <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock">--:--:--</span></span>
-            <button onclick="triggerMimirBriefing()" class="px-3 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded hover:bg-[#00A6B2]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(0,166,178,0.2)]">
-                <i class="fas fa-volume-high animate-pulse text-[#00A6B2]"></i> Mimir's Briefing
-            </button>
-            <button id="mimirMicBtn" onclick="toggleMimirVoiceMic()" title="Voice Command Mic" class="px-2.5 py-1 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
-                <i class="fas fa-microphone"></i>
-            </button>
-            <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
-                <i class="fas fa-sync-alt mr-1"></i> Refresh
-            </button>
         </div>
     </nav>
     
@@ -126,6 +157,31 @@
 
     <script src="/static/js/main.js?v=1.0.2"></script>
     <script>
+    // Mobile menu toggle
+    document.addEventListener('DOMContentLoaded', () => {
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const navMenu = document.getElementById('navMenu');
+        if (mobileMenuBtn && navMenu) {
+            mobileMenuBtn.addEventListener('click', () => {
+                navMenu.classList.toggle('hidden');
+                navMenu.classList.toggle('flex');
+            });
+        }
+        
+        // Mobile menu dropdowns toggle
+        const dropdownTriggers = document.querySelectorAll('.nav-dropdown-trigger');
+        dropdownTriggers.forEach(trigger => {
+            trigger.addEventListener('click', (e) => {
+                if (window.innerWidth < 1024) { // lg breakpoint
+                    const menu = trigger.nextElementSibling;
+                    if (menu) {
+                        menu.classList.toggle('hidden');
+                    }
+                }
+            });
+        });
+    });
+
     // Active navbar route highlighter
     document.addEventListener('DOMContentLoaded', () => {
         const currentPath = window.location.pathname;
@@ -460,6 +516,7 @@
                     let soundPlayed = false;
                     alerts.forEach(alert => {
                         if (!alert || !alert.ticker || !alert.id) return;
+                        if (localStorage.getItem("read_alert_" + alert.id) === "true") return;
                         const t = alert.ticker.toUpperCase();
                         if (portfolioTickers.has(t) && !notifiedAlertIds.has(alert.id)) {
                             notifiedAlertIds.add(alert.id);

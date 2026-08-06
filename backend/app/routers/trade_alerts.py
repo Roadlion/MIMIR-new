@@ -301,7 +301,7 @@ def evaluate_tick_technicals(price_cache):
                 # Prevent spam: limit 1 alert per ticker every 60 minutes
                 cur.execute(f"""
                     SELECT id FROM {settings.mimir_schema}.mimir_trade_signals 
-                    WHERE ticker = %s AND status = 'PENDING' 
+                    WHERE ticker = %s 
                     AND created_at >= NOW() - INTERVAL '60 minutes'
                 """, (ticker,))
                 

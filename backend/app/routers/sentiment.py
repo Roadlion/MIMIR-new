@@ -679,7 +679,7 @@ def generate_market_summary():
     articles_text = ""
     for idx, art in enumerate(results):
         assets_str = ", ".join(art['assets']) if art.get('assets') else "None"
-        summary_text = art['summary'] or "No summary available."
+        summary_text = (art['summary'] or "No summary available.")[:300]
         articles_text += f"Article #{idx+1}:\n"
         articles_text += f"Title: {art['title']}\n"
         articles_text += f"Source: {art['source_name']}\n"

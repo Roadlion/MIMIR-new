@@ -836,76 +836,76 @@ HEATMAP_INDICES = {
         "label": "S&P 500",
         "constituents": [
             # Technology
-            {"ticker": "NVDA",  "name": "NVIDIA",           "sector": "Technology"},
-            {"ticker": "AAPL",  "name": "Apple",            "sector": "Technology"},
-            {"ticker": "MSFT",  "name": "Microsoft",        "sector": "Technology"},
-            {"ticker": "AVGO",  "name": "Broadcom",         "sector": "Technology"},
-            {"ticker": "ORCL",  "name": "Oracle",           "sector": "Technology"},
-            {"ticker": "CRM",   "name": "Salesforce",       "sector": "Technology"},
-            {"ticker": "AMD",   "name": "AMD",              "sector": "Technology"},
-            {"ticker": "QCOM",  "name": "Qualcomm",         "sector": "Technology"},
-            {"ticker": "INTC",  "name": "Intel",            "sector": "Technology"},
-            {"ticker": "TXN",   "name": "Texas Instruments","sector": "Technology"},
-            {"ticker": "MU",    "name": "Micron",           "sector": "Technology"},
-            {"ticker": "AMAT",  "name": "Applied Materials","sector": "Technology"},
-            {"ticker": "ADI",   "name": "Analog Devices",   "sector": "Technology"},
-            {"ticker": "KLAC",  "name": "KLA Corp",         "sector": "Technology"},
+            {"ticker": "NVDA",  "name": "NVIDIA",           "sector": "Technology", "weight": 3100},
+            {"ticker": "AAPL",  "name": "Apple",            "sector": "Technology", "weight": 3300},
+            {"ticker": "MSFT",  "name": "Microsoft",        "sector": "Technology", "weight": 3100},
+            {"ticker": "AVGO",  "name": "Broadcom",         "sector": "Technology", "weight": 800},
+            {"ticker": "ORCL",  "name": "Oracle",           "sector": "Technology", "weight": 380},
+            {"ticker": "CRM",   "name": "Salesforce",       "sector": "Technology", "weight": 300},
+            {"ticker": "AMD",   "name": "AMD",              "sector": "Technology", "weight": 250},
+            {"ticker": "QCOM",  "name": "Qualcomm",         "sector": "Technology", "weight": 180},
+            {"ticker": "INTC",  "name": "Intel",            "sector": "Technology", "weight": 100},
+            {"ticker": "TXN",   "name": "Texas Instruments","sector": "Technology", "weight": 180},
+            {"ticker": "MU",    "name": "Micron",           "sector": "Technology", "weight": 120},
+            {"ticker": "AMAT",  "name": "Applied Materials","sector": "Technology", "weight": 150},
+            {"ticker": "ADI",   "name": "Analog Devices",   "sector": "Technology", "weight": 110},
+            {"ticker": "KLAC",  "name": "KLA Corp",         "sector": "Technology", "weight": 110},
             # Communication Services
-            {"ticker": "META",  "name": "Meta",             "sector": "Comm. Services"},
-            {"ticker": "GOOGL", "name": "Alphabet",         "sector": "Comm. Services"},
-            {"ticker": "NFLX",  "name": "Netflix",          "sector": "Comm. Services"},
-            {"ticker": "DIS",   "name": "Disney",           "sector": "Comm. Services"},
-            {"ticker": "T",     "name": "AT&T",             "sector": "Comm. Services"},
-            {"ticker": "VZ",    "name": "Verizon",          "sector": "Comm. Services"},
+            {"ticker": "META",  "name": "Meta",             "sector": "Comm. Services", "weight": 1400},
+            {"ticker": "GOOGL", "name": "Alphabet",         "sector": "Comm. Services", "weight": 2000},
+            {"ticker": "NFLX",  "name": "Netflix",          "sector": "Comm. Services", "weight": 280},
+            {"ticker": "DIS",   "name": "Disney",           "sector": "Comm. Services", "weight": 200},
+            {"ticker": "T",     "name": "AT&T",             "sector": "Comm. Services", "weight": 130},
+            {"ticker": "VZ",    "name": "Verizon",          "sector": "Comm. Services", "weight": 170},
             # Consumer Cyclical
-            {"ticker": "AMZN",  "name": "Amazon",           "sector": "Consumer Cycl."},
-            {"ticker": "TSLA",  "name": "Tesla",            "sector": "Consumer Cycl."},
-            {"ticker": "HD",    "name": "Home Depot",       "sector": "Consumer Cycl."},
-            {"ticker": "MCD",   "name": "McDonald's",       "sector": "Consumer Cycl."},
-            {"ticker": "NKE",   "name": "Nike",             "sector": "Consumer Cycl."},
-            {"ticker": "TJX",   "name": "TJX Companies",   "sector": "Consumer Cycl."},
-            {"ticker": "LOW",   "name": "Lowe's",           "sector": "Consumer Cycl."},
+            {"ticker": "AMZN",  "name": "Amazon",           "sector": "Consumer Cycl.", "weight": 2100},
+            {"ticker": "TSLA",  "name": "Tesla",            "sector": "Consumer Cycl.", "weight": 700},
+            {"ticker": "HD",    "name": "Home Depot",       "sector": "Consumer Cycl.", "weight": 370},
+            {"ticker": "MCD",   "name": "McDonald's",       "sector": "Consumer Cycl.", "weight": 210},
+            {"ticker": "NKE",   "name": "Nike",             "sector": "Consumer Cycl.", "weight": 120},
+            {"ticker": "TJX",   "name": "TJX Companies",   "sector": "Consumer Cycl.", "weight": 130},
+            {"ticker": "LOW",   "name": "Lowe's",           "sector": "Consumer Cycl.", "weight": 140},
             # Financial Services
-            {"ticker": "BRK-B", "name": "Berkshire",        "sector": "Financials"},
-            {"ticker": "JPM",   "name": "JPMorgan",         "sector": "Financials"},
-            {"ticker": "V",     "name": "Visa",             "sector": "Financials"},
-            {"ticker": "MA",    "name": "Mastercard",       "sector": "Financials"},
-            {"ticker": "BAC",   "name": "Bank of America",  "sector": "Financials"},
-            {"ticker": "WFC",   "name": "Wells Fargo",      "sector": "Financials"},
-            {"ticker": "GS",    "name": "Goldman Sachs",    "sector": "Financials"},
-            {"ticker": "MS",    "name": "Morgan Stanley",   "sector": "Financials"},
+            {"ticker": "BRK-B", "name": "Berkshire",        "sector": "Financials", "weight": 900},
+            {"ticker": "JPM",   "name": "JPMorgan",         "sector": "Financials", "weight": 600},
+            {"ticker": "V",     "name": "Visa",             "sector": "Financials", "weight": 580},
+            {"ticker": "MA",    "name": "Mastercard",       "sector": "Financials", "weight": 460},
+            {"ticker": "BAC",   "name": "Bank of America",  "sector": "Financials", "weight": 300},
+            {"ticker": "WFC",   "name": "Wells Fargo",      "sector": "Financials", "weight": 220},
+            {"ticker": "GS",    "name": "Goldman Sachs",    "sector": "Financials", "weight": 170},
+            {"ticker": "MS",    "name": "Morgan Stanley",   "sector": "Financials", "weight": 160},
             # Healthcare
-            {"ticker": "LLY",   "name": "Eli Lilly",        "sector": "Healthcare"},
-            {"ticker": "UNH",   "name": "UnitedHealth",     "sector": "Healthcare"},
-            {"ticker": "JNJ",   "name": "J&J",              "sector": "Healthcare"},
-            {"ticker": "ABBV",  "name": "AbbVie",           "sector": "Healthcare"},
-            {"ticker": "MRK",   "name": "Merck",            "sector": "Healthcare"},
-            {"ticker": "TMO",   "name": "Thermo Fisher",    "sector": "Healthcare"},
-            {"ticker": "ISRG",  "name": "Intuitive Surgical","sector": "Healthcare"},
-            {"ticker": "GILD",  "name": "Gilead",           "sector": "Healthcare"},
+            {"ticker": "LLY",   "name": "Eli Lilly",        "sector": "Healthcare", "weight": 800},
+            {"ticker": "UNH",   "name": "UnitedHealth",     "sector": "Healthcare", "weight": 520},
+            {"ticker": "JNJ",   "name": "J&J",              "sector": "Healthcare", "weight": 380},
+            {"ticker": "ABBV",  "name": "AbbVie",           "sector": "Healthcare", "weight": 320},
+            {"ticker": "MRK",   "name": "Merck",            "sector": "Healthcare", "weight": 300},
+            {"ticker": "TMO",   "name": "Thermo Fisher",    "sector": "Healthcare", "weight": 210},
+            {"ticker": "ISRG",  "name": "Intuitive Surgical","sector": "Healthcare", "weight": 180},
+            {"ticker": "GILD",  "name": "Gilead",           "sector": "Healthcare", "weight": 110},
             # Consumer Defensive
-            {"ticker": "WMT",   "name": "Walmart",          "sector": "Consumer Def."},
-            {"ticker": "COST",  "name": "Costco",           "sector": "Consumer Def."},
-            {"ticker": "KO",    "name": "Coca-Cola",        "sector": "Consumer Def."},
-            {"ticker": "PEP",   "name": "PepsiCo",          "sector": "Consumer Def."},
-            {"ticker": "PG",    "name": "Procter & Gamble", "sector": "Consumer Def."},
-            {"ticker": "PM",    "name": "Philip Morris",    "sector": "Consumer Def."},
+            {"ticker": "WMT",   "name": "Walmart",          "sector": "Consumer Def.", "weight": 600},
+            {"ticker": "COST",  "name": "Costco",           "sector": "Consumer Def.", "weight": 380},
+            {"ticker": "KO",    "name": "Coca-Cola",        "sector": "Consumer Def.", "weight": 280},
+            {"ticker": "PEP",   "name": "PepsiCo",          "sector": "Consumer Def.", "weight": 210},
+            {"ticker": "PG",    "name": "Procter & Gamble", "sector": "Consumer Def.", "weight": 380},
+            {"ticker": "PM",    "name": "Philip Morris",    "sector": "Consumer Def.", "weight": 160},
             # Energy
-            {"ticker": "XOM",   "name": "ExxonMobil",       "sector": "Energy"},
-            {"ticker": "CVX",   "name": "Chevron",          "sector": "Energy"},
-            {"ticker": "COP",   "name": "ConocoPhillips",   "sector": "Energy"},
-            {"ticker": "SLB",   "name": "SLB",              "sector": "Energy"},
+            {"ticker": "XOM",   "name": "ExxonMobil",       "sector": "Energy", "weight": 500},
+            {"ticker": "CVX",   "name": "Chevron",          "sector": "Energy", "weight": 280},
+            {"ticker": "COP",   "name": "ConocoPhillips",   "sector": "Energy", "weight": 130},
+            {"ticker": "SLB",   "name": "SLB",              "sector": "Energy", "weight": 60},
             # Industrials
-            {"ticker": "CAT",   "name": "Caterpillar",      "sector": "Industrials"},
-            {"ticker": "GE",    "name": "GE Aerospace",     "sector": "Industrials"},
-            {"ticker": "UNP",   "name": "Union Pacific",    "sector": "Industrials"},
-            {"ticker": "BA",    "name": "Boeing",           "sector": "Industrials"},
-            {"ticker": "HON",   "name": "Honeywell",        "sector": "Industrials"},
-            {"ticker": "LIN",   "name": "Linde",            "sector": "Industrials"},
+            {"ticker": "CAT",   "name": "Caterpillar",      "sector": "Industrials", "weight": 180},
+            {"ticker": "GE",    "name": "GE Aerospace",     "sector": "Industrials", "weight": 200},
+            {"ticker": "UNP",   "name": "Union Pacific",    "sector": "Industrials", "weight": 140},
+            {"ticker": "BA",    "name": "Boeing",           "sector": "Industrials", "weight": 130},
+            {"ticker": "HON",   "name": "Honeywell",        "sector": "Industrials", "weight": 130},
+            {"ticker": "LIN",   "name": "Linde",            "sector": "Industrials", "weight": 220},
             # Utilities
-            {"ticker": "NEE",   "name": "NextEra Energy",   "sector": "Utilities"},
-            {"ticker": "SO",    "name": "Southern Company",  "sector": "Utilities"},
-            {"ticker": "DUK",   "name": "Duke Energy",      "sector": "Utilities"},
+            {"ticker": "NEE",   "name": "NextEra Energy",   "sector": "Utilities", "weight": 150},
+            {"ticker": "SO",    "name": "Southern Company",  "sector": "Utilities", "weight": 90},
+            {"ticker": "DUK",   "name": "Duke Energy",      "sector": "Utilities", "weight": 80},
         ]
     },
     "set50": {
@@ -1207,7 +1207,7 @@ _heatmap_cache = {}  # {index_key: {"data": [...], "fetched_at": datetime}}
 HEATMAP_CACHE_TTL_MINUTES = 15
 
 @router.get("/prices/heatmap")
-def get_heatmap(index: str = Query("sp500")):
+def get_heatmap(index: str = Query("sp500"), refresh: bool = Query(False)):
     """
     Returns constituent stock data for the specified index for heatmap rendering.
     Data is cached for 15 minutes to avoid excessive yfinance calls.
@@ -1217,10 +1217,10 @@ def get_heatmap(index: str = Query("sp500")):
     if index_key not in HEATMAP_INDICES:
         raise HTTPException(status_code=400, detail=f"Unknown index '{index}'. Valid: {list(HEATMAP_INDICES.keys())}")
 
-    # Check cache
+    # Check cache unless refresh requested
     now = datetime.now(timezone.utc)
     cached = _heatmap_cache.get(index_key)
-    if cached and (now - cached["fetched_at"]) < timedelta(minutes=HEATMAP_CACHE_TTL_MINUTES):
+    if not refresh and cached and (now - cached["fetched_at"]) < timedelta(minutes=HEATMAP_CACHE_TTL_MINUTES):
         print(f"[HEATMAP] Cache hit for {index_key}")
         return {"index": index_key, "label": HEATMAP_INDICES[index_key]["label"], "constituents": cached["data"], "cached": True}
 
@@ -1376,7 +1376,7 @@ def get_heatmap(index: str = Query("sp500")):
             if prev_price > 0:
                 change_percent = round(((current_price - prev_price) / prev_price) * 100, 2)
 
-            weight = max(current_price * volume, 1) if volume > 0 else current_price
+            weight = float(meta.get("weight") or meta.get("market_cap") or 50.0)
 
             sent_info = sentiment_map.get(ticker_symbol, {"current_sentiment": None, "sentiment_change_percent": None})
             results.append({

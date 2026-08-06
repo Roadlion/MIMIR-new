@@ -83,7 +83,7 @@ def get_recent_sentiment(ticker: str, days: int = 5, conn=None) -> Optional[floa
             conn.close()
 
 def check_duplicate_signal(ticker: str, signal_type: str, conn=None) -> bool:
-    """Checks if there's already a PENDING signal of the same type for this ticker."""
+    """Checks if there's already a PENDING or recent signal of the same type for this ticker (within 12 hours)."""
     close_conn = False
     if conn is None:
         conn = get_db_connection()
@@ -92,7 +92,8 @@ def check_duplicate_signal(ticker: str, signal_type: str, conn=None) -> bool:
     
     sql = f"""
         SELECT 1 FROM {settings.mimir_schema}.mimir_trade_signals
-        WHERE ticker = %s AND signal_type = %s AND status = 'PENDING'
+        WHERE ticker = %s AND signal_type = %s
+          AND (status = 'PENDING' OR created_at >= NOW() - INTERVAL '12 hours')
         LIMIT 1
     """
     try:

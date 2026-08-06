@@ -675,9 +675,11 @@ def get_paper_trading_summary() -> Dict[str, Any]:
                 elif ttype == "SELL":
                     realized_pl += q * (p - cost_basis)
                     qty_sum -= q
-                    if qty_sum <= 0:
-                        qty_sum = 0.0
-                        cost_basis = 0.0
+                
+                qty_sum = round(qty_sum, 8)
+                if qty_sum <= 0:
+                    qty_sum = 0.0
+                    cost_basis = 0.0
 
             total_realized_pnl += realized_pl
 

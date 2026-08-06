@@ -139,6 +139,10 @@ def get_portfolio_tickers():
                 holdings[t] += q
             elif ttype == "SELL":
                 holdings[t] -= q
+            
+            holdings[t] = round(holdings[t], 8)
+            if holdings[t] <= 0:
+                holdings[t] = 0.0
         for t, qty in holdings.items():
             if qty > 0.0001:
                 tickers.add(t)
@@ -160,6 +164,10 @@ def get_portfolio_tickers():
                 holdings_p[t] += q
             elif ttype == "SELL":
                 holdings_p[t] -= q
+            
+            holdings_p[t] = round(holdings_p[t], 8)
+            if holdings_p[t] <= 0:
+                holdings_p[t] = 0.0
         for t, qty in holdings_p.items():
             if qty > 0.0001:
                 tickers.add(t)
@@ -265,13 +273,15 @@ def get_portfolio():
                 # For SELL, fees decrease the realized P&L / proceeds
                 realized_pl += tx_qty * (tx_price - avg_buy) - total_tx_fees
                 qty_sum -= tx_qty
-                if qty_sum <= 0:
-                    qty_sum = 0.0
-                    avg_buy = 0.0
             elif tx_type == "DIVIDEND":
                 # For DIVIDEND, fees reduce the payout received
                 div_net = (tx_qty * tx_price) - total_tx_fees
                 dividends_received += div_net
+
+            qty_sum = round(qty_sum, 8)
+            if qty_sum <= 0:
+                qty_sum = 0.0
+                avg_buy = 0.0
 
         curr_price = current_prices.get(ticker, 0.0)
         
@@ -768,10 +778,11 @@ def get_portfolio_advice():
             elif tx_type == "SELL":
                 realized_pl += tx_qty * (tx_price - avg_buy)
                 qty_sum -= tx_qty
-                if qty_sum <= 0:
-                    qty_sum = 0.0
-                    avg_buy = 0.0
-                    
+            
+            qty_sum = round(qty_sum, 8)
+            if qty_sum <= 0:
+                qty_sum = 0.0
+                avg_buy = 0.0
         if qty_sum > 0:
             portfolio_list.append({
                 "ticker": ticker,
@@ -1228,9 +1239,11 @@ def get_portfolio_history(
                     h["qty"] += qty
                 elif tx_type == "SELL":
                     h["qty"] -= qty
-                    if h["qty"] <= 0:
-                        h["qty"] = 0.0
-                        h["avg_buy"] = 0.0
+
+                h["qty"] = round(h["qty"], 8)
+                if h["qty"] <= 0:
+                    h["qty"] = 0.0
+                    h["avg_buy"] = 0.0
                         
         day_value = 0.0
         day_cost = 0.0
@@ -1515,10 +1528,11 @@ def evaluate_tick_stoploss(price_cache):
             trailing_stop = recent_high * 0.98  # 2% drop from the local high
             
             if current_price <= trailing_stop:
-                # To prevent spam, check if we already have a pending trailing stop alert for this ticker
+                # To prevent spam, check if we already have a pending or recent trailing stop alert for this ticker
                 cur.execute(f"""
                     SELECT id FROM {settings.mimir_schema}.mimir_trade_signals 
-                    WHERE ticker = %s AND status = 'PENDING' AND reason LIKE '%%Trailing Stop%%'
+                    WHERE ticker = %s AND reason LIKE '%%Trailing Stop%%'
+                      AND (status = 'PENDING' OR created_at >= NOW() - INTERVAL '12 hours')
                 """, (ticker,))
                 
                 if not cur.fetchone():

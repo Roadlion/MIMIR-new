@@ -201,9 +201,168 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             conn.close()
 
 
-def process_unscored_articles(batch_size: int = 50, max_workers: int = 10) -> int:
+def process_article_batch(batch_articles: List[tuple]) -> int:
     """
-    Fetch a batch of unscored articles and process them in parallel using ThreadPoolExecutor.
+    Process a batch of up to 5 articles in a single LLM API call.
+    batch_articles: List of (article_id, title, summary)
+    Returns: total number of inserted impacts.
+    """
+    if not batch_articles:
+        return 0
+
+    client = DeepSeekSentiment()
+    art_dicts = [{"id": aid, "title": title, "summary": summary or ""} for aid, title, summary in batch_articles]
+    
+    # Score batch via single DeepSeek call
+    batch_results = client.score_articles_batch(art_dicts)
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    total_impacts_inserted = 0
+
+    try:
+        from datetime import datetime, timezone
+        now_ts = datetime.now(timezone.utc)
+
+        for aid, title, summary in batch_articles:
+            res = batch_results.get(aid, {"overall_sentiment": 0.0, "assets": []})
+            assets = res.get("assets", [])
+
+            if not assets:
+                cur.execute("""
+                    UPDATE yggdrasil.mimir_raw_articles 
+                    SET scoring_status = 'empty' 
+                    WHERE id = %s
+                """, (aid,))
+                continue
+
+            impacts = []
+            for asset in assets:
+                asset_name = asset.get("asset_name", "").strip()
+                if not asset_name:
+                    continue
+
+                ticker, _ = resolve_ticker(asset_name)
+                country = asset.get("country")
+                if country:
+                    country = resolve_country_code(country) or country
+                else:
+                    country = resolve_country_code(asset_name)
+                resolved_reg = resolve_region(country) if country else None
+                region = resolved_reg or asset.get("region")
+
+                impacts.append((
+                    aid,
+                    asset_name,
+                    asset.get("asset_category", "UNKNOWN"),
+                    asset.get("sub_category"),
+                    country,
+                    region,
+                    asset.get("sentiment_score", 0.0),
+                    asset.get("confidence", 0.5),
+                    asset.get("direction", "neutral"),
+                    asset.get("magnitude", "MEDIUM"),
+                    asset.get("reasoning", ""),
+                    ticker,
+                    asset.get("policy_signal"),
+                    False,  # is_spillover
+                    None,   # spillover_source_article_id
+                    None,   # spillover_source_asset
+                    now_ts, # activation_date
+                ))
+
+            if not impacts:
+                cur.execute("""
+                    UPDATE yggdrasil.mimir_raw_articles 
+                    SET scoring_status = 'empty' 
+                    WHERE id = %s
+                """, (aid,))
+                continue
+
+            sql = """
+            INSERT INTO yggdrasil.mimir_sentiment_impacts (
+                article_id, asset_name, asset_category, asset_sub_category,
+                country, region, sentiment_score, confidence, direction,
+                magnitude, reasoning, ticker, policy_signal,
+                is_spillover, spillover_source_article_id, spillover_source_asset, activation_date
+            ) VALUES %s
+            ON CONFLICT (article_id, asset_name) DO NOTHING;
+            """
+            execute_values(cur, sql, impacts)
+            inserted = cur.rowcount
+            total_impacts_inserted += inserted
+
+            # Trigger LLM Supply Chain Discovery for high-impact headlines (|score| >= 0.75)
+            for imp in impacts:
+                score = imp[6]
+                ticker_val = imp[11]
+                if ticker_val and abs(score) >= 0.75:
+                    try:
+                        from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                        discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+                    except Exception as llm_err:
+                        print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+
+            # Compute spillover impacts
+            try:
+                asset_dicts = [{
+                    "asset_name": imp[1],
+                    "asset_category": imp[2],
+                    "sub_category": imp[3],
+                    "country": imp[4],
+                    "region": imp[5],
+                    "sentiment_score": imp[6],
+                    "confidence": imp[7],
+                    "ticker": imp[11],
+                } for imp in impacts]
+
+                engine = _get_spillover_engine()
+                graph_spills = engine.run(aid, asset_dicts, published_ts=now_ts)
+
+                detector = _get_thematic_detector()
+                thematic_spills = detector.compute_spillovers(aid, asset_dicts, title, summary or "")
+
+                all_spills = graph_spills + thematic_spills
+                if all_spills:
+                    execute_values(cur, sql, all_spills)
+                    total_impacts_inserted += cur.rowcount
+            except Exception as spill_err:
+                print(f"  [Thread] [Warning] Spillover skipped for article {aid}: {spill_err}")
+
+            cur.execute("""
+                UPDATE yggdrasil.mimir_raw_articles
+                SET scoring_status = 'scored'
+                WHERE id = %s
+            """, (aid,))
+
+        conn.commit()
+        return total_impacts_inserted
+
+    except Exception as e:
+        print(f"  [Batch] Error processing batch of articles: {e}")
+        if conn:
+            conn.rollback()
+            for aid, _, _ in batch_articles:
+                try:
+                    cur.execute("""
+                        UPDATE yggdrasil.mimir_raw_articles 
+                        SET scoring_status = 'pending' 
+                        WHERE id = %s
+                    """, (aid,))
+                except Exception:
+                    pass
+            conn.commit()
+        return -1
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def process_unscored_articles(batch_size: int = 50, max_workers: int = 4) -> int:
+    """
+    Fetch a batch of unscored articles and process them in 5-article LLM batches in parallel.
     Returns total number of inserted asset impacts.
     """
     # --- Get pending articles ---
@@ -224,45 +383,22 @@ def process_unscored_articles(batch_size: int = 50, max_workers: int = 10) -> in
         print("[MIMIR] No pending articles found.")
         return 0
 
-    print(f"[MIMIR] Processing {len(articles)} articles with {max_workers} parallel workers...")
+    # Group articles into chunks of 5
+    CHUNK_SIZE = 5
+    chunks = [articles[i:i + CHUNK_SIZE] for i in range(0, len(articles), CHUNK_SIZE)]
+
+    print(f"[MIMIR] Processing {len(articles)} articles in {len(chunks)} batched LLM calls across {max_workers} parallel workers...")
 
     total_inserted = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_article = {
-            executor.submit(process_single_article, article_id, title, summary): article_id
-            for article_id, title, summary in articles
-        }
-
-        # Process results as they complete
-        for future in as_completed(future_to_article):
-            article_id = future_to_article[future]
+        futures = [executor.submit(process_article_batch, chunk) for chunk in chunks]
+        for future in as_completed(futures):
             try:
-                result = future.result()
-                if result > 0:
-                    total_inserted += result
-                elif result == 0:
-                    # empty – already logged in thread
-                    pass
-                else:  # -1 error – already marked pending
-                    pass
+                res = future.result()
+                if res > 0:
+                    total_inserted += res
             except Exception as e:
-                print(f"  [Main] Unexpected error for article {article_id}: {e}")
-                # Optionally mark as pending again, but the thread should have handled it
-                # We'll do a fallback update
-                try:
-                    conn2 = get_db_connection()
-                    cur2 = conn2.cursor()
-                    cur2.execute("""
-                        UPDATE yggdrasil.mimir_raw_articles 
-                        SET scoring_status = 'pending' 
-                        WHERE id = %s AND scoring_status = 'scored'
-                    """, (article_id,))
-                    conn2.commit()
-                    cur2.close()
-                    conn2.close()
-                except Exception:
-                    pass
+                print(f"  [Main] Batch processing error: {e}")
 
     print(f"[MIMIR] Total impacts inserted: {total_inserted}")
     
@@ -331,70 +467,15 @@ def get_status_counts() -> dict:
     return results
 
 def run_triage_batch(articles: List[tuple]) -> List[dict]:
+    """DEPRECATED: Use triage_pending_articles() local Python triage instead."""
+    return []
+
+def triage_pending_articles(batch_size: int = 200) -> int:
     """
-    Sends a batch of articles (id, title, summary) to DeepSeek for relevance pre-filtering.
-    Returns a list of dicts: {"id": article_id, "relevant": true/false}
-    """
-    import json
-    from backend.app.sentiment.llm_client import send_chat_completion
-    
-    # Format the headlines list for the LLM
-    headlines_text = []
-    for aid, title, summary in articles:
-        headlines_text.append(f"Article ID: {aid}\nTitle: {title}\nSummary: {summary or ''}\n---")
-        
-    prompt = f"""You are the MIMIR Triage Gatekeeper.
-Your job is to read a list of news headlines/summaries and determine if they contain market-moving news or specific asset-relevant details for equities, commodities, or cryptocurrencies.
-Do NOT include generic updates, lifestyle, general opinion pieces, sport news, or pure advertising.
-Only select articles that are highly relevant to financial markets, specific corporate stocks, global macroeconomic indicators, or commodity prices.
-
-For each article, determine if it is relevant.
-Return your output STRICTLY as a JSON array of objects with the structure:
-[
-  {{"id": <article_id>, "relevant": true}}
-]
-
-Here is the list of articles to evaluate:
-{"\n".join(headlines_text)}
-"""
-
-    messages = [{"role": "user", "content": prompt}]
-    
-    try:
-        response_str = send_chat_completion(
-            messages=messages,
-            temperature=0.0,
-            response_format={"type": "json_object"}
-        )
-        
-        # Clean JSON markdown fences if present
-        cleaned = response_str.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-        
-        # Parse JSON
-        result = json.loads(cleaned)
-        if isinstance(result, dict) and "articles" in result:
-            return result["articles"]
-        elif isinstance(result, list):
-            return result
-        elif isinstance(result, dict):
-            # Check if it has a list inside a key
-            for val in result.values():
-                if isinstance(val, list):
-                    return val
-        return []
-    except Exception as e:
-        print(f"[TRIAGE] Error parsing triage response: {e}")
-        return None
-
-def triage_pending_articles(batch_size: int = 50) -> int:
-    """
-    Fetches articles in 'triage_pending' status, triages them in a batch,
-    and updates their status to 'pending' (if relevant) or 'ignored' (if not).
+    Fetches articles in 'triage_pending' status, triages them locally using
+    fast Python regex (DeepSeekSentiment.is_financial_or_macro), and updates
+    their status to 'pending' (if relevant) or 'ignored' (if not).
+    ZERO LLM API COST.
     """
     conn = get_db_connection()
     cur = conn.cursor()
@@ -414,35 +495,14 @@ def triage_pending_articles(batch_size: int = 50) -> int:
         conn.close()
         return 0
         
-    print(f"[TRIAGE] Triaging {len(articles)} articles in a single batch...")
+    print(f"[TRIAGE] Triaging {len(articles)} articles locally via Python regex (0 LLM tokens)...")
     
-    triage_results = run_triage_batch(articles)
-    
-    # If LLM call or parsing failed, skip updating database so they can be retried
-    if triage_results is None:
-        print(" [TRIAGE] [Warning] Triage failed or response unparseable. Retaining status for retry.")
-        cur.close()
-        conn.close()
-        return 0
-        
-    # Map results by article ID
-    relevance_map = {}
-    for res in triage_results:
-        try:
-            aid = int(res.get("id"))
-            rel = bool(res.get("relevant", False))
-            relevance_map[aid] = rel
-        except Exception:
-            pass
-            
-    # Update statuses in database
+    client = DeepSeekSentiment()
     relevant_ids = []
     ignored_ids = []
     
     for aid, title, summary in articles:
-        # Default to False if omitted by LLM (which only outputs relevant ones)
-        is_relevant = relevance_map.get(aid, False)
-        if is_relevant:
+        if client.is_financial_or_macro(title, summary or ""):
             relevant_ids.append(aid)
         else:
             ignored_ids.append(aid)

@@ -424,7 +424,12 @@ python scripts/backfill_hourly_ohlcv.py
 # Launch FastAPI web app locally (Hot reload enabled)
 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-Open `http://localhost:8000` to view the interactive dashboard.
+Open `http://localhost:8000` to view the interactive dashboard on your laptop.
+
+### 📱 Accessing from iPad / Mobile (Same Wi-Fi)
+1. Run `run.bat` on your laptop. The terminal will display your laptop's local network IP (e.g. `http://192.168.1.109:8000`).
+2. Make sure your iPad is connected to the same Wi-Fi network.
+3. Open Safari or Chrome on your iPad and enter `http://<LAPTOP_IP>:8000` (e.g., `http://192.168.1.109:8000`).
 
 ---
 

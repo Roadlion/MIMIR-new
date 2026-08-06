@@ -91,6 +91,8 @@ class DeepSeekSentiment:
         """
         Send article to LLM for multi-asset sentiment scoring.
         """
+        # Truncate summary to 400 chars to save tokens
+        summary = (summary or "")[:400]
         key = (title, summary)
         if key in self._cache:
             logger.debug("Returning cached result for article")
@@ -147,6 +149,180 @@ class DeepSeekSentiment:
             logger.error(f"LLM score article failed: {e}")
             return {"overall_sentiment": 0.0, "assets": []}
 
+    def score_articles_batch(self, articles: List[Dict]) -> Dict[int, Dict]:
+        """
+        Score a batch of articles (up to 5) in a single LLM API call.
+        Each item in `articles` must be a dict with keys: 'id', 'title', 'summary'.
+        Returns a dict mapping article_id -> {"overall_sentiment": float, "assets": List[Dict]}
+        """
+        if not articles:
+            return {}
+
+        results = {}
+        articles_to_query = []
+
+        for art in articles:
+            aid = art.get("id")
+            title = art.get("title", "")
+            summary = (art.get("summary") or "")[:400]
+            key = (title, summary)
+
+            if key in self._cache:
+                results[aid] = self._cache[key]
+            else:
+                # Pre-filter using Python regex locally before adding to query batch
+                if not art.get("force_relevance", False) and not self.is_financial_or_macro(title, summary):
+                    empty_res = {"overall_sentiment": 0.0, "assets": []}
+                    self._cache[key] = empty_res
+                    results[aid] = empty_res
+                else:
+                    articles_to_query.append({
+                        "id": aid,
+                        "title": title,
+                        "summary": summary
+                    })
+
+        if not articles_to_query:
+            return results
+
+        system_prompt = self._get_batch_system_prompt()
+        
+        items_text = []
+        for art in articles_to_query:
+            items_text.append(f"ARTICLE ID: {art['id']}\nTITLE: {art['title']}\nSUMMARY: {art['summary']}\n---")
+
+        user_prompt = f"Analyze the following {len(articles_to_query)} financial articles:\n\n" + "\n".join(items_text)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            content = send_chat_completion(
+                messages=messages,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                timeout=60
+            )
+
+            raw_data = self._parse_json_response(content)
+            res_list = raw_data.get("results", [])
+            if isinstance(raw_data, list):
+                res_list = raw_data
+            elif not isinstance(res_list, list):
+                # Fallback check for alternate keys
+                for v in raw_data.values():
+                    if isinstance(v, list):
+                        res_list = v
+                        break
+
+            res_map = {}
+            for item in res_list:
+                if isinstance(item, dict) and "article_id" in item:
+                    try:
+                        res_map[int(item["article_id"])] = item
+                    except (ValueError, TypeError):
+                        pass
+
+            for art in articles_to_query:
+                aid = art["id"]
+                title = art["title"]
+                summary = art["summary"]
+                key = (title, summary)
+
+                item_res = res_map.get(aid, {})
+                assets = item_res.get("assets", [])
+                if not isinstance(assets, list):
+                    assets = []
+
+                validated = self._validate_assets(assets)
+                validated = self._post_filter_assets(validated, title, summary)
+                validated.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+                validated = validated[:5]
+
+                final_res = {
+                    "overall_sentiment": float(item_res.get("overall_sentiment", 0.0)),
+                    "assets": validated
+                }
+                self._cache[key] = final_res
+                results[aid] = final_res
+
+        except Exception as e:
+            logger.error(f"LLM score_articles_batch failed: {e}")
+            for art in articles_to_query:
+                aid = art["id"]
+                if aid not in results:
+                    results[aid] = {"overall_sentiment": 0.0, "assets": []}
+
+        return results
+
+    def score_social_chatter(self, ticker: str, asset_name: str, summary_text: str) -> Dict:
+        """
+        Lightweight, low-token sentiment scoring for pre-tagged social posts/chatter.
+        Uses ~150-token prompt instead of full multi-asset detection.
+        """
+        summary_text = (summary_text or "")[:1500]
+        system_prompt = "You are MIMIR, a financial sentiment AI. Score market sentiment for a known asset from social media chatter. Output valid JSON only."
+        user_prompt = f"""Asset: {asset_name} (Ticker: {ticker})
+Social Chatter Summary:
+{summary_text}
+
+Determine crowd sentiment score (-1.0 to 1.0) and confidence for {ticker}.
+JSON schema:
+{{
+  "sentiment_score": 0.0,
+  "confidence": 0.8,
+  "direction": "neutral",
+  "magnitude": "MEDIUM",
+  "reasoning": "1 sentence crowd summary."
+}}"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            content = send_chat_completion(
+                messages=messages,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                timeout=45
+            )
+            raw = self._parse_json_response(content)
+            score = float(raw.get("sentiment_score", 0.0))
+            score = max(-1.0, min(1.0, score))
+            conf = float(raw.get("confidence", 0.8))
+            conf = max(0.0, min(1.0, conf))
+            direction = raw.get("direction", "neutral")
+            if direction not in ["bullish", "bearish", "neutral"]:
+                direction = "neutral"
+            mag = raw.get("magnitude", "MEDIUM")
+            if mag not in ["HIGH", "MEDIUM", "LOW"]:
+                mag = "MEDIUM"
+
+            single_asset = {
+                "asset_name": asset_name,
+                "ticker": ticker,
+                "asset_category": "EQUITY",
+                "sub_category": None,
+                "country": None,
+                "region": None,
+                "sentiment_score": score,
+                "confidence": conf,
+                "direction": direction,
+                "magnitude": mag,
+                "reasoning": raw.get("reasoning", "Social chatter aggregate"),
+                "policy_signal": None
+            }
+            return {
+                "overall_sentiment": score,
+                "assets": [single_asset]
+            }
+        except Exception as e:
+            logger.error(f"score_social_chatter failed for {ticker}: {e}")
+            return {"overall_sentiment": 0.0, "assets": []}
+
     # ============================================================
     # BACKWARD COMPATIBILITY (deprecated)
     # ============================================================
@@ -182,116 +358,21 @@ class DeepSeekSentiment:
     # PROMPT – Tuned for precision, reduced over-tagging
     # ============================================================
     def _get_system_prompt(self) -> str:
-        return """You are MIMIR, a financial sentiment analysis AI. Output valid JSON only, exactly as specified.
+        return """You are MIMIR, a financial sentiment analysis AI. Output JSON only.
 
-**YOUR TASK:**
-Identify the 3 to 5 most significant financial assets affected by the provided news – both directly mentioned and strongly implied. Do NOT tag more than 5 assets. Prioritise assets with clear, direct connections.
+Identify 1 to 5 key financial assets affected by the news (directly mentioned or strongly implied).
+Default stance is NEUTRAL (score 0.0). Most news is noise. Avoid bullish bias.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**CRITICAL RULES TO AVOID OVER-TAGGING:**
-1. Limit your response to 3–5 assets. Choose the most DIRECTLY affected assets.
-2. Do NOT tag "S&P 500" or "US Economy" for every article – only if explicitly mentioned or if the news has a clear, broad market implication.
-3. Commodities (Gold, Silver, Crude Oil, Copper, Wheat) are GLOBAL – set country = null and region = null.
-4. Only set policy_signal for CENTRAL BANKS (Fed, ECB, BOJ, PBOC, BOE). Do NOT use for fiscal policy, regulatory news, or government announcements.
-5. Do NOT tag private companies (e.g., SpaceX, Anthropic) as EQUITY – they are not publicly traded. Omit them or tag as 'PRIVATE' (but we prefer to omit).
-6. Sector tags (e.g., "US Tech", "US Energy") should use asset_category = 'SECTOR', not 'EQUITY'.
-7. Use EXACT asset names from the list below. Do NOT include extra text like tickers or parentheticals (e.g., output "Micron" not "Micron Technology (MU)").
-8. Confidence scores must reflect the STRENGTH of the connection – not the overall confidence in the article. Lower confidence for indirect or speculative connections.
-9. For ALL EQUITY category assets (publicly traded stocks in any country, e.g., Nvidia, Alibaba, Toyota, Samsung, Reliance, CPALL), you MUST set asset_category = 'EQUITY' and set sub_category to exactly one of the 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE. No other sub-categories are allowed for stocks.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULES:
+1. Max 5 assets per article. Choose most direct connections.
+2. Do NOT tag broad assets ("S&P 500", "US Economy") unless explicitly mentioned.
+3. Commodities (Gold, Crude Oil, etc.): set country=null and region=null.
+4. policy_signal: ONLY for Central Banks ("Federal Reserve", "ECB", "BOJ", "PBOC", "BOE"). Values: hawkish|bullish|dovish|bearish|neutral|null.
+5. EQUITY assets: asset_category MUST be 'EQUITY'. sub_category MUST be one of 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE.
+6. sentiment_score range [-1.0 to 1.0]. 0.0 = neutral/in-line. direction MUST match score (>0.05: bullish, <-0.05: bearish, else neutral).
+7. Categories: COMMODITY, CURRENCY, EQUITY, BOND, INDEX, ECONOMY, POLICY, RISK, SECTOR.
 
-**SENTIMENT CALIBRATION — CRITICAL ANTI-BIAS RULES:**
-Your default stance is NEUTRAL. Most news is noise. Do not mistake neutral reporting for bullish confirmation.
-
-1. **sentiment_score calibration table (follow strictly):**
-   - 0.0: No directional impact. Neutral reporting, routine updates, earnings in-line, expected news. THIS IS THE DEFAULT.
-   - ±0.1 to ±0.3: Mildly directional. Minor beat/miss, slight tone shift, incremental news.
-   - ±0.4 to ±0.6: Clearly directional. Significant beat/miss, policy shift, major contract win/loss.
-   - ±0.7 to ±1.0: Extremely directional. Black swan, fraud, war, regulatory killshot, blockbuster approval. Rare — use maybe once per 50 articles.
-
-2. **direction must match sentiment_score exactly:**
-   - sentiment_score > 0.05 → "bullish"
-   - sentiment_score < -0.05 → "bearish"
-   - sentiment_score between -0.05 and 0.05 → "neutral"
-
-3. **Before assigning bullish, run this self-check:**
-   "If the exact same facts had the opposite valence (e.g., 'miss' instead of 'beat'), would I assign the same magnitude but bearish?" If the answer is no, you are cheerleading. Set direction to "neutral" and score to 0.0.
-
-4. **Common bullish-bias traps — DO NOT fall for these:**
-   - "Company announces new product" → usually neutral, product success is unknown
-   - "CEO expresses optimism" → neutral, CEOs are paid to be optimistic
-   - "Stock rises on news" → you are scoring the NEWS, not the price action. Price movement != sentiment.
-   - "Analyst upgrades" → mildly bullish at most (±0.2), analysts are often late
-   - "Record revenue" → check if earnings also grew; revenue without profit growth is neutral
-   - Layoff announcements → these are often bullish (cost cutting) not bearish — think carefully
-
-5. **Target distribution (per 100 articles):**
-   - ~40 neutral (score ≈ 0.0, confidence low-medium)
-   - ~25 bullish (score 0.1–0.6)
-   - ~25 bearish (score -0.1 to -0.6)
-   - ~5 strong bullish (score > 0.6)
-   - ~5 strong bearish (score < -0.6)
-   If you find yourself assigning bullish more than 60% of the time, you are biased. Recalibrate.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**IMPLIED ASSET RULES (use sparingly, only when very clear):**
-
-1. CENTRAL BANKS → tag currency + bonds + equities
-   - "Fed" or "Federal Reserve" → "US Dollar" + "US 10Y Treasury" + "S&P 500" (only if explicitly about Fed policy)
-   - "ECB" → "Euro" + "German Bund" + "Euro Stoxx 50"
-   - "BOJ" → "Japanese Yen" + "JGB" + "Nikkei 225"
-   - "PBOC" → "Chinese Yuan" + "China Economy"
-   - "BOE" → "British Pound" + "UK Gilts" + "FTSE 100"
-
-2. COMMODITY PRICES → tag commodity + related sector
-   - "Oil up" → "Crude Oil" + "US Energy" (bullish) + (maybe "Airlines" if US)
-   - "Gold up" → "Gold" + (maybe "US Dollar" bearish)
-
-3. GEOPOLITICAL EVENTS → tag "Geopolitical Risk" only if the event is large and likely to move markets
-
-4. ECONOMIC DATA → tag relevant economy indicator (e.g., "US Inflation", "US GDP") only if explicitly mentioned
-
-5. SECTOR-SPECIFIC NEWS → tag the sector (e.g., "US Tech", "US Financials") only if the news directly affects that sector broadly
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**ASSET NAMING (use exactly these):**
-- Currencies: "US Dollar", "Euro", "Japanese Yen", "British Pound", "Swiss Franc", "Chinese Yuan", "Thai Baht"
-- Commodities: "Gold", "Silver", "Crude Oil", "Natural Gas", "Copper", "Wheat", "Corn"
-- Indices: "S&P 500", "NASDAQ", "SET Index", "Nikkei 225", "DAX", "FTSE 100", "Nifty 50", "Hang Seng Index"
-- Bonds: "US 10Y Treasury", "German Bund", "JGB", "UK Gilts", "India 10Y Bond"
-- Central Banks: "Federal Reserve", "ECB", "BOJ", "PBOC", "BOE"
-- Sectors: "US Tech", "US Financials", "US Healthcare", "US Energy", "US Real Estate", "US Consumer Discretionary", "US Consumer Staples", "US Industrials", "US Utilities", "US Communication"
-- Economy: "US Economy", "Thai Economy", "China Economy", "India Economy", "Global Economy", "UK Economy"
-- Other: "Geopolitical Risk", "Risk-On", "Risk-Off" (use as RISK category)
-
-**COUNTRY CODES (ISO):** US, TH, CN, JP, GB, DE, FR, IT, ES, AU, CA, BR, IN, KR, SG, MY, ID, PH, VN, CH
-
-**REGION CODES:** NA, EU, APAC, ASEAN, LATAM, MENA, AFRICA
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**CONFIDENCE GUIDELINES:**
-- 0.90–1.00: Directly mentioned, very certain
-- 0.70–0.89: Strong implication, logical and clear
-- 0.50–0.69: Moderate inference, plausible but not certain
-- 0.30–0.49: Weak inference, speculative – better to exclude if possible
-- 0.00–0.29: Very uncertain – DO NOT TAG
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**ASSET CATEGORIES:** COMMODITY, CURRENCY, EQUITY, BOND, INDEX, ECONOMY, POLICY, RISK, SECTOR
-
-**SUB-CATEGORIES BY CATEGORY:**
-- For COMMODITY: ENERGY, PRECIOUS_METALS, BASE_METALS, AGRICULTURE
-- For EQUITY (ALL Countries): TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE (Equities/stocks must ONLY use one of these GICS sectors as their sub_category. Do NOT use FINANCIALS, MATERIALS, COMMUNICATION, CONSUMER_DISCRETIONARY, or CORPORATE).
-- For ECONOMY: INFLATION, EMPLOYMENT, GDP, PMI
-- For POLICY: CENTRAL_BANK, GOVERNMENT
-- For all others: null
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**OUTPUT FORMAT (JSON ONLY):**
+OUTPUT JSON SCHEMA:
 {
   "overall_sentiment": 0.0,
   "assets": [
@@ -309,9 +390,46 @@ Your default stance is NEUTRAL. Most news is noise. Do not mistake neutral repor
       "policy_signal": "hawkish"
     }
   ]
-}
+}"""
 
-JSON only. No markdown. No extra text."""
+    def _get_batch_system_prompt(self) -> str:
+        return """You are MIMIR, a financial sentiment analysis AI. Output JSON only.
+
+Analyze the array of news items provided. For EACH article, identify 1 to 5 key financial assets affected.
+Default stance is NEUTRAL (score 0.0). Most news is noise. Avoid bullish bias.
+
+RULES:
+1. Max 5 assets per article. Choose most direct connections.
+2. Commodities: set country=null and region=null.
+3. policy_signal: ONLY for Central Banks ("Federal Reserve", "ECB", "BOJ", "PBOC", "BOE").
+4. EQUITY assets: asset_category MUST be 'EQUITY'. sub_category MUST be one of 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE.
+5. sentiment_score range [-1.0 to 1.0]. 0.0 = neutral. direction MUST match score (>0.05: bullish, <-0.05: bearish, else neutral).
+6. Categories: COMMODITY, CURRENCY, EQUITY, BOND, INDEX, ECONOMY, POLICY, RISK, SECTOR.
+
+OUTPUT JSON SCHEMA:
+{
+  "results": [
+    {
+      "article_id": 123,
+      "overall_sentiment": 0.0,
+      "assets": [
+        {
+          "asset_name": "US Dollar",
+          "asset_category": "CURRENCY",
+          "sub_category": null,
+          "country": "US",
+          "region": "NA",
+          "sentiment_score": 0.85,
+          "confidence": 0.95,
+          "direction": "bullish",
+          "magnitude": "HIGH",
+          "reasoning": "Hawkish Fed rate hike signals strengthen USD.",
+          "policy_signal": "hawkish"
+        }
+      ]
+    }
+  ]
+}"""
 
     def _build_user_prompt(self, title: str, summary: str) -> str:
         return f"""Analyze the following financial news headline and summary:

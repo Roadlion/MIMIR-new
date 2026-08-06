@@ -360,37 +360,22 @@ def main():
                 consolidated.append(f"Title: {sp['title']}{link_line}\nContent: {sp['summary']}")
             summary_text = "\n\n---\n\n".join(consolidated)[:3000] # Cap size for API efficiency
             
-            # Call DeepSeek with strict relevance scoring
+            # Call DeepSeek with lightweight social sentiment scoring
             try:
-                title_str = f"Social chatter aggregate for ticker {ticker} in {channel}"
-                result = client.score_article_with_assets(
-                    title=title_str, 
-                    summary=summary_text,
-                    force_relevance=True
+                result = client.score_social_chatter(
+                    ticker=ticker,
+                    asset_name=asset_name,
+                    summary_text=summary_text
                 )
                 
-                # Extract sentiment for this specific asset from DeepSeek response list
-                # (DeepSeek returns a list of assets, we want to match our ticker or take overall sentiment)
                 sentiment_score = 0.0
                 confidence = 0.8
-                matched = False
                 
-                for asset in result.get("assets", []):
-                    # Check if ticker matches or asset name matches
-                    asset_ticker = asset.get("ticker", "")
-                    if asset_ticker and asset_ticker.strip().upper() == ticker.upper():
-                        sentiment_score = float(asset.get("sentiment_score", 0.0))
-                        confidence = float(asset.get("confidence", 0.8))
-                        matched = True
-                        break
-                        
-                if not matched and result.get("assets"):
-                    # Fallback to the first parsed asset sentiment if any
+                if result.get("assets"):
                     first_asset = result["assets"][0]
                     sentiment_score = float(first_asset.get("sentiment_score", 0.0))
                     confidence = float(first_asset.get("confidence", 0.8))
-                elif not matched:
-                    # Fallback to overall sentiment
+                else:
                     sentiment_score = float(result.get("overall_sentiment", 0.0))
                     
                 # Store aggregated metrics
