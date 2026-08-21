@@ -6,5 +6,9 @@ python-dotenv
 requests
 redis
 pandas
+gymnasium
+gym-trading-env
+stable-baselines3
+matplotlib
 jinja2
 ib_async

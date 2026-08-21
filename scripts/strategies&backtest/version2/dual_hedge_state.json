@@ -1,0 +1,17 @@
+{
+  "state": "FLAT",
+  "long_active": false,
+  "long_entry": 4548.014999999999,
+  "short_active": false,
+  "short_entry": 4416.86,
+  "survivor_peak": 0.0,
+  "active": null,
+  "params": {
+    "zscore_entry": 2.130071923136711,
+    "hedge_trigger_pct": 0.006721767120063305,
+    "cut_losing_pct": 0.004006845533847809,
+    "win_profit_pct": 0.00957993522286415,
+    "trail_stop_pct": 0.013704138725996016,
+    "take_profit_pct": 0.015528135374188424
+  }
+}

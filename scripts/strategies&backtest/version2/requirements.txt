@@ -1,0 +1,4 @@
+gymnasium
+gym-trading-env
+stable-baselines3
+matplotlib
