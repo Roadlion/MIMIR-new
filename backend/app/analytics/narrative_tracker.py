@@ -23,9 +23,11 @@ Public API:
 """
 
 import logging
+import psycopg2
+import psycopg2.extras
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from ..database import get_db_connection
 from ..config import get_settings
@@ -325,3 +327,225 @@ def get_fading_open_positions(conn=None) -> List[Dict]:
         conn.close()
 
     return fading
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Day Narrative Matrix & Persistence
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ensure_active_narratives_table(conn):
+    """Creates mimir_active_narratives if it doesn't exist."""
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_SCHEMA}.mimir_active_narratives (
+                id                  SERIAL PRIMARY KEY,
+                theme               TEXT NOT NULL UNIQUE,
+                category            TEXT NOT NULL, -- 'SECTOR', 'MACRO', 'EQUITY_THEME'
+                phase               TEXT NOT NULL, -- 'EMERGING', 'BUILDING', 'PEAK', 'FADING'
+                avg_sentiment       FLOAT NOT NULL,
+                sentiment_velocity  FLOAT DEFAULT 0.0,
+                price_change_3d     FLOAT DEFAULT 0.0,
+                price_change_5d     FLOAT DEFAULT 0.0,
+                article_count       INT DEFAULT 1,
+                affected_assets     JSONB,
+                summary             TEXT,
+                first_seen_at       TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning(f"[NARRATIVE] Ensure active_narratives table error: {e}")
+    finally:
+        cur.close()
+
+
+def update_active_narratives(conn=None) -> List[Dict]:
+    """
+    Synthesizes multi-day (3-7 day) active market narratives across all recent article impacts.
+    Pairs 3-7 day aggregated sentiment with 3-day and 5-day asset returns.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    _ensure_active_narratives_table(conn)
+
+    cur = conn.cursor()
+    active = []
+    try:
+        # Aggregate sentiment by asset_category / sub_category over last 7 days
+        cur.execute(f"""
+            SELECT si.asset_category,
+                   COUNT(DISTINCT a.id) as art_count,
+                   AVG(si.sentiment_score) as avg_sent,
+                   MIN(a.published_ts) as first_ts,
+                   MAX(a.published_ts) as last_ts,
+                   ARRAY_AGG(DISTINCT si.ticker) FILTER (WHERE si.ticker IS NOT NULL) as tickers
+            FROM {_SCHEMA}.mimir_raw_articles a
+            JOIN {_SCHEMA}.mimir_sentiment_impacts si ON si.article_id = a.id
+            WHERE a.published_ts >= NOW() - INTERVAL '7 days'
+            GROUP BY si.asset_category
+            HAVING COUNT(DISTINCT a.id) >= 2
+            ORDER BY art_count DESC
+        """)
+        rows = cur.fetchall()
+
+        now = datetime.now(timezone.utc)
+        for cat, art_count, avg_sent, first_ts, last_ts, tickers in rows:
+            if not cat or cat == "UNKNOWN":
+                continue
+
+            if first_ts and first_ts.tzinfo is None:
+                first_ts = first_ts.replace(tzinfo=timezone.utc)
+            
+            age_hours = (now - first_ts).total_seconds() / 3600.0 if first_ts else 24.0
+
+            # Determine phase
+            if age_hours < 24 and avg_sent > 0.2:
+                phase = "EMERGING"
+            elif age_hours < 72 and abs(avg_sent) >= 0.25:
+                phase = "BUILDING"
+            elif age_hours >= 72 and abs(avg_sent) >= 0.2:
+                phase = "PEAK"
+            else:
+                phase = "FADING"
+
+            clean_tickers = [t.strip().upper() for t in (tickers or []) if t]
+            
+            theme_name = f"{cat.replace('_', ' ').title()} Narrative"
+            summary_text = (
+                f"Multi-day {phase.lower()} narrative in {cat.replace('_', ' ').title()} "
+                f"with average sentiment {avg_sent:+.2f} over {art_count} articles across past 7 days."
+            )
+
+            cur.execute(f"""
+                INSERT INTO {_SCHEMA}.mimir_active_narratives
+                    (theme, category, phase, avg_sentiment, article_count, affected_assets, summary, first_seen_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (theme) DO UPDATE
+                    SET phase = EXCLUDED.phase,
+                        avg_sentiment = EXCLUDED.avg_sentiment,
+                        article_count = EXCLUDED.article_count,
+                        affected_assets = EXCLUDED.affected_assets,
+                        summary = EXCLUDED.summary,
+                        updated_at = NOW()
+            """, (
+                theme_name, "SECTOR", phase, float(avg_sent or 0.0), int(art_count),
+                psycopg2.extras.Json(clean_tickers[:10]), summary_text, first_ts or now
+            ))
+
+            active.append({
+                "theme": theme_name,
+                "category": "SECTOR",
+                "phase": phase,
+                "avg_sentiment": round(float(avg_sent or 0.0), 3),
+                "article_count": art_count,
+                "affected_assets": clean_tickers[:10],
+                "summary": summary_text,
+                "age_hours": round(age_hours, 1)
+            })
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[NARRATIVE] Error synthesizing active narratives: {e}")
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+    return active
+
+
+def get_all_active_narratives(conn=None) -> List[Dict]:
+    """Returns all currently active multi-day market narratives."""
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    _ensure_active_narratives_table(conn)
+
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            SELECT theme, category, phase, avg_sentiment, sentiment_velocity,
+                   price_change_3d, price_change_5d, article_count, affected_assets, summary
+            FROM {_SCHEMA}.mimir_active_narratives
+            WHERE updated_at >= NOW() - INTERVAL '48 hours'
+            ORDER BY article_count DESC, ABS(avg_sentiment) DESC
+            LIMIT 10
+        """)
+        rows = cur.fetchall()
+        narratives = []
+        for r in rows:
+            narratives.append({
+                "theme": r[0],
+                "category": r[1],
+                "phase": r[2],
+                "avg_sentiment": float(r[3]) if r[3] else 0.0,
+                "sent_velocity": float(r[4]) if r[4] else 0.0,
+                "price_change_3d": float(r[5]) if r[5] else 0.0,
+                "price_change_5d": float(r[6]) if r[6] else 0.0,
+                "article_count": r[7],
+                "affected_assets": r[8] if r[8] else [],
+                "summary": r[9] or "",
+            })
+        return narratives
+    except Exception as e:
+        logger.error(f"[NARRATIVE] get_all_active_narratives query error: {e}")
+        return []
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+
+def get_multi_day_narrative_context(ticker: str, conn=None) -> Dict[str, Any]:
+    """
+    Returns multi-day narrative context and price/sentiment alignment for a specific ticker.
+    Used by catalyst_engine and signal_fusion to ground trade recommendations in multi-day narrative.
+    """
+    state = get_narrative_phase(ticker, conn=conn)
+    active_narratives = get_all_active_narratives(conn=conn)
+
+    ticker_upper = ticker.strip().upper()
+    matching_narrative = None
+    for nar in active_narratives:
+        assets = [a.upper() for a in nar.get("affected_assets", [])]
+        if ticker_upper in assets:
+            matching_narrative = nar
+            break
+
+    if not matching_narrative:
+        # Fallback to single-ticker state
+        return {
+            "has_narrative": state.phase not in ("UNKNOWN", "FADING"),
+            "theme": f"{ticker_upper} Multi-Day Trend",
+            "phase": state.phase,
+            "narrative_age_hours": state.narrative_age_hours,
+            "avg_sentiment": state.avg_sentiment,
+            "sent_velocity": state.sent_velocity,
+            "article_count": state.article_count_total,
+            "summary": (
+                f"Multi-day {state.phase.lower()} narrative ({state.narrative_age_hours:.0f}h old) "
+                f"with {state.article_count_24h} articles in past 24h."
+            ) if state.phase != "UNKNOWN" else "No strong multi-day narrative identified."
+        }
+
+    return {
+        "has_narrative": True,
+        "theme": matching_narrative["theme"],
+        "phase": matching_narrative["phase"],
+        "narrative_age_hours": state.narrative_age_hours,
+        "avg_sentiment": matching_narrative["avg_sentiment"],
+        "sent_velocity": matching_narrative["sent_velocity"],
+        "price_change_3d": matching_narrative["price_change_3d"],
+        "article_count": matching_narrative["article_count"],
+        "summary": matching_narrative["summary"]
+    }
+

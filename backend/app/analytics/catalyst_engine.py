@@ -206,18 +206,37 @@ def eval_realtime_article_catalyst(
     holding_days = 5 if cat_type in [CatalystType.MICRO_CATALYST, CatalystType.SUPPLY_CHAIN_SPILLOVER] else 3
     holding_period = f"Hold {holding_days} trading days (Swing Horizon)"
 
-    # Build full investment thesis from accumulated DeepSeek reasonings in DB
-    # This is free — data already stored, no extra LLM call needed.
+    # Build full investment thesis from accumulated DeepSeek reasonings in DB + Multi-day Narrative Context
     try:
         from .signal_fusion import build_thesis_from_reasonings
         db_thesis = build_thesis_from_reasonings(ticker, days=7, conn=conn)
     except Exception:
         db_thesis = ""
 
+    nar_context = {}
+    try:
+        from .narrative_tracker import get_multi_day_narrative_context
+        nar_context = get_multi_day_narrative_context(ticker, conn=conn)
+    except Exception:
+        pass
+
+    nar_phase = nar_context.get("phase", "UNKNOWN")
+    nar_theme = nar_context.get("theme", "Multi-Day Market Trend")
+    nar_summary = nar_context.get("summary", "")
+
+    # Multi-day Narrative conviction adjustment
+    conviction_score = confidence * abs(sentiment_score)
+    if nar_phase in ("EMERGING", "BUILDING"):
+        conviction_score = min(1.0, conviction_score * 1.15)
+    elif nar_phase == "FADING":
+        conviction_score *= 0.75
+
     thesis = (
         f"[{cat_title}] {headline}\n"
-        f"DeepSeek Analysis: {reasoning}\n"
-        f"Conviction Score: {confidence*100:.0f}% | Policy Signal: {policy_signal or 'N/A'}\n"
+        f"🌊 Multi-Day Narrative Alignment: [{nar_phase}] {nar_theme}\n"
+        f"Multi-Day Narrative Context: {nar_summary}\n"
+        f"DeepSeek Catalyst Analysis: {reasoning}\n"
+        f"Conviction Score: {conviction_score*100:.0f}% | Policy Signal: {policy_signal or 'N/A'}\n"
         f"TA Execution Bounds: Limit Buy ${trigger_price:.2f} | Target ${target_price:.2f} "
         f"(+{((target_price/trigger_price)-1)*100:.1f}%) | Stop ${stop_loss:.2f} "
         f"(-{((1-(stop_loss/trigger_price))*100):.1f}%)"
@@ -225,7 +244,10 @@ def eval_realtime_article_catalyst(
     if db_thesis:
         thesis += f"\n\nSupporting Catalyst Intelligence (from DeepSeek coverage):\n{db_thesis}"
 
-    reason_summary = f"{cat_title}: Sentiment score {sentiment_score:+.2f} (Confidence: {confidence:.0%}) | {headline[:80]}"
+    reason_summary = (
+        f"{cat_title} ({nar_phase} Narrative): Sentiment {sentiment_score:+.2f} | "
+        f"{headline[:70]} | Multi-Day: {nar_summary[:80]}"
+    )
 
     success = insert_catalyst_trade_signal(
         ticker=ticker,
@@ -237,7 +259,7 @@ def eval_realtime_article_catalyst(
         holding_period=holding_period,
         headline=headline,
         investment_thesis=thesis,
-        conviction_score=confidence * abs(sentiment_score),
+        conviction_score=round(conviction_score, 3),
         sentiment_score=sentiment_score,
         reason=reason_summary,
         conn=conn

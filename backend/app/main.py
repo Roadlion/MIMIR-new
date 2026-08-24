@@ -9,7 +9,7 @@ import os
 from .routers import (
     articles, sentiment, prices, refresh, taxonomy, niche, 
     portfolio, backtest, trade_alerts, research, casino, 
-    paper_trading, voice, earnings, auth_router
+    paper_trading, voice, earnings, auth_router, sitrep
 )
 from .config import get_settings
 from .auth import get_optional_current_user
@@ -54,6 +54,7 @@ app.include_router(backtest.router)
 app.include_router(casino.router, prefix="/api/v1/casino", tags=["casino"])
 app.include_router(voice.router)
 app.include_router(earnings.router)
+app.include_router(sitrep.router, prefix="/api/v1/sitrep", tags=["sitrep"])
 
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

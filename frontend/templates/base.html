@@ -110,6 +110,9 @@
                         </button>
                     </div>
 
+                    <button onclick="openSitRepModal()" class="px-3 py-1 text-xs border border-[#1E88E5] text-[#1E88E5] bg-[#1E88E5]/10 rounded hover:bg-[#1E88E5]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(30,136,229,0.2)]">
+                        <i class="fas fa-globe text-[#1E88E5]"></i> Sit Rep
+                    </button>
                     <button onclick="triggerMimirBriefing()" class="px-3 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded hover:bg-[#00A6B2]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(0,166,178,0.2)]">
                         <i class="fas fa-volume-high animate-pulse text-[#00A6B2]"></i> Mimir's Briefing
                     </button>
@@ -621,8 +624,94 @@
                     setInterval(checkPortfolioAlerts, 20000);
                 });
             });
+
+            async function openSitRepModal() {
+                document.getElementById('sitrepModal').classList.remove('hidden');
+                loadLatestSitRep();
+            }
+
+            function closeSitRepModal() {
+                document.getElementById('sitrepModal').classList.add('hidden');
+            }
+
+            async function loadLatestSitRep() {
+                const content = document.getElementById('sitrepContent');
+                content.innerHTML = `<div class="text-center py-10 text-[#4A6A70]"><i class="fas fa-spinner fa-spin text-2xl mb-2 text-[#1E88E5]"></i><p>Fetching latest Situation Report...</p></div>`;
+                try {
+                    const res = await fetch('/api/v1/sitrep/latest');
+                    const data = await res.json();
+                    renderSitRep(data);
+                } catch (err) {
+                    content.innerHTML = `<div class="p-4 bg-red-950/50 border border-red-800 text-red-300 rounded font-mono">Failed to load Sit Rep: ${err}</div>`;
+                }
+            }
+
+            async function generateFreshSitRep() {
+                const content = document.getElementById('sitrepContent');
+                content.innerHTML = `<div class="text-center py-10 text-[#4A6A70]"><i class="fas fa-spinner fa-spin text-2xl mb-2 text-[#1E88E5]"></i><p>Generating fresh Sit Rep & notifying Discord...</p></div>`;
+                try {
+                    const res = await fetch('/api/v1/sitrep/generate?report_type=ON_DEMAND', { method: 'POST' });
+                    const data = await res.json();
+                    renderSitRep(data.sitrep || data);
+                } catch (err) {
+                    content.innerHTML = `<div class="p-4 bg-red-950/50 border border-red-800 text-red-300 rounded font-mono">Failed to generate Sit Rep: ${err}</div>`;
+                }
+            }
+
+            function renderSitRep(data) {
+                const content = document.getElementById('sitrepContent');
+                if (!data || !data.full_markdown) {
+                    content.innerHTML = `<p class="text-[#4A6A70]">No Sit Rep data available.</p>`;
+                    return;
+                }
+                
+                let md = data.full_markdown
+                    .replace(/^# (.*$)/gim, '<h1 class="text-lg font-bold text-[#1E88E5] border-b border-[#1A2A30] pb-1 mb-2">$1</h1>')
+                    .replace(/^### (.*$)/gim, '<h3 class="text-sm font-bold text-white mt-4 mb-1">$1</h3>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+                    .replace(/`(.*?)`/g, '<code class="bg-[#111A20] px-1 py-0.5 rounded text-[#00A6B2]">$1</code>')
+                    .replace(/\n/g, '<br>');
+
+                content.innerHTML = `<div class="prose prose-invert max-w-none">${md}</div>`;
+            }
+
+            window.openSitRepModal = openSitRepModal;
+            window.closeSitRepModal = closeSitRepModal;
+            window.generateFreshSitRep = generateFreshSitRep;
         })();
     </script>
+
+    <!-- Sit Rep Modal -->
+    <div id="sitrepModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-[#1A2A30] flex items-center justify-between bg-[#060D11]">
+                <div class="flex items-center gap-3">
+                    <span class="p-2 rounded bg-[#1E88E5]/20 text-[#1E88E5] font-mono text-sm"><i class="fas fa-globe"></i></span>
+                    <div>
+                        <h2 class="text-base font-bold text-white font-mono">MIMIR Situation Report (Sit Rep)</h2>
+                        <p id="sitrepSubtitle" class="text-xs text-[#4A6A70] font-mono">Global Macro & Yield Intelligence</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="generateFreshSitRep()" class="px-3 py-1 text-xs bg-[#1E88E5] text-white hover:bg-[#1565C0] rounded font-mono transition-colors">
+                        <i class="fas fa-rotate mr-1"></i> Refresh Sit Rep
+                    </button>
+                    <button onclick="closeSitRepModal()" class="text-[#4A6A70] hover:text-white text-lg p-1">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Modal Body -->
+            <div id="sitrepContent" class="p-6 overflow-y-auto font-mono text-xs text-[#D6E5E3] space-y-4">
+                <div class="text-center py-10 text-[#4A6A70]">
+                    <i class="fas fa-spinner fa-spin text-2xl mb-2 text-[#1E88E5]"></i>
+                    <p>Compiling Sit Rep & Macro Snapshot...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {% block scripts %}{% endblock %}
 </body>
 </html>

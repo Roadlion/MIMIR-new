@@ -516,6 +516,34 @@ async def start_news_loop():
         await asyncio.sleep(300)
 
 
+async def start_sitrep_and_macro_monitor_loop():
+    """
+    30-minute async loop that:
+    1. Synthesizes and updates active multi-day market narratives.
+    2. Compiles automated Situation Reports (Sit Reps) and checks yield milestones (30Y Treasury yield lows/highs).
+    """
+    await asyncio.sleep(30)  # Startup delay
+    from ..analytics.narrative_tracker import update_active_narratives
+    from ..services.sitrep_service import compile_sitrep
+
+    last_sitrep_time = datetime.now() - timedelta(hours=12) # force immediate compile on boot
+
+    while True:
+        try:
+            print("[BG_WORKER] Synthesizing multi-day active market narratives...")
+            await asyncio.to_thread(update_active_narratives)
+
+            # Compile Sit Rep every 12 hours (or on startup)
+            if datetime.now() - last_sitrep_time >= timedelta(hours=12):
+                print("[BG_WORKER] Compiling automated MIMIR Situation Report (Sit Rep)...")
+                await asyncio.to_thread(compile_sitrep, "PERIODIC")
+                last_sitrep_time = datetime.now()
+        except Exception as e:
+            print(f"[BG_WORKER] Error in Sit Rep & Macro monitor loop: {e}")
+
+        await asyncio.sleep(1800)  # every 30 minutes
+
+
 def start_background_worker():
     """Initializes and runs the background loops in daemon threads."""
     print("[BG_WORKER] Initializing MIMIR background workers...")
@@ -533,6 +561,7 @@ def start_background_worker():
     t_learning    = threading.Thread(target=_thread_target, args=(start_performance_and_learning_loop,), daemon=True)
     t_paper       = threading.Thread(target=_thread_target, args=(start_paper_trading_loop,), daemon=True)
     t_earnings    = threading.Thread(target=_thread_target, args=(start_earnings_calendar_loop,), daemon=True)
+    t_sitrep      = threading.Thread(target=_thread_target, args=(start_sitrep_and_macro_monitor_loop,), daemon=True)
 
     t_price.start()
     t_scrape.start()
@@ -542,9 +571,11 @@ def start_background_worker():
     t_learning.start()
     t_paper.start()
     t_earnings.start()
+    t_sitrep.start()
 
     print(
         "[BG_WORKER] MIMIR background threads started:\n"
         "  price=5m | scrape=5m (incl. EDGAR 8-K + surge detect) | sentiment=15m\n"
-        "  fusion=10m | fundamentals=12h | learning=1h | paper=3m | earnings-cal=24h"
+        "  fusion=10m | fundamentals=12h | learning=1h | paper=3m | earnings-cal=24h | sitrep=30m"
     )
+

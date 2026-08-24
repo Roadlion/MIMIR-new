@@ -16,7 +16,7 @@ Setup:
 
 import requests
 import logging
-from typing import Optional
+from typing import Optional, List, Dict
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ def send_trade_alert(
     }
 
     try:
-        resp = requests.post(webhook_url, json=payload, timeout=8)
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
         if resp.status_code in (200, 204):
             logger.info(f"[DISCORD] Sent {signal_type} alert for {ticker} to Discord.")
             return True
@@ -214,3 +214,184 @@ def send_trade_alert(
     except Exception as e:
         logger.error(f"[DISCORD] Failed to send alert for {ticker}: {e}")
         return False
+
+
+def send_sitrep_notification(sitrep_data: dict) -> bool:
+    """
+    Posts a multi-embed Situation Report (Sit Rep) to Discord.
+    Summarizes macro posture, bond yields (e.g. 30Y Treasury yield lows),
+    multi-day market narratives, and breaking global events.
+    """
+    webhook_url = getattr(settings, "discord_webhook_url", "")
+    if not webhook_url:
+        return False
+
+    title = f"🌐 **MIMIR GLOBAL MARKET SITUATION REPORT (SIT REP)**"
+    headline_summary = sitrep_data.get("headline_summary", "Market posture summary.")
+    milestones = sitrep_data.get("milestones", [])
+    macro_snap = sitrep_data.get("macro_snapshot", {})
+    active_narratives = sitrep_data.get("active_narratives", [])
+    breaking_events = sitrep_data.get("breaking_events", [])
+
+    embeds = []
+
+    # Embed 1: Sit Rep Summary & Yield Milestones
+    fields1 = []
+    fields1.append({
+        "name": "📋 Executive Summary",
+        "value": f"*{headline_summary}*",
+        "inline": False
+    })
+
+    if milestones:
+        milestone_text = "\n".join([f"• {m}" for m in milestones])
+        fields1.append({
+            "name": "🚨 Yield & Macro Milestones",
+            "value": milestone_text,
+            "inline": False
+        })
+
+    # Benchmark posture summary table
+    if macro_snap:
+        snap_lines = []
+        for sym, d in macro_snap.items():
+            if sym in ("^TYX", "^TNX", "^VIX", "SPY", "QQQ", "GC=F", "CL=F"):
+                chg = f"`{d['change_5d_pct']:+.1f}% 5d`"
+                tag = " 🚨 **[52W LOW]**" if d.get("is_at_low") else " 🚨 **[52W HIGH]**" if d.get("is_at_high") else ""
+                snap_lines.append(f"• **{d['name']}** (`{sym}`): `{d['current']}` ({chg}){tag}")
+        if snap_lines:
+            fields1.append({
+                "name": "📊 Benchmark & Yield Posture",
+                "value": "\n".join(snap_lines[:6]),
+                "inline": False
+            })
+
+    embeds.append({
+        "title": title,
+        "color": 0x1E88E5,  # Professional Blue
+        "fields": fields1,
+        "footer": {"text": "MIMIR — Global Situation Report"},
+    })
+
+    # Embed 2: Multi-Day Narratives & Breaking Events
+    fields2 = []
+
+    if active_narratives:
+        nar_lines = []
+        for nar in active_narratives[:3]:
+            nar_lines.append(f"• `[{nar['phase']}]` **{nar['theme']}**: Avg Sent `{nar['avg_sentiment']:+.2f}`, 3D Price `{nar.get('price_change_3d', 0.0):+.1f}%`")
+        fields2.append({
+            "name": "🌊 Active Multi-Day Narratives",
+            "value": "\n".join(nar_lines),
+            "inline": False
+        })
+
+    if breaking_events:
+        ev_lines = []
+        for ev in breaking_events[:3]:
+            emoji = "🟢" if ev["sentiment_score"] > 0 else "🔴" if ev["sentiment_score"] < 0 else "⚪"
+            ev_lines.append(f"{emoji} **{ev['title'][:80]}** *({ev['source']})*")
+        fields2.append({
+            "name": "📰 Breaking Global Events",
+            "value": "\n".join(ev_lines),
+            "inline": False
+        })
+
+    if fields2:
+        embeds.append({
+            "title": "🌊 **NARRATIVE & EVENT MATRIX**",
+            "color": 0x673AB7,  # Deep Purple
+            "fields": fields2,
+        })
+
+    payload = {
+        "content": "📢 **NEW MIMIR SITUATION REPORT AVAILABLE**",
+        "embeds": embeds,
+        "username": "MIMIR Sit Rep",
+        "avatar_url": "https://i.imgur.com/mFLGDKb.png",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        if resp.status_code in (200, 204):
+            logger.info("[DISCORD] Posted Sit Rep to Discord successfully.")
+            return True
+        else:
+            logger.warning(f"[DISCORD] Sit Rep webhook returned {resp.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Sit Rep notification: {e}")
+        return False
+
+
+def send_global_breaking_alert(
+    event_category: str,
+    headline: str,
+    summary: str,
+    source: str,
+    sentiment_score: float,
+    affected_assets: Optional[List[str]] = None
+) -> bool:
+    """
+    Posts an instant Breaking Global Alert embed for major market-moving events
+    (wars, emergency press releases, central bank decisions, macro yield shocks).
+    """
+    webhook_url = getattr(settings, "discord_webhook_url", "")
+    if not webhook_url:
+        return False
+
+    color = 0xFF4C5B if sentiment_score < 0 else 0x00C896 if sentiment_score > 0 else 0xFF9800
+
+    fields = [
+        {
+            "name": "📰 Headline",
+            "value": f"**{headline}**",
+            "inline": False
+        },
+        {
+            "name": "📡 Event Category",
+            "value": f"`{event_category}` | Source: `{source}`",
+            "inline": True
+        },
+        {
+            "name": "⚖️ Market Impact Score",
+            "value": f"`{sentiment_score:+.2f}`",
+            "inline": True
+        }
+    ]
+
+    if summary:
+        fields.append({
+            "name": "📝 Context Summary",
+            "value": summary[:600],
+            "inline": False
+        })
+
+    if affected_assets:
+        fields.append({
+            "name": "🎯 Key Assets Tracked",
+            "value": ", ".join([f"`{a}`" for a in affected_assets[:6]]),
+            "inline": False
+        })
+
+    embed = {
+        "title": f"🚨 **BREAKING GLOBAL EVENT / MACRO ALERT**",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "MIMIR Global Intelligence Feed"},
+    }
+
+    payload = {
+        "content": "🚨 @everyone **MARKET-MOVING GLOBAL EVENT DETECTED**" if abs(sentiment_score) >= 0.75 else "🚨 **GLOBAL EVENT ALERT**",
+        "embeds": [embed],
+        "username": "MIMIR Global Sentinel",
+        "avatar_url": "https://i.imgur.com/mFLGDKb.png",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to post global breaking alert: {e}")
+        return False
+

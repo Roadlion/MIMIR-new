@@ -182,6 +182,28 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 except Exception as macro_err:
                     print(f"  [Thread] [Warning] Macro tracker upsert error: {macro_err}")
 
+        # 4. Detect and Dispatch Breaking Global Market-Moving Events
+        title_lower = title.lower()
+        global_keywords = ["war", "tariff", "sanction", "fed", "cpi", "inflation", "yield", "crisis", "conflict", "emergency", "white house", "central bank"]
+        if any(kw in title_lower for kw in global_keywords) or any(abs(imp[6]) >= 0.75 for imp in impacts):
+            try:
+                from backend.app.services.discord_notifier import send_global_breaking_alert
+                cat_label = "GEOPOLITICS / WAR" if any(w in title_lower for w in ["war", "conflict", "sanction", "military"]) else \
+                            "CENTRAL BANK / MACRO" if any(w in title_lower for w in ["fed", "cpi", "inflation", "yield", "rate"]) else \
+                            "MAJOR MARKET IMPULSE"
+                max_score = max([imp[6] for imp in impacts], key=abs) if impacts else 0.0
+                affected = [imp[11] for imp in impacts if imp[11]]
+                send_global_breaking_alert(
+                    event_category=cat_label,
+                    headline=title,
+                    summary=summary or "",
+                    source=impacts[0][1] if impacts else "MIMIR Feed",
+                    sentiment_score=max_score,
+                    affected_assets=affected
+                )
+            except Exception as break_err:
+                print(f"  [Thread] [Warning] Global breaking alert error: {break_err}")
+
         # --- Compute spillover impacts (graph-based + thematic) ---
         spillover_inserted = 0
         try:
