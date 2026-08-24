@@ -14,8 +14,109 @@ from .sentiment_momentum import (
     classify_regime,
     REGIME_ENCODING,
 )
+from ..services.discord_notifier import send_trade_alert as _discord_alert
+from ..services.macro_tracker import is_buy_blocked_by_macro
 
 settings = get_settings()
+
+
+def build_thesis_from_reasonings(ticker: str, days: int = 7, conn=None) -> str:
+    """
+    Queries the top 3 highest-confidence DeepSeek reasoning strings for a ticker
+    from the past N days and assembles them into a structured investment thesis.
+    Zero extra LLM calls — data already in mimir_sentiment_impacts.reasoning.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+    cur = conn.cursor()
+    start_date = (datetime.now() - timedelta(days=days)).date()
+    try:
+        cur.execute(f"""
+            SELECT si.reasoning, si.sentiment_score, si.confidence,
+                   si.magnitude, a.title, a.published_ts
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+            WHERE si.ticker = %s
+              AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s
+              AND si.reasoning IS NOT NULL
+              AND si.reasoning != ''
+              AND si.confidence >= 0.55
+            ORDER BY si.confidence DESC, si.magnitude DESC
+            LIMIT 3
+        """, (ticker.strip().upper(), start_date))
+        rows = cur.fetchall()
+        if not rows:
+            return ""
+
+        thesis_parts = []
+        for i, (reasoning, score, conf, mag, title, pub_ts) in enumerate(rows, 1):
+            direction = "BULLISH" if score > 0 else "BEARISH"
+            pub_date = pub_ts.strftime('%Y-%m-%d') if pub_ts else "N/A"
+            thesis_parts.append(
+                f"[Catalyst {i} — {mag} Magnitude | {direction} | Confidence {conf:.0%} | {pub_date}]\n"
+                f"Headline: {title[:100]}\n"
+                f"Analysis: {reasoning}"
+            )
+
+        return "\n\n".join(thesis_parts)
+    except Exception as e:
+        print(f"[SIGNAL_FUSION] build_thesis_from_reasonings error for {ticker}: {e}")
+        return ""
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+
+def get_magnitude_weighted_sentiment(ticker: str, days: int = 5, conn=None) -> tuple[float, float]:
+    """
+    Returns (weighted_sentiment, max_conviction_score) for a ticker,
+    where each article's contribution is scaled by its magnitude_weight
+    (HIGH=1.5, MEDIUM=1.0, LOW=0.5).
+    Gives HIGH-magnitude catalysts proportionally stronger influence.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+    cur = conn.cursor()
+    start_date = (datetime.now() - timedelta(days=days)).date()
+    try:
+        cur.execute(f"""
+            SELECT si.sentiment_score, si.confidence, si.magnitude
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+            WHERE si.ticker = %s
+              AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s
+        """, (ticker.strip().upper(), start_date))
+        rows = cur.fetchall()
+        if not rows:
+            return 0.0, 0.0
+
+        mag_map = {"HIGH": 1.5, "MEDIUM": 1.0, "LOW": 0.5}
+        total_weight = 0.0
+        weighted_sum = 0.0
+        max_conviction = 0.0
+        for score, conf, mag in rows:
+            w = mag_map.get(mag, 1.0)
+            weighted_sum += float(score) * w
+            total_weight += w
+            conviction = float(score) * float(conf) * w
+            if conviction > max_conviction:
+                max_conviction = conviction
+
+        weighted_sentiment = weighted_sum / total_weight if total_weight > 0 else 0.0
+        return round(weighted_sentiment, 4), round(max_conviction, 4)
+    except Exception as e:
+        print(f"[SIGNAL_FUSION] get_magnitude_weighted_sentiment error for {ticker}: {e}")
+        return 0.0, 0.0
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
 
 def get_recent_prices(ticker: str, days: int = 120, conn=None) -> pd.DataFrame:
     """Fetches recent daily prices for a ticker from the database."""
@@ -24,9 +125,9 @@ def get_recent_prices(ticker: str, days: int = 120, conn=None) -> pd.DataFrame:
         conn = get_db_connection()
         close_conn = True
     cur = conn.cursor()
-    
+
     start_date = (datetime.now() - timedelta(days=days)).date()
-    
+
     sql = f"""
         SELECT date, open, high, low, close, volume
         FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
@@ -106,7 +207,24 @@ def check_duplicate_signal(ticker: str, signal_type: str, conn=None) -> bool:
         if close_conn:
             conn.close()
 
-def insert_trade_signal(ticker: str, signal_type: str, price: float, rsi: float, sentiment: float, support: float, resistance: float, reason: str, conn=None) -> bool:
+def insert_trade_signal(
+    ticker: str,
+    signal_type: str,
+    price: float,
+    rsi: float,
+    sentiment: float,
+    support: float,
+    resistance: float,
+    reason: str,
+    catalyst_type: Optional[str] = "SENTIMENT_FUSION",
+    holding_period: Optional[str] = "Swing Horizon (3-7 days)",
+    investment_thesis: Optional[str] = None,
+    headline: Optional[str] = None,
+    target_price: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    conviction_score: Optional[float] = None,
+    conn=None
+) -> bool:
     """Inserts a new trade signal into the database."""
     close_conn = False
     if conn is None:
@@ -114,14 +232,44 @@ def insert_trade_signal(ticker: str, signal_type: str, price: float, rsi: float,
         close_conn = True
     cur = conn.cursor()
     
+    if target_price is None:
+        target_price = resistance if resistance and resistance > price else price * 1.06
+    if stop_loss is None:
+        stop_loss = support if support and support < price else price * 0.95
+
     sql = f"""
         INSERT INTO {settings.mimir_schema}.mimir_trade_signals 
-        (ticker, signal_type, trigger_price, rsi_value, sentiment_score, support_level, resistance_level, reason, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+        (ticker, signal_type, trigger_price, rsi_value, sentiment_score, support_level, resistance_level, reason, status,
+         catalyst_type, holding_period, investment_thesis, headline, target_price, stop_loss, conviction_score)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, %s, %s, %s, %s, %s, %s)
     """
     try:
-        cur.execute(sql, (ticker, signal_type, price, rsi, sentiment, support, resistance, reason))
+        cur.execute(sql, (
+            ticker, signal_type, price, rsi, sentiment, support, resistance, reason,
+            catalyst_type, holding_period, investment_thesis, headline, target_price, stop_loss, conviction_score
+        ))
         conn.commit()
+
+        # ── Discord notification ─────────────────────────────────────────────
+        try:
+            _discord_alert(
+                ticker=ticker,
+                signal_type=signal_type,
+                trigger_price=price,
+                target_price=target_price,
+                stop_loss=stop_loss,
+                sentiment_score=sentiment,
+                catalyst_type=catalyst_type or "SENTIMENT_FUSION",
+                headline=headline,
+                reason=reason,
+                holding_period=holding_period,
+                conviction_score=conviction_score,
+                rsi=rsi,
+            )
+        except Exception as discord_err:
+            print(f"[SIGNAL_FUSION] Discord notify failed (non-fatal): {discord_err}")
+        # ────────────────────────────────────────────────────────────────────
+
         return True
     except Exception as e:
         print(f"[SIGNAL_FUSION] Error inserting signal: {e}")
@@ -519,12 +667,13 @@ def scan_ticker_for_signals(
         pnl_str = f"{p_avg_pnl:.2f}%" if p_avg_pnl is not None else "N/A"
         param_src = f"Tuned Profile (Hold: {p_hold_days}d, Est. Win Rate: {win_str}, Est. PnL: {pnl_str})"
 
-        # Filter out low conviction / unpromising historical profiles
-        if p_win_rate is not None and p_win_rate < 55.0:
-            print(f"[SIGNAL_FUSION] {ticker} skipped: backtested win rate ({p_win_rate:.1f}%) < 55%.")
+        # Filter out low conviction / unpromising historical profiles.
+        # Use a lenient threshold: only skip if win_rate is CLEARLY negative.
+        if p_win_rate is not None and p_win_rate < 45.0:
+            print(f"[SIGNAL_FUSION] {ticker} skipped: backtested win rate ({p_win_rate:.1f}%) < 45%.")
             return None
-        if p_avg_pnl is not None and p_avg_pnl <= 0.0:
-            print(f"[SIGNAL_FUSION] {ticker} skipped: backtested avg PnL ({p_avg_pnl:.2f}%) <= 0%.")
+        if p_avg_pnl is not None and p_avg_pnl < -1.0:
+            print(f"[SIGNAL_FUSION] {ticker} skipped: backtested avg PnL ({p_avg_pnl:.2f}%) < -1.0%.")
             return None
     else:
         target_prob_buy = 0.65
@@ -565,12 +714,47 @@ def scan_ticker_for_signals(
     support = float(today_row['support']) if not pd.isna(today_row['support']) else current_price
     resistance = float(today_row['resistance']) if not pd.isna(today_row['resistance']) else current_price
     
-    # REGIME GATING & BEHAVIORAL FILTERS
+    # Use magnitude-weighted sentiment for the sentiment gate and conviction scoring.
+    # HIGH-magnitude articles contribute 1.5x, LOW contribute 0.5x.
+    weighted_sentiment, max_conviction = get_magnitude_weighted_sentiment(ticker, days=5, conn=conn)
+
+    # REGIME GATING & CATALYST REQUIREMENT
+    # Block signals if there is truly no active sentiment (very weak signal filter)
+    if abs(weighted_sentiment) < 0.20 and abs(sentiment) < 0.20:
+        print(f"[SIGNAL_FUSION] {ticker} skipped: Sentiment too flat (weighted: {weighted_sentiment:.2f}, raw: {sentiment:.2f}) — no active catalyst.")
+        return None
+
+    # Use weighted sentiment for conviction if available, fall back to raw
+    effective_sentiment = weighted_sentiment if abs(weighted_sentiment) > 0.01 else sentiment
+
+    # NARRATIVE PHASE GATE
+    # Block BUY entries when story is at PEAK or FADING — retail is already buying,
+    # institutions are distributing. Only EMERGING and BUILDING phases get new signals.
+    try:
+        from .narrative_tracker import get_narrative_phase, format_narrative_for_discord
+        narrative_state = get_narrative_phase(ticker, conn=conn)
+        narrative_phase = narrative_state.phase
+        narrative_str = format_narrative_for_discord(narrative_state)
+    except Exception as narr_err:
+        print(f"[SIGNAL_FUSION] Narrative phase lookup failed for {ticker}: {narr_err}")
+        narrative_state = None
+        narrative_phase = "UNKNOWN"
+        narrative_str = ""
+
+    if narrative_phase in ("PEAK", "FADING"):
+        print(
+            f"[SIGNAL_FUSION] {ticker} BUY blocked: Narrative is in '{narrative_phase}' phase "
+            f"(age {getattr(narrative_state, 'narrative_age_hours', 0):.0f}h) — "
+            f"story is too mature for new entry. Wait for next catalyst."
+        )
+        return None
+
     # 1. BUY Signal check
     if prob_buy >= target_prob_buy:
-        # Regime Gating: BUY allowed ONLY in ACCUMULATING or PANIC_OVERSOLD
-        if regime not in ('ACCUMULATING', 'PANIC_OVERSOLD'):
-            print(f"[SIGNAL_FUSION] {ticker} BUY signal blocked: Active regime '{regime}' is not ACCUMULATING or PANIC_OVERSOLD.")
+        # Regime Gating: BUY allowed in ACCUMULATING (best), PANIC_OVERSOLD (contrarian),
+        # or ALIGNED (sentiment + price trending together — valid continuation entry)
+        if regime not in ('ACCUMULATING', 'PANIC_OVERSOLD', 'ALIGNED'):
+            print(f"[SIGNAL_FUSION] {ticker} BUY signal blocked: Active regime '{regime}' is not a valid BUY regime.")
         elif earnings_trap_score > 0.6:
             print(f"[SIGNAL_FUSION] {ticker} BUY signal blocked by Earnings Trap Filter (trap score: {earnings_trap_score:.2f}).")
         elif pro_retail_div < -0.3:
@@ -585,15 +769,17 @@ def scan_ticker_for_signals(
                 eps = float(fundamentals.get("eps_growth")) if fundamentals.get("eps_growth") is not None else None
                 val_status = str(fundamentals.get("valuation_status")) if fundamentals.get("valuation_status") is not None else "FAIRLY_VALUED"
                 
-                if pe is not None and (pe < 0 or pe > 35):
+                # PE filter: allow negative PE (no earnings yet, common in growth/biotech)
+                # and high-PE growth names up to 80. Only block extreme outliers.
+                if pe is not None and pe > 80:
                     passes_fundamentals = False
-                    fund_fail_reason = f"PE ratio ({pe:.1f}) is out of bounds (0-35)"
-                if de is not None and de > 250:
+                    fund_fail_reason = f"PE ratio ({pe:.1f}) is extreme (>80) — likely a valuation bubble"
+                if de is not None and de > 300:
                     passes_fundamentals = False
-                    fund_fail_reason = f"Debt-to-Equity ({de:.1f}%) exceeds threshold (250%)"
-                if eps is not None and eps < -0.2:
+                    fund_fail_reason = f"Debt-to-Equity ({de:.1f}%) exceeds threshold (300%)"
+                if eps is not None and eps < -0.35:
                     passes_fundamentals = False
-                    fund_fail_reason = f"EPS growth ({eps * 100.0:.1f}%) is worse than -20%"
+                    fund_fail_reason = f"EPS growth ({eps * 100.0:.1f}%) is severely negative (<-35%)"
                 if val_status == "OVERVALUED":
                     passes_fundamentals = False
                     fund_fail_reason = f"DCF intrinsic valuation model indicates asset is OVERVALUED"
@@ -601,9 +787,37 @@ def scan_ticker_for_signals(
             if not passes_fundamentals:
                 print(f"[SIGNAL_FUSION] {ticker} rejected by fundamentals overlay: {fund_fail_reason}")
             else:
-                signal_type = 'BUY'
-                reason.append(f"XGBoost BUY prediction prob ({prob_buy * 100.0:.1f}%) >= threshold ({target_prob_buy * 100.0:.1f}%) in '{regime}' regime. [Params: {param_src}{feedback_note}]")
-                
+                # Fed macro regime gate: block rate-sensitive sectors during hawkish environment
+                ticker_sector = fundamentals.get("valuation_status") if fundamentals else None
+                # Lookup sector from sub_category in recent impacts
+                try:
+                    _mac_cur = conn.cursor() if conn else None
+                    if _mac_cur:
+                        _mac_cur.execute(f"""
+                            SELECT asset_sub_category FROM {settings.mimir_schema}.mimir_sentiment_impacts
+                            WHERE ticker = %s AND asset_category = 'EQUITY'
+                            ORDER BY created_at DESC LIMIT 1
+                        """, (ticker,))
+                        _row = _mac_cur.fetchone()
+                        ticker_sector = _row[0] if _row else None
+                        _mac_cur.close()
+                except Exception:
+                    ticker_sector = None
+
+                macro_blocked, macro_reason = is_buy_blocked_by_macro(ticker_sector, conn=conn)
+                if macro_blocked:
+                    print(f"[SIGNAL_FUSION] {ticker} BUY blocked by Fed macro regime: {macro_reason}")
+                else:
+                    signal_type = 'BUY'
+                    reason.append(
+                        f"XGBoost BUY prob ({prob_buy * 100.0:.1f}%) >= threshold ({target_prob_buy * 100.0:.1f}%) "
+                        f"in '{regime}' regime | Magnitude-weighted sentiment: {effective_sentiment:+.2f} "
+                        f"| Max conviction: {max_conviction:.2f} "
+                        f"| Narrative: {narrative_phase} (freshness {getattr(narrative_state, 'freshness_score', 1.0):.0%}). "
+                        f"[Params: {param_src}{feedback_note}]"
+                    )
+
+
     # 2. SELL Signal check
     elif prob_sell >= target_prob_sell:
         if regime not in ('EXHAUSTED', 'ALIGNED'):
@@ -615,14 +829,24 @@ def scan_ticker_for_signals(
     if signal_type:
         reason_str = " | ".join(reason)
         if not check_duplicate_signal(ticker, signal_type, conn=conn):
-            success = insert_trade_signal(ticker, signal_type, current_price, rsi, sentiment, support, resistance, reason_str, conn=conn)
+            # Build investment thesis from existing DeepSeek reasonings (zero extra API cost)
+            thesis = build_thesis_from_reasonings(ticker, days=7, conn=conn)
+            conviction = max_conviction if max_conviction > 0 else abs(effective_sentiment)
+
+            success = insert_trade_signal(
+                ticker, signal_type, current_price, rsi, effective_sentiment,
+                support, resistance, reason_str,
+                investment_thesis=thesis if thesis else None,
+                conviction_score=round(conviction, 4),
+                conn=conn
+            )
             if success:
                 return {
                     "ticker": ticker,
                     "signal_type": signal_type,
                     "trigger_price": current_price,
                     "rsi": rsi,
-                    "sentiment": sentiment,
+                    "sentiment": effective_sentiment,
                     "support": support,
                     "resistance": resistance,
                     "reason": reason_str
@@ -797,6 +1021,17 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
 
     new_signals = []
     try:
+        # 1. Run Pre-Earnings Beat Catalyst Scan
+        try:
+            from .catalyst_engine import scan_pre_earnings_catalysts
+            pre_earnings_sigs = scan_pre_earnings_catalysts(conn=conn)
+            if pre_earnings_sigs:
+                new_signals.extend(pre_earnings_sigs)
+                print(f"[SIGNAL_FUSION] Generated {len(pre_earnings_sigs)} PRE_EARNINGS_BEAT catalyst signals.")
+        except Exception as pe_err:
+            print(f"[SIGNAL_FUSION] Pre-earnings catalyst scan error: {pe_err}")
+
+        # 2. Run Ticker Scan for Sentiment Fusion Signals
         for ticker in target_tickers:
             sig = scan_ticker_for_signals(
                 ticker,

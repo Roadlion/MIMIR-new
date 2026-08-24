@@ -94,8 +94,9 @@ DEFAULT_TICKERS = [
     "XLF", "XLB", "XLC", "XLRE", "XLU", "XLE", "XLI", "XLP", "XLK", "XLY", "XLV",
     # Bond Yields
     "^TNX", "^FVX", "^TYX",
-    # Benchmark Equities
-    "AAPL", "MSFT", "NVDA", "TSLA"
+    # Benchmark Equities & High-Beta Niche Equities
+    "AAPL", "MSFT", "NVDA", "TSLA",
+    "KTOS", "POWW", "UUUU", "SMR", "BDRY", "WEAT", "ASTS", "VRT", "PLTR"
 ]
 
 def fetch_and_cache_ticker(ticker_symbol: str, conn=None):

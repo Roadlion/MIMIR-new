@@ -15,6 +15,7 @@ sys.path.append(PROJECT_ROOT)
 
 from backend.app.database import get_db_connection
 from backend.app.config import get_settings
+from backend.app.utils.ticker_validator import is_yfinance_compatible, filter_yfinance_tickers
 
 settings = get_settings()
 
@@ -96,7 +97,12 @@ def calculate_dcf(free_cash_flow, eps_growth, current_price, shares_outstanding=
 
 def fetch_and_cache_fundamentals(ticker_symbol: str, cur, conn, force=False):
     ticker_symbol = ticker_symbol.strip().lstrip('$').upper()
-    
+
+    # Guard: skip non-equity tickers (ISINs, structured products) before touching yfinance
+    if not is_yfinance_compatible(ticker_symbol):
+        print(f"[FUNDAMENTALS] {ticker_symbol} skipped — not a yfinance-compatible equity ticker.")
+        return "skipped"
+
     if not force:
         cur.execute(f"""
             SELECT pe_ratio, debt_to_equity, eps_growth, operating_margin, updated_at 
@@ -201,10 +207,14 @@ def main():
         
         # Load all active dynamic tickers from database
         cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_dynamic_tickers WHERE ticker IS NOT NULL")
-        tickers = [row[0].strip().upper() for row in cur.fetchall()]
-        if not tickers:
-            tickers = ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "SPY", "QQQ"]
-        print(f"[FUNDAMENTALS] Loaded {len(tickers)} tickers for fundamentals check.")
+        raw_tickers = [row[0].strip().upper() for row in cur.fetchall()]
+        if not raw_tickers:
+            raw_tickers = ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "SPY", "QQQ"]
+
+        # Filter out ISIN-format tickers (structured products, bonds) that yfinance can't handle
+        tickers = filter_yfinance_tickers(raw_tickers)
+        filtered_out = len(raw_tickers) - len(tickers)
+        print(f"[FUNDAMENTALS] Loaded {len(raw_tickers)} tickers ({filtered_out} non-equity filtered out). Processing {len(tickers)} valid tickers.")
         
         success_count = 0
         fetched_count = 0

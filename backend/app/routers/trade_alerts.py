@@ -20,6 +20,13 @@ class TradeSignalResponse(BaseModel):
     support_level: Optional[float]
     resistance_level: Optional[float]
     reason: Optional[str]
+    catalyst_type: Optional[str] = "SENTIMENT_CATALYST"
+    holding_period: Optional[str] = "Swing Horizon (3-7 days)"
+    investment_thesis: Optional[str] = None
+    headline: Optional[str] = None
+    target_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    conviction_score: Optional[float] = None
     status: str
     created_at: datetime
     acted_at: Optional[datetime]
@@ -44,7 +51,10 @@ def get_pending_alerts():
 
         cur.execute(f"""
             SELECT s.id, s.ticker, s.signal_type, s.trigger_price, s.rsi_value, s.sentiment_score, 
-                   s.support_level, s.resistance_level, s.reason, s.status, s.created_at, s.acted_at,
+                   s.support_level, s.resistance_level, s.reason,
+                   s.catalyst_type, s.holding_period, s.investment_thesis, s.headline,
+                   s.target_price, s.stop_loss, s.conviction_score,
+                   s.status, s.created_at, s.acted_at,
                    p.win_rate, p.avg_pnl
             FROM {settings.mimir_schema}.mimir_trade_signals s
             LEFT JOIN {settings.mimir_schema}.mimir_ticker_parameters p ON s.ticker = p.ticker

@@ -75,88 +75,139 @@ def evaluate_past_signals(conn=None) -> int:
     Finds mature unevaluated trade signals in the database,
     resolves their closing prices at holding period maturity,
     and updates their P&L performance metrics.
+
+    Also checks if target_price or stop_loss was hit intra-period
+    using daily OHLCV high/low — more accurate than end-of-period only.
     """
     should_close_conn = False
     if conn is None:
         conn = get_db_connection()
         should_close_conn = True
-        
+
     cur = conn.cursor()
-    
+
     try:
         # Fetch all signals that have not been evaluated yet
         cur.execute(f"""
-            SELECT id, ticker, signal_type, trigger_price, status, created_at 
+            SELECT id, ticker, signal_type, trigger_price, target_price, stop_loss, status, created_at
             FROM {settings.mimir_schema}.mimir_trade_signals
             WHERE evaluation_status IS NULL
             ORDER BY created_at ASC
         """)
         signals = cur.fetchall()
-        
+
         if not signals:
             cur.close()
             if should_close_conn:
                 conn.close()
             return 0
-            
+
         print(f"[EVAL] Scanning {len(signals)} unevaluated trade signals...")
-        
+
         now = datetime.now(timezone.utc)
         evaluated_count = 0
-        
-        for sid, ticker, signal_type, trigger_price, status, created_at in signals:
-            # Look up configured holding period
+
+        for sid, ticker, signal_type, trigger_price, target_price, stop_loss, status, created_at in signals:
             hold_days = get_ticker_hold_days(cur, ticker)
-            
+
             # Ensure trade signal is mature
             target_dt = created_at + timedelta(days=hold_days)
             if target_dt > now:
-                # Signal is not mature yet; skip
                 continue
-                
-            target_date = target_dt.date()
+
             trigger_price = float(trigger_price)
-            
-            # 1. Fetch close price at maturity (DB first)
-            eval_price = fetch_eval_price_db(cur, ticker, target_date)
-            
-            # 2. Fallback to YFinance if database has no record for that date
-            if eval_price is None:
-                eval_price = fetch_eval_price_online(ticker, target_date)
-                
-            if eval_price is None:
-                print(f"[EVAL] [Warning] Could not resolve evaluation price for {ticker} (Target Date: {target_date}). Skipping.")
-                continue
-                
-            # 3. Calculate PnL %
-            if signal_type.upper() == 'BUY':
-                pnl_pct = ((eval_price - trigger_price) / trigger_price) * 100.0
-            else:  # SELL
-                pnl_pct = ((trigger_price - eval_price) / trigger_price) * 100.0
-                
-            # Classify success status
-            # Successful if PnL is positive (i.e. price rose for BUY, or fell for SELL)
-            eval_status = 'SUCCESSFUL' if pnl_pct > 0.0 else 'FAILED'
-            
-            # 4. Update trade signal record
+            target_price = float(target_price) if target_price else None
+            stop_loss = float(stop_loss) if stop_loss else None
+
+            entry_date = created_at.date()
+            exit_date = target_dt.date()
+
+            # ── Intra-period target/stop check using daily OHLCV ──────────────
+            # Check if price HIT the target or stop DURING the hold period.
+            # This is more accurate than just looking at end-of-period price.
+            hit_target = False
+            hit_stop = False
+            early_exit_pnl = None
+
+            try:
+                cur.execute(f"""
+                    SELECT date, high, low, close
+                    FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                    WHERE ticker = %s AND date >= %s AND date <= %s
+                    ORDER BY date ASC
+                """, (ticker, entry_date, exit_date))
+                ohlcv_rows = cur.fetchall()
+
+                for _date, high, low, close in ohlcv_rows:
+                    high = float(high) if high else None
+                    low = float(low) if low else None
+
+                    if signal_type.upper() == 'BUY':
+                        if target_price and high and high >= target_price:
+                            hit_target = True
+                            early_exit_pnl = ((target_price - trigger_price) / trigger_price) * 100.0
+                            break
+                        if stop_loss and low and low <= stop_loss:
+                            hit_stop = True
+                            early_exit_pnl = ((stop_loss - trigger_price) / trigger_price) * 100.0
+                            break
+                    else:  # SELL / SHORT
+                        if target_price and low and low <= target_price:
+                            hit_target = True
+                            early_exit_pnl = ((trigger_price - target_price) / trigger_price) * 100.0
+                            break
+                        if stop_loss and high and high >= stop_loss:
+                            hit_stop = True
+                            early_exit_pnl = ((trigger_price - stop_loss) / trigger_price) * 100.0
+                            break
+            except Exception as ohlcv_err:
+                print(f"[EVAL] Intra-period OHLCV check failed for {ticker}: {ohlcv_err}")
+
+            # ── Determine final PnL ──────────────────────────────────────────
+            if hit_target or hit_stop:
+                pnl_pct = early_exit_pnl
+                eval_price = trigger_price * (1 + pnl_pct / 100.0)
+                exit_reason = "TARGET_HIT" if hit_target else "STOP_HIT"
+            else:
+                # No intra-period exit — evaluate at hold-period maturity
+                eval_price = fetch_eval_price_db(cur, ticker, exit_date)
+                if eval_price is None:
+                    eval_price = fetch_eval_price_online(ticker, target_dt)
+                if eval_price is None:
+                    print(f"[EVAL] [Warning] Could not resolve evaluation price for {ticker} (Target Date: {exit_date}). Skipping.")
+                    continue
+
+                if signal_type.upper() == 'BUY':
+                    pnl_pct = ((eval_price - trigger_price) / trigger_price) * 100.0
+                else:
+                    pnl_pct = ((trigger_price - eval_price) / trigger_price) * 100.0
+                exit_reason = "MATURITY"
+
+            # Successful: target hit OR positive end-of-period PnL
+            eval_status = 'SUCCESSFUL' if (hit_target or pnl_pct > 0.0) else 'FAILED'
+
             cur.execute(f"""
                 UPDATE {settings.mimir_schema}.mimir_trade_signals
-                SET evaluation_price = %s,
-                    evaluation_pnl_pct = %s,
-                    evaluation_status = %s,
-                    evaluated_at = NOW()
+                SET evaluation_price     = %s,
+                    evaluation_pnl_pct   = %s,
+                    evaluation_status    = %s,
+                    evaluated_at         = NOW()
                 WHERE id = %s
             """, (eval_price, pnl_pct, eval_status, sid))
-            
-            print(f"[EVAL] Signal #{sid} ({ticker} {signal_type}): Trigger {trigger_price:.2f} -> Eval {eval_price:.2f} | PnL: {pnl_pct:.2f}% | Status: {eval_status}")
+
+            print(
+                f"[EVAL] Signal #{sid} ({ticker} {signal_type}): "
+                f"Trigger {trigger_price:.2f} → Eval {eval_price:.2f} | "
+                f"PnL: {pnl_pct:.2f}% | Exit: {exit_reason} | Status: {eval_status}"
+            )
             evaluated_count += 1
-            
+
         conn.commit()
         cur.close()
         if should_close_conn:
             conn.close()
         return evaluated_count
-        
+
     except Exception as e:
         conn.rollback()
         print(f"[EVAL] Error during performance evaluation cycle: {e}")
@@ -165,6 +216,7 @@ def evaluate_past_signals(conn=None) -> int:
         if should_close_conn:
             conn.close()
         return 0
+
 
 if __name__ == "__main__":
     print("Running manual evaluation cycle...")

@@ -341,9 +341,28 @@ def compute_sentiment_momentum_features(ticker: str, lookback_days: int = 5, con
         features['earnings_trap_score'] = detect_earnings_trap(ticker, conn=conn)
         features['pro_retail_divergence'] = compute_pro_retail_divergence(ticker, days=3, conn=conn)
         
-        # Price-sentiment gap placeholder (sentiment vs price return 5d)
-        features['price_sentiment_gap'] = round(s3d * 0.5, 4)
-        
+        # Price-sentiment gap: real divergence between sentiment and 5-day price return.
+        # Positive gap = sentiment has risen more than price = ACCUMULATING setup.
+        try:
+            sql_price5d = f"""
+                SELECT close
+                FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                WHERE ticker = %s
+                ORDER BY date DESC
+                LIMIT 6
+            """
+            cur.execute(sql_price5d, (ticker.strip().upper(),))
+            price_rows = cur.fetchall()
+            if price_rows and len(price_rows) >= 2:
+                price_now = float(price_rows[0][0])
+                price_5d_ago = float(price_rows[-1][0])
+                price_return_5d = (price_now - price_5d_ago) / (price_5d_ago + 1e-15)
+                features['price_sentiment_gap'] = round(s3d - price_return_5d, 4)
+            else:
+                features['price_sentiment_gap'] = round(s3d * 0.5, 4)
+        except Exception:
+            features['price_sentiment_gap'] = round(s3d * 0.5, 4)
+
         # Classify regime
         regime = classify_regime(features)
         features['regime_state'] = regime
@@ -373,20 +392,25 @@ def classify_regime(ticker_features: Dict[str, Any]) -> str:
     decay = ticker_features.get('attention_decay_ratio', 0.5)
     panic_score = ticker_features.get('panic_score', 0.0)
     price_momentum = 0.0  # default
-    
+
     if panic_score > 0.7:
         return 'PANIC_OVERSOLD'   # Retail panic selling — contrarian buy
-    
-    if velocity > 0.03 and gap > 0.05:
-        return 'ACCUMULATING'     # Sentiment building, price flat — BUY ZONE
-    
+
+    # ACCUMULATING: sentiment building while price hasn't moved yet — key BUY ZONE
+    # Lowered thresholds from (0.03, 0.05) to (0.01, 0.02) so real data can trigger this.
+    if velocity > 0.01 and gap > 0.02:
+        return 'ACCUMULATING'
+
+    # ALIGNED: sentiment and price rising together — valid continuation entry
     if velocity > 0 and abs(gap) <= 0.05:
-        return 'ALIGNED'          # Sentiment and price moving together — HOLD only
-    
-    if velocity < -0.03 and gap < -0.05:
-        return 'EXHAUSTED'        # Sentiment fading, price elevated — EXIT/SHORT
-    
+        return 'ALIGNED'
+
+    # EXHAUSTED: sentiment falling while price is still elevated — EXIT/SHORT zone
+    if velocity < -0.01 and gap < -0.02:
+        return 'EXHAUSTED'
+
+    # DIVERGENT: price contradicting sentiment direction — stay out
     if abs(velocity) > 0.03 and np.sign(velocity) != np.sign(price_momentum):
-        return 'DIVERGENT'        # Price contradicting sentiment — STAY OUT
-    
-    return 'NEUTRAL'              # Default neutral regime
+        return 'DIVERGENT'
+
+    return 'NEUTRAL'

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     newsapi_key: str = ""
     gnews_api_key: str = ""
     tavily_api_key: str = ""
+
+    # Discord Notifications
+    discord_webhook_url: str = ""           # Set to your Discord channel webhook URL
+    discord_mention_role_id: str = ""       # Optional: role ID to @mention on Tier 1 alerts
     
     # Mode - map from MIMIR_MODE env var
     mode: str = Field(default="standalone", alias="MIMIR_MODE")

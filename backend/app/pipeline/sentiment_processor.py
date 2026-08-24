@@ -11,6 +11,15 @@ from backend.app.sentiment.asset_mapper import resolve_ticker, resolve_country_c
 _spillover_engine = None
 _thematic_detector = None
 
+# Central bank name set for policy_signal tracking
+_CENTRAL_BANK_NAMES = {
+    "federal reserve", "fed", "fomc",
+    "ecb", "european central bank",
+    "boj", "bank of japan",
+    "pboc", "people's bank of china",
+    "boe", "bank of england",
+}
+
 
 def _get_spillover_engine():
     global _spillover_engine
@@ -122,16 +131,56 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
         conn.commit()
         inserted = cur.rowcount
 
-        # --- Trigger LLM Supply Chain Discovery for high-impact headlines (|score| >= 0.7) ---
+        # --- Trigger Real-Time Catalyst Alert Evaluation & LLM Supply Chain Discovery ---
         for imp in impacts:
             score = imp[6]
+            conf = imp[7]
+            reasoning = imp[10]
             ticker_val = imp[11]
-            if ticker_val and abs(score) >= 0.7:
+            policy_sig = imp[12]
+
+            if ticker_val:
+                # 1. Real-time catalyst alert evaluation
                 try:
-                    from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
-                    discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
-                except Exception as llm_err:
-                    print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+                    from backend.app.analytics.catalyst_engine import eval_realtime_article_catalyst
+                    eval_realtime_article_catalyst(
+                        ticker=ticker_val,
+                        sentiment_score=score,
+                        confidence=conf,
+                        headline=title,
+                        reasoning=reasoning,
+                        policy_signal=policy_sig,
+                        is_spillover=False,
+                        conn=conn
+                    )
+                except Exception as cat_err:
+                    print(f"  [Thread] [Warning] Catalyst alert trigger error for {ticker_val}: {cat_err}")
+
+                # 2. LLM supply chain discovery for high-impact headlines (|score| >= 0.7)
+                if abs(score) >= 0.7:
+                    try:
+                        from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                        discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+                    except Exception as llm_err:
+                        print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+
+        # 3. Track Central Bank policy signals into mimir_macro_signals
+        for imp in impacts:
+            asset_name_lower = imp[1].lower() if imp[1] else ""
+            policy_sig = imp[12]
+            if policy_sig and asset_name_lower in _CENTRAL_BANK_NAMES:
+                try:
+                    from backend.app.services.macro_tracker import upsert_policy_signal
+                    upsert_policy_signal(
+                        institution=imp[1],
+                        policy_signal=policy_sig,
+                        sentiment_score=imp[6],
+                        headline=title,
+                        article_id=article_id,
+                        conn=conn
+                    )
+                except Exception as macro_err:
+                    print(f"  [Thread] [Warning] Macro tracker upsert error: {macro_err}")
 
         # --- Compute spillover impacts (graph-based + thematic) ---
         spillover_inserted = 0
@@ -292,16 +341,54 @@ def process_article_batch(batch_articles: List[tuple]) -> int:
             inserted = cur.rowcount
             total_impacts_inserted += inserted
 
-            # Trigger LLM Supply Chain Discovery for high-impact headlines (|score| >= 0.75)
+            # Trigger real-time catalyst alerts + LLM supply chain discovery (batch path)
             for imp in impacts:
                 score = imp[6]
+                conf = imp[7]
+                reasoning = imp[10]
                 ticker_val = imp[11]
-                if ticker_val and abs(score) >= 0.75:
+                policy_sig = imp[12]
+
+                if ticker_val:
+                    # Real-time catalyst alert evaluation (was missing from batch path)
                     try:
-                        from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
-                        discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
-                    except Exception as llm_err:
-                        print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+                        from backend.app.analytics.catalyst_engine import eval_realtime_article_catalyst
+                        eval_realtime_article_catalyst(
+                            ticker=ticker_val,
+                            sentiment_score=score,
+                            confidence=conf,
+                            headline=title,
+                            reasoning=reasoning,
+                            policy_signal=policy_sig,
+                            is_spillover=False,
+                            conn=conn
+                        )
+                    except Exception as cat_err:
+                        print(f"  [Batch] [Warning] Catalyst alert trigger error for {ticker_val}: {cat_err}")
+
+                    # LLM supply chain discovery for high-impact articles
+                    if abs(score) >= 0.75:
+                        try:
+                            from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                            discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+                        except Exception as llm_err:
+                            print(f"  [Batch] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+
+                # Track Central Bank policy signals
+                asset_name_lower = imp[1].lower() if imp[1] else ""
+                if policy_sig and asset_name_lower in _CENTRAL_BANK_NAMES:
+                    try:
+                        from backend.app.services.macro_tracker import upsert_policy_signal
+                        upsert_policy_signal(
+                            institution=imp[1],
+                            policy_signal=policy_sig,
+                            sentiment_score=imp[6],
+                            headline=title,
+                            article_id=aid,
+                            conn=conn
+                        )
+                    except Exception as macro_err:
+                        print(f"  [Batch] [Warning] Macro tracker upsert error: {macro_err}")
 
             # Compute spillover impacts
             try:

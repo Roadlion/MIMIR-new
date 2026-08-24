@@ -3,12 +3,17 @@ import json
 from fastapi import APIRouter, HTTPException, Depends, Response
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date
 from backend.app.database import get_db_connection_dict
+from backend.app.config import get_settings
+from backend.app.auth import get_current_user, get_optional_current_user
 from backend.app.sentiment.llm_client import send_chat_completion
 from backend.app.sentiment.agent_tools import ORACLE_TOOLS, execute_oracle_tool
 from backend.app.utils.document_export import markdown_to_docx
 from backend.app.utils.md_sanitize import sanitize_markdown
+
+settings = get_settings()
+schema = settings.mimir_schema
 
 ORACLE_SYSTEM_PROMPT = (
     "You are the MIMIR Oracle Assistant, modeled after Mimir from God of War (2018) — the Smartest Man Alive and a highly advanced agentic financial researcher and quantitative analyst. "
@@ -45,31 +50,41 @@ def get_db():
         conn.close()
 
 @router.get("/sessions")
-def list_sessions(db = Depends(get_db)):
+def list_sessions(db = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
     cur = db.cursor()
-    cur.execute("SELECT id, title, created_at, updated_at FROM yggdrasil.mimir_chat_sessions ORDER BY updated_at DESC")
+    cur.execute(f"SELECT id, title, created_at, updated_at FROM {schema}.mimir_chat_sessions WHERE user_id = %s ORDER BY updated_at DESC", (user_id,))
     sessions = [dict(row) for row in cur.fetchall()]
     cur.close()
     return {"sessions": sessions}
 
 @router.post("/sessions")
-def create_session(session: ChatSessionCreate, db = Depends(get_db)):
+def create_session(session: ChatSessionCreate, db = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
     session_id = str(uuid.uuid4())
     title = session.title or f"Research-{session_id[:6].upper()}"
     cur = db.cursor()
     cur.execute(
-        "INSERT INTO yggdrasil.mimir_chat_sessions (id, title) VALUES (%s, %s)",
-        (session_id, title)
+        f"INSERT INTO {schema}.mimir_chat_sessions (id, title, user_id) VALUES (%s, %s, %s)",
+        (session_id, title, user_id)
     )
     db.commit()
     cur.close()
     return {"id": session_id, "title": title}
 
 @router.get("/sessions/{session_id}/messages")
-def get_messages(session_id: str, db = Depends(get_db)):
+def get_messages(session_id: str, db = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
     cur = db.cursor()
+    # Ensure session belongs to user
+    cur.execute(f"SELECT user_id FROM {schema}.mimir_chat_sessions WHERE id = %s", (session_id,))
+    sess = cur.fetchone()
+    if not sess or sess["user_id"] != user_id:
+        cur.close()
+        raise HTTPException(status_code=403, detail="Session not found or access denied")
+
     cur.execute(
-        "SELECT id, role, content, metadata, created_at FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
+        f"SELECT id, role, content, metadata, created_at FROM {schema}.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
         (session_id,)
     )
     messages = [dict(row) for row in cur.fetchall()]
@@ -77,20 +92,48 @@ def get_messages(session_id: str, db = Depends(get_db)):
     return {"messages": messages}
 
 @router.post("/sessions/{session_id}/chat")
-def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
-    # 1. Save User Message
+def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    today = date.today()
+    quota = current_user.get("daily_token_quota", 100)
+
     cur = db.cursor()
+    
+    # 0. Check daily Oracle usage quota
     cur.execute(
-        "INSERT INTO yggdrasil.mimir_chat_messages (session_id, role, content) VALUES (%s, 'user', %s) RETURNING id",
+        f"SELECT message_count FROM {schema}.mimir_oracle_daily_usage WHERE user_id = %s AND usage_date = %s",
+        (user_id, today)
+    )
+    usage_row = cur.fetchone()
+    current_count = usage_row["message_count"] if usage_row else 0
+
+    if current_count >= quota and current_user.get("role") != "admin":
+        cur.close()
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily Oracle message quota reached ({quota} messages/day). Reset at midnight."
+        )
+
+    # 1. Save User Message
+    cur.execute(
+        f"INSERT INTO {schema}.mimir_chat_messages (session_id, role, content) VALUES (%s, 'user', %s) RETURNING id",
         (session_id, msg.content)
     )
     user_msg_row = cur.fetchone()
     user_msg_id = user_msg_row["id"] if user_msg_row else None
+    
+    # Update user daily usage count
+    cur.execute(f"""
+        INSERT INTO {schema}.mimir_oracle_daily_usage (user_id, usage_date, message_count)
+        VALUES (%s, %s, 1)
+        ON CONFLICT (user_id, usage_date)
+        DO UPDATE SET message_count = {schema}.mimir_oracle_daily_usage.message_count + 1
+    """, (user_id, today))
     db.commit()
     
     # 2. Retrieve history to build context
     cur.execute(
-        "SELECT role, content FROM yggdrasil.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
+        f"SELECT role, content FROM {schema}.mimir_chat_messages WHERE session_id = %s ORDER BY created_at ASC, id ASC",
         (session_id,)
     )
     history = cur.fetchall()
@@ -105,15 +148,18 @@ def send_message(session_id: str, msg: ChatMessageCreate, db = Depends(get_db)):
             )
             new_title = title_resp.strip(' "').strip()
             if new_title:
-                cur.execute("UPDATE yggdrasil.mimir_chat_sessions SET title = %s WHERE id = %s", (new_title, session_id))
+                cur.execute(f"UPDATE {schema}.mimir_chat_sessions SET title = %s WHERE id = %s", (new_title, session_id))
+                db.commit()
         except Exception as e:
             print(f"[Oracle] Failed to auto-generate title: {e}")
     
     system_prompt = ORACLE_SYSTEM_PROMPT
     
     messages = [{"role": "system", "content": system_prompt}]
-    # Bounded context window: keep latest 12 messages to preserve token limits
-    recent_history = history[-12:] if len(history) > 12 else history
+    # Bounded context window: keep latest 8 messages to preserve token limits
+    recent_history = history[-8:] if len(history) > 8 else history
+    for h in recent_history:
+        messages.append({"role": h["role"], "content": h["content"]})
     for h in recent_history:
         messages.append({"role": h["role"], "content": h["content"]})
         

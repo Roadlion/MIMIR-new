@@ -371,6 +371,7 @@ RULES:
 5. EQUITY assets: asset_category MUST be 'EQUITY'. sub_category MUST be one of 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE.
 6. sentiment_score range [-1.0 to 1.0]. 0.0 = neutral/in-line. direction MUST match score (>0.05: bullish, <-0.05: bearish, else neutral).
 7. Categories: COMMODITY, CURRENCY, EQUITY, BOND, INDEX, ECONOMY, POLICY, RISK, SECTOR.
+8. reasoning: Write exactly 2-3 sentences: (1) what the specific catalyst is, (2) why it matters for THIS asset specifically, (3) the key risk or counterargument to the thesis.
 
 OUTPUT JSON SCHEMA:
 {
@@ -386,7 +387,7 @@ OUTPUT JSON SCHEMA:
       "confidence": 0.95,
       "direction": "bullish",
       "magnitude": "HIGH",
-      "reasoning": "Hawkish Fed rate hike signals strengthen USD.",
+      "reasoning": "The Fed raised rates by 50bps, the largest hike since 2000. This directly strengthens the USD as higher rates attract foreign capital seeking yield. Key risk: if the economy weakens faster than expected, the Fed may pause, reversing the dollar rally.",
       "policy_signal": "hawkish"
     }
   ]
@@ -405,6 +406,7 @@ RULES:
 4. EQUITY assets: asset_category MUST be 'EQUITY'. sub_category MUST be one of 11 allowed GICS sectors: TECHNOLOGY, ENERGY, CONSUMER_CYCLICAL, CONSUMER_DEFENSIVE, COMMUNICATION_SERVICES, INDUSTRIALS, FINANCIAL_SERVICES, UTILITIES, BASIC_MATERIALS, REAL_ESTATE, HEALTHCARE.
 5. sentiment_score range [-1.0 to 1.0]. 0.0 = neutral. direction MUST match score (>0.05: bullish, <-0.05: bearish, else neutral).
 6. Categories: COMMODITY, CURRENCY, EQUITY, BOND, INDEX, ECONOMY, POLICY, RISK, SECTOR.
+7. reasoning: Write exactly 2-3 sentences: (1) what the specific catalyst is, (2) why it matters for THIS asset specifically, (3) the key risk or counterargument to the thesis.
 
 OUTPUT JSON SCHEMA:
 {
@@ -423,7 +425,7 @@ OUTPUT JSON SCHEMA:
           "confidence": 0.95,
           "direction": "bullish",
           "magnitude": "HIGH",
-          "reasoning": "Hawkish Fed rate hike signals strengthen USD.",
+          "reasoning": "The Fed raised rates by 50bps, the largest hike since 2000. This directly strengthens the USD as higher rates attract foreign capital seeking yield. Key risk: if the economy weakens faster than expected, the Fed may pause, reversing the dollar rally.",
           "policy_signal": "hawkish"
         }
       ]
@@ -448,11 +450,38 @@ SUMMARY: {summary}"""
         text = text.replace("family bond", "relationship")
         return text
 
+    def is_high_signal_catalyst(self, title: str, summary: str) -> bool:
+        """
+        Token-Saving Pre-Filter: Returns True ONLY if article contains high-impact catalyst
+        keywords OR Megacap Trend Indicators (earnings, FDA, contract, supply shortage, tariffs, CapEx, M&A).
+        """
+        title = title or ""
+        summary = summary or ""
+        text = self._normalize_text(f"{title} {summary}")
+        
+        catalyst_keywords = [
+            # High Impact Corporate Catalysts
+            "earnings", "eps", "revenue", "guidance", "fda", "approval", "phase 3", "contract", "awarded",
+            "patent", "merger", "acquisition", "buyout", "takeover", "restructuring", "layoffs", "buyback",
+            "capex", "capital expenditure", "datacenter", "supply shortage", "bottleneck", "outage", "fire",
+            # Macro & Regulatory Catalysts
+            "tariff", "tariffs", "sanction", "sanctions", "embargo", "trade war", "fed", "fomc", "rate cut",
+            "rate hike", "cpi", "inflation", "opec", "production cut", "war", "conflict", "geopolitics",
+            # Megacap Trend Spillovers
+            "nvidia", "tsmc", "apple", "microsoft", "amazon", "tesla", "google", "asml", "amd"
+        ]
+
+        cat_regex = r'\b(?:' + '|'.join(map(re.escape, catalyst_keywords)) + r')\b'
+        return bool(re.search(cat_regex, text))
+
     def is_financial_or_macro(self, title: str, summary: str) -> bool:
         """
-        Determine if the news article is relevant to financial markets, 
-        corporate events, or macroeconomic trends.
+        Determine if the news article is relevant to financial markets and contains catalyst signals.
         """
+        # Apply High-Signal Catalyst Pre-Filter first to save DeepSeek tokens!
+        if not self.is_high_signal_catalyst(title, summary):
+            return False
+
         title = title or ""
         summary = summary or ""
         text = self._normalize_text(f"{title} {summary}")
@@ -687,6 +716,10 @@ SUMMARY: {summary}"""
 
                 # ENRICH with ticker and normalized name
                 asset = self._enrich_asset(asset)
+
+                # Add numeric magnitude weight for conviction scoring downstream
+                _mag_weights = {"HIGH": 1.5, "MEDIUM": 1.0, "LOW": 0.5}
+                asset["magnitude_weight"] = _mag_weights.get(asset.get("magnitude", "MEDIUM"), 1.0)
 
                 validated.append(asset)
             except (ValueError, TypeError) as e:

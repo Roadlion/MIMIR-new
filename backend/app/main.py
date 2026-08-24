@@ -6,8 +6,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy, niche, portfolio, backtest, trade_alerts, research, casino, paper_trading, voice
+from .routers import (
+    articles, sentiment, prices, refresh, taxonomy, niche, 
+    portfolio, backtest, trade_alerts, research, casino, 
+    paper_trading, voice, earnings, auth_router
+)
 from .config import get_settings
+from .auth import get_optional_current_user
 
 settings = get_settings()
 
@@ -34,6 +39,7 @@ async def startup_event():
     threading.Thread(target=preseed_portfolio_logos, daemon=True).start()
 
 # --- API Routes ---
+app.include_router(auth_router.router, prefix="/api/v1", tags=["auth"])
 app.include_router(articles.router, prefix="/api/v1", tags=["articles"])
 app.include_router(sentiment.router, prefix="/api/v1", tags=["sentiment"])
 app.include_router(prices.router, prefix="/api/v1", tags=["prices"])
@@ -47,6 +53,8 @@ app.include_router(research.router, prefix="/api/v1/research", tags=["research"]
 app.include_router(backtest.router)
 app.include_router(casino.router, prefix="/api/v1/casino", tags=["casino"])
 app.include_router(voice.router)
+app.include_router(earnings.router)
+
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(BASE_DIR, "frontend", "static")
@@ -60,6 +68,15 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return FileResponse(os.path.join(STATIC_DIR, "img", "mimir_logo.png"))
+
+# --- Authentication & Web Pages ---
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html")
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    return templates.TemplateResponse(request, "admin.html")
 
 # --- HTML Pages (served from templates) ---
 @app.get("/", response_class=HTMLResponse)

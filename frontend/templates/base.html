@@ -94,8 +94,22 @@
                     <div id="searchDropdown" class="hidden absolute left-0 right-0 lg:right-0 lg:left-auto top-full mt-2 w-full lg:w-80 bg-[#0A161C] border border-[#1A2A30] rounded-lg shadow-xl z-50 overflow-hidden"></div>
                 </div>
                 
-                <div class="hidden lg:flex items-center gap-4">
+                <div class="hidden lg:flex items-center gap-3">
                     <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock">--:--:--</span></span>
+                    
+                    <!-- User Profile & Auth Pill -->
+                    <div id="userNavPill" class="flex items-center gap-2 bg-[#0A161C] border border-[#1A2A30] rounded-lg px-2.5 py-1 text-xs font-mono">
+                        <i class="fas fa-user-circle text-[#00A6B2]"></i>
+                        <span id="navUsername" class="text-white font-bold">...</span>
+                        <span id="navQuota" class="text-[10px] text-[#4A6A70] bg-[#060D11] px-1.5 py-0.5 rounded border border-[#1A2A30]">100 left</span>
+                        <a id="adminNavLink" href="/admin" class="hidden text-[11px] text-purple-400 hover:text-purple-300 font-bold ml-1" title="Admin Dashboard">
+                            <i class="fas fa-cog"></i> Admin
+                        </a>
+                        <button onclick="handleLogout()" class="text-[#4A6A70] hover:text-red-400 text-xs ml-1" title="Logout">
+                            <i class="fas fa-sign-out-alt"></i>
+                        </button>
+                    </div>
+
                     <button onclick="triggerMimirBriefing()" class="px-3 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded hover:bg-[#00A6B2]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(0,166,178,0.2)]">
                         <i class="fas fa-volume-high animate-pulse text-[#00A6B2]"></i> Mimir's Briefing
                     </button>
@@ -552,6 +566,52 @@
             }
 
             window.checkPortfolioAlerts = checkPortfolioAlerts;
+
+            // Authentication & User Nav Pill Handling
+            async function checkAuthUser() {
+                try {
+                    const res = await fetch('/api/v1/auth/me');
+                    if (!res.ok) {
+                        if (window.location.pathname !== '/login') {
+                            window.location.href = '/login';
+                        }
+                        return;
+                    }
+                    const user = await res.json();
+                    
+                    const navUsername = document.getElementById('navUsername');
+                    const navQuota = document.getElementById('navQuota');
+                    const adminNavLink = document.getElementById('adminNavLink');
+                    
+                    if (navUsername) navUsername.textContent = user.username;
+                    if (navQuota) {
+                        if (user.role === 'admin') {
+                            navQuota.textContent = 'Unlimited';
+                            navQuota.className = 'text-[10px] text-purple-300 bg-purple-950 px-1.5 py-0.5 rounded border border-purple-800 font-bold';
+                        } else {
+                            navQuota.textContent = `${user.remaining_quota}/${user.daily_token_quota} msgs`;
+                        }
+                    }
+                    if (adminNavLink && user.role === 'admin') {
+                        adminNavLink.classList.remove('hidden');
+                    }
+                } catch (err) {
+                    console.error("Auth check failed:", err);
+                }
+            }
+
+            async function handleLogout() {
+                try {
+                    await fetch('/api/v1/auth/logout', { method: 'POST' });
+                    window.location.href = '/login';
+                } catch (err) {
+                    console.error("Logout failed:", err);
+                }
+            }
+
+            window.handleLogout = handleLogout;
+            document.addEventListener('DOMContentLoaded', checkAuthUser);
+
             window.playPortfolioAlertChime = playPortfolioAlertChime;
             window.markAlertAsRead = markAlertAsRead;
 

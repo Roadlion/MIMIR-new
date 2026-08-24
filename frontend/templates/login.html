@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIMIR - Sign In</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="icon" type="image/png" href="/static/img/mimir_logo.png">
+</head>
+<body class="bg-[#03070A] text-[#D6E5E3] font-['Inter'] antialiased min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+
+    <!-- Background glow elements -->
+    <div class="absolute -top-40 -left-40 w-96 h-96 bg-[#00A6B2]/10 rounded-full blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-40 -right-40 w-96 h-96 bg-[#00A6B2]/10 rounded-full blur-3xl pointer-events-none"></div>
+
+    <div class="w-full max-w-md bg-[#0A161C]/90 border border-[#1A2A30] backdrop-blur-md rounded-xl p-8 shadow-2xl relative z-10">
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-[#00A6B2]/10 border border-[#00A6B2]/30 rounded-2xl mb-4 shadow-[0_0_20px_rgba(0,166,178,0.2)]">
+                <span class="text-[#00A6B2] font-black text-2xl font-['JetBrains_Mono']">M</span>
+            </div>
+            <h1 class="text-2xl font-bold font-['JetBrains_Mono'] text-[#E0F2F1]">MIMIR ORACLE</h1>
+            <p class="text-xs text-[#4A6A70] mt-1">Market Intelligence & Quantitative Research Portal</p>
+        </div>
+
+        <div id="errorMessage" class="hidden mb-4 p-3 bg-red-950/50 border border-red-500/50 rounded-lg text-red-300 text-xs font-mono flex items-center gap-2">
+            <i class="fas fa-exclamation-circle text-red-400"></i>
+            <span id="errorText">Invalid credentials</span>
+        </div>
+
+        <form id="loginForm" class="space-y-5" onsubmit="handleLogin(event)">
+            <div>
+                <label class="block text-xs font-mono text-[#8AA6A3] uppercase tracking-wider mb-2">Username</label>
+                <div class="relative">
+                    <i class="fas fa-user absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70]"></i>
+                    <input type="text" id="username" required autocomplete="username"
+                        class="w-full bg-[#060D11] border border-[#1A2A30] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none transition-all placeholder-[#3B545A]"
+                        placeholder="Enter your username">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs font-mono text-[#8AA6A3] uppercase tracking-wider mb-2">Password</label>
+                <div class="relative">
+                    <i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70]"></i>
+                    <input type="password" id="password" required autocomplete="current-password"
+                        class="w-full bg-[#060D11] border border-[#1A2A30] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none transition-all placeholder-[#3B545A]"
+                        placeholder="Enter your password">
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn"
+                class="w-full bg-[#00A6B2] hover:bg-[#008C96] text-[#03070A] font-bold py-3 px-4 rounded-lg transition-all font-mono text-sm shadow-[0_0_15px_rgba(0,166,178,0.3)] flex items-center justify-center gap-2">
+                <span>Sign In</span>
+                <i class="fas fa-arrow-right text-xs"></i>
+            </button>
+        </form>
+
+        <div class="mt-8 pt-6 border-t border-[#1A2A30]/60 text-center text-xs text-[#4A6A70]">
+            <p>Remote Access Server &bull; MIMIR v1.0</p>
+        </div>
+    </div>
+
+    <script>
+        async function handleLogin(e) {
+            e.preventDefault();
+            const submitBtn = document.getElementById('submitBtn');
+            const errorMsg = document.getElementById('errorMessage');
+            const errorText = document.getElementById('errorText');
+            
+            errorMsg.classList.add('hidden');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Authenticating...';
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            try {
+                const res = await fetch('/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Login failed');
+                }
+
+                // Redirect to main page on success
+                window.location.href = '/';
+            } catch (err) {
+                errorText.textContent = err.message;
+                errorMsg.classList.remove('hidden');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span>Sign In</span> <i class="fas fa-arrow-right text-xs"></i>';
+            }
+        }
+    </script>
+</body>
+</html>

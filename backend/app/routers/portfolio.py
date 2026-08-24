@@ -1,5 +1,5 @@
 # backend/app/routers/portfolio.py
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from datetime import datetime, timezone
@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ..database import get_db_connection_dict, get_db_connection
 from ..config import get_settings
+from ..auth import get_optional_current_user, get_current_user
 from ..sentiment.llm_client import send_chat_completion
 
 router = APIRouter()
@@ -114,7 +115,8 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
     return prices
 
 @router.get("/portfolio/tickers")
-def get_portfolio_tickers():
+def get_portfolio_tickers(current_user: Optional[dict] = Depends(get_optional_current_user)):
+    user_id = current_user["id"] if current_user else 1
     """Returns a list of distinct active tickers currently held in real and paper portfolios."""
     tickers = set()
     conn = get_db_connection_dict()
@@ -125,8 +127,8 @@ def get_portfolio_tickers():
         cur.execute(f"""
             SELECT ticker, transaction_type, quantity
             FROM {schema}.mimir_portfolio
-            WHERE (source IS NULL OR source = 'MANUAL' OR source = '')
-        """)
+            WHERE user_id = %s AND (source IS NULL OR source = 'MANUAL' OR source = '')
+        """, (user_id,))
         rows = cur.fetchall()
         holdings = {}
         for r in rows:
@@ -181,13 +183,15 @@ def get_portfolio_tickers():
     return {"tickers": sorted(list(tickers))}
 
 @router.get("/portfolio", response_model=PortfolioSummary)
-def get_portfolio():
+def get_portfolio(current_user: Optional[dict] = Depends(get_optional_current_user)):
+    user_id = current_user["id"] if current_user else 1
+
     # Fetch total API costs
     total_api_costs = 0.0
     conn_cost = get_db_connection_dict()
     cur_cost = conn_cost.cursor()
     try:
-        cur_cost.execute(f"SELECT SUM(cost_usd) as sum_cost FROM {settings.mimir_schema}.mimir_api_cost_ledger")
+        cur_cost.execute(f"SELECT SUM(cost_usd) as sum_cost FROM {settings.mimir_schema}.mimir_api_cost_ledger WHERE user_id = %s", (user_id,))
         row = cur_cost.fetchone()
         if row and row["sum_cost"] is not None:
             total_api_costs = float(row["sum_cost"])
@@ -200,13 +204,13 @@ def get_portfolio():
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
-    # Fetch all real/manual transactions
+    # Fetch all real/manual transactions for this user
     cur.execute(f"""
         SELECT id, ticker, order_date, buy_price, quantity, created_at, transaction_type, brokerage_fee, regulatory_fee, other_fee
         FROM {settings.mimir_schema}.mimir_portfolio
-        WHERE (source IS NULL OR source = 'MANUAL' OR source = '')
+        WHERE user_id = %s AND (source IS NULL OR source = 'MANUAL' OR source = '')
         ORDER BY order_date DESC
-    """)
+    """, (user_id,))
     transactions = cur.fetchall()
     cur.close()
     conn.close()
@@ -347,7 +351,9 @@ def get_portfolio():
     }
 
 @router.post("/portfolio", response_model=TransactionResponse)
-def add_transaction(tx: TransactionCreate):
+def add_transaction(tx: TransactionCreate, current_user: Optional[dict] = Depends(get_optional_current_user)):
+    user_id = current_user["id"] if current_user else 1
+
     # Enforce GMT+7 (Asia/Bangkok) timezone for order date
     from datetime import timezone, timedelta
     gmt_plus_7 = timezone(timedelta(hours=7))
@@ -364,8 +370,8 @@ def add_transaction(tx: TransactionCreate):
             cur.execute(f"""
                 SELECT transaction_type, quantity
                 FROM {settings.mimir_schema}.mimir_portfolio
-                WHERE ticker = %s
-            """, (tx.ticker.upper().strip(),))
+                WHERE user_id = %s AND ticker = %s
+            """, (user_id, tx.ticker.upper().strip()))
             existing_txs = cur.fetchall()
             current_qty = 0.0
             for etx in existing_txs:
@@ -386,10 +392,10 @@ def add_transaction(tx: TransactionCreate):
     cur = conn.cursor()
     try:
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_portfolio (ticker, order_date, buy_price, quantity, transaction_type, brokerage_fee, regulatory_fee, other_fee)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO {settings.mimir_schema}.mimir_portfolio (user_id, ticker, order_date, buy_price, quantity, transaction_type, brokerage_fee, regulatory_fee, other_fee)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at, brokerage_fee, regulatory_fee, other_fee
-        """, (tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(), tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0))
+        """, (user_id, tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(), tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0))
         new_tx = cur.fetchone()
         conn.commit()
         return new_tx
@@ -401,7 +407,9 @@ def add_transaction(tx: TransactionCreate):
         conn.close()
 
 @router.put("/portfolio/{tx_id}", response_model=TransactionResponse)
-def edit_transaction(tx_id: int, tx: TransactionUpdate):
+def edit_transaction(tx_id: int, tx: TransactionUpdate, current_user: Optional[dict] = Depends(get_optional_current_user)):
+    user_id = current_user["id"] if current_user else 1
+
     from datetime import timezone, timedelta
     gmt_plus_7 = timezone(timedelta(hours=7))
     if tx.order_date.tzinfo is None:
@@ -413,7 +421,7 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate):
     cur = conn.cursor()
     try:
         # 1. Fetch existing transaction to get old ticker
-        cur.execute(f"SELECT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE id = %s", (tx_id,))
+        cur.execute(f"SELECT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE id = %s AND user_id = %s", (tx_id, user_id))
         old_tx = cur.fetchone()
         if not old_tx:
             raise HTTPException(status_code=404, detail="Transaction not found.")
@@ -424,8 +432,8 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate):
         cur.execute(f"""
             SELECT id, transaction_type, quantity, order_date
             FROM {settings.mimir_schema}.mimir_portfolio
-            WHERE ticker = %s AND id != %s
-        """, (old_ticker, tx_id))
+            WHERE user_id = %s AND ticker = %s AND id != %s
+        """, (user_id, old_ticker, tx_id))
         old_ticker_txs = cur.fetchall()
 
         if old_ticker == new_ticker:
@@ -473,8 +481,8 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate):
             cur.execute(f"""
                 SELECT id, transaction_type, quantity, order_date
                 FROM {settings.mimir_schema}.mimir_portfolio
-                WHERE ticker = %s
-            """, (new_ticker,))
+                WHERE user_id = %s AND ticker = %s
+            """, (user_id, new_ticker))
             new_ticker_txs = cur.fetchall()
             proposed_tx = {
                 "id": tx_id,
@@ -503,10 +511,10 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate):
             UPDATE {settings.mimir_schema}.mimir_portfolio
             SET ticker = %s, order_date = %s, buy_price = %s, quantity = %s, transaction_type = %s,
                 brokerage_fee = %s, regulatory_fee = %s, other_fee = %s
-            WHERE id = %s
+            WHERE id = %s AND user_id = %s
             RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at, brokerage_fee, regulatory_fee, other_fee
         """, (new_ticker, localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(),
-              tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0, tx_id))
+              tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0, tx_id, user_id))
         updated_tx = cur.fetchone()
         conn.commit()
         return updated_tx
@@ -521,15 +529,17 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate):
         conn.close()
 
 @router.delete("/portfolio/{tx_id}")
-def delete_transaction(tx_id: int):
+def delete_transaction(tx_id: int, current_user: Optional[dict] = Depends(get_optional_current_user)):
+    user_id = current_user["id"] if current_user else 1
+
     conn = get_db_connection()
     cur = conn.cursor()
     
     try:
         cur.execute(f"""
             DELETE FROM {settings.mimir_schema}.mimir_portfolio
-            WHERE id = %s
-        """, (tx_id,))
+            WHERE id = %s AND user_id = %s
+        """, (tx_id, user_id))
         conn.commit()
         return {"status": "success", "message": f"Transaction {tx_id} deleted."}
     except Exception as e:
@@ -729,7 +739,9 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
     return trends
 
 @router.get("/portfolio/advice")
-def get_portfolio_advice():
+def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_current_user)):
+    user_id = current_user["id"] if current_user else 1
+
     # 1. Fetch current portfolio
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -737,7 +749,8 @@ def get_portfolio_advice():
     cur.execute(f"""
         SELECT ticker, buy_price, quantity, transaction_type, order_date
         FROM {settings.mimir_schema}.mimir_portfolio
-    """)
+        WHERE user_id = %s
+    """, (user_id,))
     txs = cur.fetchall()
     
     if not txs:
@@ -1038,8 +1051,11 @@ def get_portfolio_history(
     period: str = Query("1m", description="1w, 1m, 3m, 6m, 1y, ytd, all"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    benchmark: str = Query("SPY", description="Benchmark ticker to compare against")
+    benchmark: str = Query("SPY", description="Benchmark ticker to compare against"),
+    current_user: Optional[dict] = Depends(get_optional_current_user)
 ):
+    user_id = current_user["id"] if current_user else 1
+
     from datetime import timedelta, date, datetime as dt
     import time
     import math
@@ -1056,8 +1072,9 @@ def get_portfolio_history(
                COALESCE(regulatory_fee, 0.0) as regulatory_fee,
                COALESCE(other_fee, 0.0) as other_fee
         FROM {settings.mimir_schema}.mimir_portfolio
+        WHERE user_id = %s
         ORDER BY order_date ASC
-    """)
+    """, (user_id,))
     txs = cur.fetchall()
     
     if not txs:

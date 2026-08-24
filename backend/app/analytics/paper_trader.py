@@ -343,6 +343,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
         cur.execute(f"""
             SELECT s.id, s.ticker, s.signal_type, s.trigger_price, s.rsi_value, s.sentiment_score,
                    s.support_level, s.resistance_level, s.reason, s.created_at,
+                   COALESCE(s.conviction_score, 0.5) as conviction_score, s.catalyst_type,
                    COALESCE(p.win_rate, 50.0) as win_rate
             FROM {schema}.mimir_trade_signals s
             LEFT JOIN {schema}.mimir_ticker_parameters p ON s.ticker = p.ticker
@@ -368,6 +369,8 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             trigger_price = float(alert["trigger_price"])
             win_rate = float(alert["win_rate"])
             sentiment = float(alert["sentiment_score"] or 0.0)
+            conviction = float(alert.get("conviction_score") or 0.5)
+            cat_type = alert.get("catalyst_type") or ""
 
             # Restrict to US stocks only if enabled
             if us_only and not is_us_stock(ticker):
@@ -397,17 +400,19 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                     print(f"[PAPER_TRADER] Insufficient paper cash balance (${current_cash:.2f}) to buy {ticker}.")
                     continue
 
-                pos_type = config.get("position_size_type", "FIXED_USD")
-                pos_val = float(config.get("position_size_value", 20.0))
+                # Dynamic Conviction Sizing (Kelly Criterion Scale):
+                # Standard: $500 | High Conviction: $1,250 | Home-Run Catalyst: $2,500
+                base_alloc = float(config.get("position_size_value", 500.0))
+                if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER"]:
+                    multiplier = 5.0  # 5x Allocation for Asymmetric Home Run Catalysts ($2,500)
+                elif conviction >= 0.65:
+                    multiplier = 2.5  # 2.5x Allocation for High Conviction Signals ($1,250)
+                else:
+                    multiplier = 1.0  # 1.0x Base Allocation ($500)
 
-                if pos_type == "FIXED_SHARES":
-                    qty = pos_val
-                    trade_cost = qty * exec_price
-                    if trade_cost > current_cash:
-                        qty = round(current_cash / exec_price, 6)
-                else:  # FIXED_USD
-                    trade_alloc = min(pos_val, current_cash)
-                    qty = round(trade_alloc / exec_price, 6) if exec_price > 0 else 0.1
+                target_alloc = base_alloc * multiplier
+                trade_alloc = min(target_alloc, current_cash)
+                qty = round(trade_alloc / exec_price, 6) if exec_price > 0 else 0.1
 
                 if qty <= 0.000001:
                     continue

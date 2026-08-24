@@ -110,7 +110,15 @@ def run_scrape_cycle():
     print(f"[BG_WORKER] Starting scrape cycle at {datetime.now()}")
     env = _subprocess_env()
 
-    # 1. Scrape articles (RSS + NewsAPI + GNews)
+    # 0. SEC EDGAR 8-K real-time scraper (inline — fast, no subprocess needed)
+    try:
+        from ..scrapers.edgar_scraper import run_edgar_scrape_cycle
+        edgar_count = run_edgar_scrape_cycle()
+        if edgar_count > 0:
+            print(f"[BG_WORKER] EDGAR: {edgar_count} new 8-K articles inserted.")
+    except Exception as e:
+        print(f"[BG_WORKER] EDGAR scrape error: {e}")
+
     try:
         print("[BG_WORKER] Executing news scraper (push_to_db.py)...")
         res = subprocess.run([sys.executable, PUSH_TO_DB_PATH], env=env, cwd=PROJECT_ROOT,
@@ -147,6 +155,16 @@ def run_scrape_cycle():
         print(f"[BG_WORKER] Error running Twitter scraper: {e}")
 
     print(f"[BG_WORKER] Scrape cycle completed.")
+
+    # Social surge detection runs after every scrape cycle so it catches
+    # intra-day volume spikes as fresh social data arrives.
+    try:
+        from ..analytics.surge_detector import run_surge_detection_cycle
+        surge_fired = run_surge_detection_cycle()
+        if surge_fired > 0:
+            print(f"[BG_WORKER] SURGE: {surge_fired} pre-FOMO BUY signals fired.")
+    except Exception as e:
+        print(f"[BG_WORKER] Social surge detection error: {e}")
 
 
 def run_sentiment_cycle():
@@ -400,6 +418,41 @@ async def start_fundamentals_loop():
         await asyncio.sleep(43200)  # every 12 hours
 
 
+async def start_earnings_calendar_loop():
+    """
+    24-hour async loop that refreshes the earnings calendar for all tracked tickers.
+    Uses yfinance — free, no API key required.
+    Runs once at startup (after 2 min delay) then every 24 hours.
+    """
+    await asyncio.sleep(120)  # Startup delay: let prices + DB settle first
+    from ..services.earnings_calendar import refresh_earnings_calendar
+    from ..routers.prices import DEFAULT_TICKERS
+
+    while True:
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            tickers = set(DEFAULT_TICKERS)
+            try:
+                cur.execute(
+                    f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_dynamic_tickers "
+                    f"WHERE ticker IS NOT NULL"
+                )
+                for row in cur.fetchall():
+                    tickers.add(row[0].strip().upper())
+            except Exception:
+                pass
+            cur.close()
+            conn.close()
+
+            print(f"[BG_WORKER] Refreshing earnings calendar for {len(tickers)} tickers...")
+            n = await asyncio.to_thread(refresh_earnings_calendar, list(tickers))
+            print(f"[BG_WORKER] Earnings calendar refresh complete: {n} dates upserted.")
+        except Exception as e:
+            print(f"[BG_WORKER] Error in earnings calendar loop: {e}")
+        await asyncio.sleep(86400)  # every 24 hours
+
+
 async def start_performance_and_learning_loop():
     """
     1-hour async loop that:
@@ -472,13 +525,14 @@ def start_background_worker():
         asyncio.set_event_loop(loop)
         loop.run_until_complete(loop_func())
 
-    t_price = threading.Thread(target=_thread_target, args=(start_price_loop,), daemon=True)
-    t_scrape = threading.Thread(target=_thread_target, args=(start_scrape_loop,), daemon=True)
-    t_sentiment = threading.Thread(target=_thread_target, args=(start_sentiment_loop,), daemon=True)
-    t_fusion = threading.Thread(target=_thread_target, args=(start_signal_fusion_loop,), daemon=True)
-    t_fundamentals = threading.Thread(target=_thread_target, args=(start_fundamentals_loop,), daemon=True)
-    t_learning = threading.Thread(target=_thread_target, args=(start_performance_and_learning_loop,), daemon=True)
-    t_paper = threading.Thread(target=_thread_target, args=(start_paper_trading_loop,), daemon=True)
+    t_price       = threading.Thread(target=_thread_target, args=(start_price_loop,), daemon=True)
+    t_scrape      = threading.Thread(target=_thread_target, args=(start_scrape_loop,), daemon=True)
+    t_sentiment   = threading.Thread(target=_thread_target, args=(start_sentiment_loop,), daemon=True)
+    t_fusion      = threading.Thread(target=_thread_target, args=(start_signal_fusion_loop,), daemon=True)
+    t_fundamentals= threading.Thread(target=_thread_target, args=(start_fundamentals_loop,), daemon=True)
+    t_learning    = threading.Thread(target=_thread_target, args=(start_performance_and_learning_loop,), daemon=True)
+    t_paper       = threading.Thread(target=_thread_target, args=(start_paper_trading_loop,), daemon=True)
+    t_earnings    = threading.Thread(target=_thread_target, args=(start_earnings_calendar_loop,), daemon=True)
 
     t_price.start()
     t_scrape.start()
@@ -487,4 +541,10 @@ def start_background_worker():
     t_fundamentals.start()
     t_learning.start()
     t_paper.start()
-    print("[BG_WORKER] MIMIR background threads started (price=5m, scrape=5m, sentiment=15m, fusion=10m, fundamentals=12h, learning=1h, paper=3m).")
+    t_earnings.start()
+
+    print(
+        "[BG_WORKER] MIMIR background threads started:\n"
+        "  price=5m | scrape=5m (incl. EDGAR 8-K + surge detect) | sentiment=15m\n"
+        "  fusion=10m | fundamentals=12h | learning=1h | paper=3m | earnings-cal=24h"
+    )
