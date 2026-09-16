@@ -520,7 +520,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                 continue
 
             # Upgrade 2: High-Conviction Selection Floor (Filter out low-conviction noise)
-            if conviction < min_conviction and cat_type not in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER"]:
+            if conviction < min_conviction and cat_type not in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
                 print(f"[PAPER_TRADER] Suppressed alert #{alert_id} for {ticker}: Conviction {conviction:.2f} < {min_conviction:.2f} threshold.")
                 continue
 
@@ -565,7 +565,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             trade_tp_pct = max(trade_tp_pct, round(trade_sl_pct * 1.67, 2))
 
             # Dynamic Conviction Sizing (Kelly Criterion Scale)
-            if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER"]:
+            if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
                 multiplier = 3.0  # 3x Sizing for asymmetric home runs
             elif conviction >= 0.65:
                 multiplier = 1.5  # 1.5x Sizing for high conviction
