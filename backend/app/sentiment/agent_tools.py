@@ -2,25 +2,29 @@ import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from backend.app.database import get_db_connection_dict
+from backend.app.config import get_settings
 from backend.app.scrapers.web_search import perform_tiered_search
+
+settings = get_settings()
 
 def get_db_connection():
     return get_db_connection_dict()
 
 def query_internal_news(ticker: str, days_back: int = 7) -> str:
     """Query recent news and sentiment impacts for a specific ticker."""
-    query = """
+    ticker = (ticker or "").strip().upper()
+    query = f"""
         SELECT r.title, r.summary, i.sentiment_score, i.direction, r.published_ts
-        FROM yggdrasil.mimir_sentiment_impacts i
-        JOIN yggdrasil.mimir_raw_articles r ON i.article_id = r.id
-        WHERE i.ticker = %s AND r.published_ts >= NOW() - INTERVAL '%s days'
+        FROM {settings.mimir_schema}.mimir_sentiment_impacts i
+        JOIN {settings.mimir_schema}.mimir_raw_articles r ON i.article_id = r.id
+        WHERE i.ticker = %s AND r.published_ts >= NOW() - (%s || ' days')::INTERVAL
         ORDER BY r.published_ts DESC
         LIMIT 10
     """
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(query, (ticker, days_back))
+        cur.execute(query, (ticker, int(days_back)))
         results = cur.fetchall()
         cur.close()
         conn.close()
@@ -31,22 +35,58 @@ def query_internal_news(ticker: str, days_back: int = 7) -> str:
         return f"Error querying news: {e}"
 
 def query_asset_pricing(ticker: str, days_back: int = 7) -> str:
-    """Query recent pricing (daily close) for an asset."""
-    query = """
+    """Query recent pricing (hourly/daily close) for an asset with live fallback."""
+    ticker = (ticker or "").strip().upper()
+    query = f"""
         SELECT timestamp, close, volume
-        FROM yggdrasil.mimir_hourly_ohlcv
-        WHERE ticker = %s AND timestamp >= NOW() - INTERVAL '%s days'
+        FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+        WHERE ticker = %s AND timestamp >= NOW() - (%s || ' days')::INTERVAL
         ORDER BY timestamp DESC
     """
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(query, (ticker, days_back))
+        cur.execute(query, (ticker, int(days_back)))
         results = cur.fetchall()
         cur.close()
         conn.close()
+        
         if not results:
+            # Attempt live fetch & cache into SQL
+            try:
+                from backend.app.routers.prices import fetch_and_cache_ticker
+                fetch_and_cache_ticker(ticker)
+                # Re-query
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute(query, (ticker, int(days_back)))
+                results = cur.fetchall()
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
+
+        if not results:
+            # Fast info fallback
+            try:
+                from backend.app.routers.prices import _get_tls_session
+                import yfinance as yf
+                sess = _get_tls_session()
+                yt = yf.Ticker(ticker, session=sess)
+                info = yt.info or {}
+                price = info.get("currentPrice") or info.get("previousClose")
+                vol = info.get("volume", 0)
+                if price:
+                    return json.dumps([{
+                        "timestamp": datetime.now().isoformat(),
+                        "close": float(price),
+                        "volume": vol,
+                        "source": "live_quote"
+                    }])
+            except Exception:
+                pass
             return f"No recent pricing data found for {ticker}."
+
         return json.dumps([dict(r) for r in results], default=str)
     except Exception as e:
         return f"Error querying pricing: {e}"
@@ -68,7 +108,7 @@ def query_portfolio(ticker: str = None, days_back: int = None, limit: int = None
     
     query = f"""
         SELECT id, ticker, transaction_type, quantity, buy_price, order_date, brokerage_fee, regulatory_fee, other_fee
-        FROM yggdrasil.mimir_portfolio
+        FROM {settings.mimir_schema}.mimir_portfolio
         {where_str}
         ORDER BY order_date DESC
         {limit_clause}
@@ -82,7 +122,13 @@ def query_portfolio(ticker: str = None, days_back: int = None, limit: int = None
         conn.close()
         if not results:
             return "Portfolio is currently empty or no matching transactions found."
-        return json.dumps([dict(r) for r in results], default=str)
+        clean_results = []
+        for r in results:
+            d = dict(r)
+            if d.get("quantity") is not None:
+                d["quantity"] = round(float(d["quantity"]), 6)
+            clean_results.append(d)
+        return json.dumps(clean_results, default=str)
     except Exception as e:
         return f"Error querying portfolio: {e}"
 
@@ -106,7 +152,7 @@ def query_trade_signals(ticker: str = None, status: str = None, days_back: int =
     
     query = f"""
         SELECT id, ticker, signal_type, trigger_price, rsi_value, sentiment_score, support_level, resistance_level, reason, status, created_at, acted_at
-        FROM yggdrasil.mimir_trade_signals
+        FROM {settings.mimir_schema}.mimir_trade_signals
         {where_str}
         ORDER BY created_at DESC
         {limit_clause}
@@ -129,7 +175,7 @@ def query_backtest_history(limit: int = None) -> str:
     limit_clause = f"LIMIT {int(limit)}" if (limit is not None and int(limit) > 0) else ""
     query = f"""
         SELECT id, formula, universe, style, start_date, end_date, holding_period, slippage_bps, portfolio_size, markets, sharpe, annualized_return, max_drawdown, turnover, fitness, win_rate, ic, created_at
-        FROM yggdrasil.mimir_backtest_history
+        FROM {settings.mimir_schema}.mimir_backtest_history
         ORDER BY created_at DESC
         {limit_clause}
     """
@@ -148,10 +194,10 @@ def query_backtest_history(limit: int = None) -> str:
 
 def screen_assets(min_sentiment: float = 0.5, limit: int = 10) -> str:
     """Screen for assets with high recent sentiment scores."""
-    query = """
+    query = f"""
         SELECT ticker, AVG(sentiment_score) as avg_sentiment, COUNT(*) as article_count
-        FROM yggdrasil.mimir_sentiment_impacts i
-        JOIN yggdrasil.mimir_raw_articles r ON i.article_id = r.id
+        FROM {settings.mimir_schema}.mimir_sentiment_impacts i
+        JOIN {settings.mimir_schema}.mimir_raw_articles r ON i.article_id = r.id
         WHERE r.published_ts >= NOW() - INTERVAL '3 days'
         GROUP BY ticker
         HAVING AVG(sentiment_score) >= %s
@@ -408,10 +454,13 @@ from backend.app.utils.document_export import markdown_to_docx
 
 # Dispatcher
 def execute_oracle_tool(name: str, args: dict) -> str:
+    raw_tk = args.get("ticker")
+    tk = raw_tk.strip().upper() if raw_tk else "AAPL"
+
     if name == "query_internal_news":
-        return query_internal_news(args.get("ticker"), args.get("days_back", 7))
+        return query_internal_news(tk, args.get("days_back", 7))
     elif name == "query_asset_pricing":
-        return query_asset_pricing(args.get("ticker"), args.get("days_back", 7))
+        return query_asset_pricing(tk, args.get("days_back", 7))
     elif name == "query_portfolio":
         return query_portfolio(args.get("ticker"), args.get("days_back"), args.get("limit"))
     elif name == "query_trade_signals":
@@ -421,15 +470,15 @@ def execute_oracle_tool(name: str, args: dict) -> str:
     elif name == "screen_assets":
         return screen_assets(args.get("min_sentiment", 0.5), args.get("limit", 10))
     elif name == "search_web_tool":
-        return search_web_tool(args.get("query"))
+        return search_web_tool(args.get("query", ""))
     elif name == "run_dcf_valuation":
-        return json.dumps(financial_skills.run_dcf_valuation(args.get("ticker", "AAPL")), default=str)
+        return json.dumps(financial_skills.run_dcf_valuation(tk), default=str)
     elif name == "run_comps_analysis":
-        return json.dumps(financial_skills.run_comps_analysis(args.get("ticker", "AAPL")), default=str)
+        return json.dumps(financial_skills.run_comps_analysis(tk), default=str)
     elif name == "run_lbo_analysis":
-        return json.dumps(financial_skills.run_lbo_analysis(args.get("ticker", "AAPL")), default=str)
+        return json.dumps(financial_skills.run_lbo_analysis(tk), default=str)
     elif name == "review_earnings_report":
-        return json.dumps(financial_skills.review_earnings(args.get("ticker", "AAPL")), default=str)
+        return json.dumps(financial_skills.review_earnings(tk), default=str)
     elif name == "reconcile_portfolio_audit":
         return json.dumps(financial_skills.reconcile_portfolio_audit(), default=str)
     elif name == "audit_operational_costs":
@@ -437,7 +486,7 @@ def execute_oracle_tool(name: str, args: dict) -> str:
     elif name == "screen_capacity_constrained_assets":
         return json.dumps(financial_skills.screen_capacity_constrained_assets(), default=str)
     elif name == "generate_investment_pitch":
-        res = financial_skills.generate_pitch_pack(args.get("ticker", "AAPL"))
+        res = financial_skills.generate_pitch_pack(tk)
         return res.get("investment_memo_markdown", json.dumps(res))
     elif name == "create_docx_report":
         buf = markdown_to_docx(args.get("markdown_content", ""), title=args.get("title", "Research Report"))

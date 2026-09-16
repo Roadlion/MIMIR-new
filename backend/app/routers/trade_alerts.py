@@ -6,6 +6,8 @@ from datetime import datetime, timezone, timedelta
 
 from ..database import get_db_connection_dict, get_db_connection
 from ..config import get_settings
+from ..analytics.mt5_bridge import send_market_order, MIMIR_MAGIC
+from ..analytics.paper_trader import get_paper_config
 
 router = APIRouter()
 settings = get_settings()
@@ -69,6 +71,64 @@ def get_pending_alerts():
         cur.close()
         conn.close()
 
+@router.get("/alerts/sector-rotation")
+@router.get("/sector-rotation")
+def get_sector_rotation():
+    """
+    Returns the live Sector Rotation Matrix across all 11 SPDR sectors,
+    quantifying 5-day and 20-day Relative Strength vs SPY, Chaikin Money Flow (CMF),
+    and DeepSeek news narrative velocity.
+    """
+    try:
+        from ..services.sector_rotation_service import get_sector_rotation_matrix
+        matrix = get_sector_rotation_matrix()
+    except Exception as e:
+        return {"status": "error", "message": str(e), "data": {"sectors": [], "spy": {}}}
+
+@router.get("/alerts/war-rig/evaluate/{ticker}")
+@router.get("/war-rig/evaluate/{ticker}")
+def evaluate_war_rig_ticker(ticker: str):
+    """
+    Evaluates a specific equity ticker through the unified War Rig transmission:
+    - Cylinder 1: Macro & Sector Inflows (Max 25 pts)
+    - Cylinder 2: Catalyst V8 Twin-Turbo (Pre-Earnings + Supply Chain Spillovers) (Max 50 pts)
+    - Cylinder 3: Microstructure & Asymmetry Gate (Max 25 pts + R/R >= 2.5:1 Gate)
+    """
+    try:
+        from ..analytics.war_rig_engine import WarRigEngine
+        war_rig = WarRigEngine()
+        sig = war_rig.evaluate_war_rig_candidate(ticker.strip().upper())
+        if sig:
+            return {"status": "success", "converged": True, "signal": sig}
+        else:
+            # Provide diagnostic cylinder breakdown even if it didn't pass 75% gate
+            c1_score, c1_details = war_rig.evaluate_cylinder_1_macro_sector(ticker.strip().upper())
+            c2_score, c2_details = war_rig.evaluate_cylinder_2_catalysts(ticker.strip().upper())
+            return {
+                "status": "success",
+                "converged": False,
+                "reason": "Did not meet >=75% conviction threshold or failed asymmetry gate.",
+                "cylinder_1_macro_sector": {"score": c1_score, "details": c1_details},
+                "cylinder_2_catalysts": {"score": c2_score, "details": c2_details}
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"War Rig evaluation error: {str(e)}")
+
+@router.post("/alerts/war-rig/scan")
+@router.post("/war-rig/scan")
+def trigger_war_rig_scan(top_n: int = 10):
+    """
+    Triggers the single-shaft War Rig Alpha Scan across the MIMIR universe.
+    Only signals that pass all 3 cylinders with >= 75% conviction and >= 2.5:1 R/R
+    are inserted into mimir_trade_signals.
+    """
+    try:
+        from ..analytics.war_rig_engine import run_war_rig_scan
+        signals = run_war_rig_scan(top_n=top_n)
+        return {"status": "success", "count": len(signals), "signals": signals}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"War Rig scan error: {str(e)}")
+
 @router.post("/alerts/{alert_id}/approve", response_model=TradeSignalResponse)
 def approve_alert(alert_id: int, payload: ActionPayload):
     conn = get_db_connection_dict()
@@ -84,49 +144,50 @@ def approve_alert(alert_id: int, payload: ActionPayload):
             raise HTTPException(status_code=404, detail="Pending trade signal not found.")
             
         ticker = alert["ticker"]
-        signal_type = alert["signal_type"]
+        signal_type = alert["signal_type"].upper()
         price = float(alert["trigger_price"])
         
-        # 2. If it's a SELL, check quantity in paper portfolio
-        if signal_type == "SELL":
-            # Check current paper position size
-            cur.execute(f"""
-                SELECT transaction_type, quantity
-                FROM {settings.mimir_schema}.mimir_paper_portfolio
-                WHERE ticker = %s
-            """, (ticker,))
-            existing_txs = cur.fetchall()
-            current_qty = 0.0
-            for etx in existing_txs:
-                etype = etx["transaction_type"].upper()
-                eqty = float(etx["quantity"])
-                if etype == "BUY":
-                    current_qty += eqty
-                elif etype == "SELL":
-                    current_qty -= eqty
-            
-            if payload.quantity > current_qty:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Cannot execute SELL for {payload.quantity} shares of {ticker}. You only own {current_qty} shares in paper portfolio."
-                )
-                
-        # 3. Create the Paper Portfolio transaction
+        # 2. Retrieve paper trading config for SL / TP
+        cfg = get_paper_config()
+        sl_pct = float(cfg.get("stop_loss_pct", 3.0))
+        tp_pct = float(cfg.get("take_profit_pct", 6.0))
+        magic = int(cfg.get("mt5_magic", MIMIR_MAGIC))
+        
+        # 3. Execute order directly in MT5
+        order_res = send_market_order(
+            ticker=ticker,
+            action=signal_type,
+            fixed_quantity=payload.quantity,
+            sl_pct=sl_pct,
+            tp_pct=tp_pct,
+            comment=f"MIMIR:{alert_id}",
+            magic=magic
+        )
+
+        if not order_res.get("success"):
+            err_msg = order_res.get("message", "MT5 order placement failed.")
+            raise HTTPException(status_code=400, detail=f"MT5 Order Execution Failed: {err_msg}")
+
+        mt5_ticket = order_res.get("ticket") or order_res.get("order_id")
+        exec_price = float(order_res.get("price", price))
+        exec_vol = float(order_res.get("volume", payload.quantity))
+
+        # 4. Create local audit records
         gmt_plus_7 = timezone(timedelta(hours=7))
         now_local = datetime.now(gmt_plus_7)
         
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_paper_portfolio (ticker, order_date, buy_price, quantity, transaction_type)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (ticker, now_local, price, payload.quantity, signal_type))
+            INSERT INTO {settings.mimir_schema}.mimir_paper_portfolio (ticker, order_date, buy_price, quantity, transaction_type, mt5_ticket)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (ticker, now_local, exec_price, exec_vol, signal_type, mt5_ticket))
         
         cur.execute(f"""
             INSERT INTO {settings.mimir_schema}.mimir_paper_trade_log
-            (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s)
-        """, (alert_id, ticker, signal_type, price, payload.quantity, now_local, alert.get("reason")))
+            (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes, mt5_ticket)
+            VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s, %s)
+        """, (alert_id, ticker, signal_type, exec_price, exec_vol, now_local, alert.get("reason"), mt5_ticket))
         
-        # 4. Update the signal status
+        # 5. Update the signal status
         cur.execute(f"""
             UPDATE {settings.mimir_schema}.mimir_trade_signals
             SET status = 'APPROVED', acted_at = %s
@@ -270,65 +331,11 @@ def bulk_dismiss_low_conviction_alerts(payload: BulkDismissPayload):
         conn.close()
 
 def evaluate_tick_technicals(price_cache):
-    """Event-driven technical analysis evaluation over the live 1-min in-memory cache."""
-    import pandas as pd
-    from ..analytics.technical_analysis import analyze_technical_indicators
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        signals_generated = 0
-        for ticker, ticks in price_cache.items():
-            if len(ticks) < 50:
-                continue
-                
-            df = pd.DataFrame(list(ticks))
-            current_price = df.iloc[-1]['close']
-            
-            techs = analyze_technical_indicators(df)
-            
-            resistance = techs["resistance"]
-            support = techs["support"]
-            rsi = round(techs["rsi"], 2)
-            
-            signal_type = None
-            reason = ""
-            
-            # Simple 1-min breakout/reversion logic (higher conviction bounds)
-            if current_price >= resistance and rsi > 65:
-                signal_type = "BUY"
-                reason = f"Strong Resistance breakout ({resistance}) with bullish RSI ({rsi})"
-            elif rsi <= 20:
-                signal_type = "BUY"
-                reason = f"Extreme oversold reversion (RSI {rsi})"
-            elif current_price <= support and rsi < 35:
-                signal_type = "SELL"
-                reason = f"Support breakdown ({support}) with bearish RSI ({rsi})"
-            elif rsi >= 80:
-                signal_type = "SELL"
-                reason = f"Extreme overbought reversion (RSI {rsi})"
-                
-            if signal_type:
-                # Prevent spam: limit 1 alert per ticker every 60 minutes
-                cur.execute(f"""
-                    SELECT id FROM {settings.mimir_schema}.mimir_trade_signals 
-                    WHERE ticker = %s 
-                    AND created_at >= NOW() - INTERVAL '60 minutes'
-                """, (ticker,))
-                
-                if not cur.fetchone():
-                    cur.execute(f"""
-                        INSERT INTO {settings.mimir_schema}.mimir_trade_signals
-                        (ticker, signal_type, trigger_price, rsi_value, support_level, resistance_level, reason, status, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW())
-                    """, (ticker, signal_type, float(current_price), float(rsi), float(support), float(resistance), reason))
-                    signals_generated += 1
-                    
-        conn.commit()
-        if signals_generated > 0:
-            print(f"[TECHNICAL ALERTS] Generated {signals_generated} real-time technical alerts.")
-    except Exception as e:
-        conn.rollback()
-        print(f"[TECHNICAL ALERTS ERROR] {e}")
-    finally:
-        cur.close()
-        conn.close()
+    """
+    [PERMANENTLY DEPRECATED]
+    Standalone 1-minute RSI and Breakout signals have been deactivated per institutional mandate.
+    Empirical audit proved standalone 1-min technical breakouts/reversions produced knife-catching 
+    losses and low win rates. Microstructure is now strictly utilized as an invalidation gate 
+    inside the unified War Rig Engine (war_rig_engine.py), never as an unvetted standalone emitter.
+    """
+    pass

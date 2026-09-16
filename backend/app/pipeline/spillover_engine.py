@@ -4,6 +4,7 @@ Propagates sentiment from direct article impacts to related assets
 via the RelationshipGraph. Runs inline in sentiment_processor.py.
 """
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Tuple, Optional
 from ..sentiment.relationship_graph import get_relationship_graph
 from ..sentiment.asset_mapper import resolve_ticker, resolve_country_code
@@ -14,12 +15,13 @@ logger = logging.getLogger(__name__)
 # own decay_factor (multiplied). The relationship decay is the max allowed;
 # this is an additional safety cap.
 TYPE_DECAY_CAP = {
+    "supply_chain": 0.60,
     "sector_to_constituent": 0.50,
     "constituent_to_sector": 0.30,
     "macro_to_asset": 0.25,
     "central_bank_to_asset": 0.35,
     "thematic_to_asset": 0.20,
-    "default": 0.15,
+    "default": 0.35,
 }
 
 # Minimum absolute score to create a spillover impact
@@ -190,8 +192,8 @@ class SpilloverEngine:
     def _resolve_cap(self, impact: Dict) -> float:
         cat = impact.get("asset_category", "")
         sub = impact.get("sub_category", "")
-        if cat == "SECTOR" or cat == "EQUITY":
-            return TYPE_DECAY_CAP["sector_to_constituent"]
+        if cat in ("SECTOR", "EQUITY", "CORPORATE"):
+            return TYPE_DECAY_CAP["supply_chain"]
         elif cat == "ECONOMY":
             return TYPE_DECAY_CAP["macro_to_asset"]
         elif cat == "POLICY" and sub == "CENTRAL_BANK":

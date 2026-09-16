@@ -131,6 +131,22 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
         conn.commit()
         inserted = cur.rowcount
 
+        # --- Compute & Insert Supply Chain Spillover Impacts ---
+        spillovers = []
+        try:
+            spillover_engine = _get_spillover_engine()
+            spillover_tuples = spillover_engine.run(
+                article_id=article_id,
+                direct_impacts=assets,
+                published_ts=now_ts
+            )
+            if spillover_tuples:
+                execute_values(cur, sql, spillover_tuples)
+                conn.commit()
+                spillovers = spillover_tuples
+        except Exception as sp_err:
+            print(f"  [Thread] [Warning] Spillover engine error for article {article_id}: {sp_err}")
+
         # --- Trigger Real-Time Catalyst Alert Evaluation & LLM Supply Chain Discovery ---
         for imp in impacts:
             score = imp[6]
@@ -156,11 +172,38 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 except Exception as cat_err:
                     print(f"  [Thread] [Warning] Catalyst alert trigger error for {ticker_val}: {cat_err}")
 
-                # 2. LLM supply chain discovery for high-impact headlines (|score| >= 0.7)
-                if abs(score) >= 0.7:
-                    try:
-                        from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
-                        discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+        # --- Trigger Supply Chain Spillover Catalyst Alerts ---
+        for sp in spillovers:
+            sp_score = sp[6]
+            sp_conf = sp[7]
+            sp_reason = sp[10]
+            sp_ticker = sp[11]
+            sp_source = sp[15]
+            if sp_ticker and abs(sp_score) >= 0.40 and sp_conf >= 0.60:
+                try:
+                    from backend.app.analytics.catalyst_engine import eval_realtime_article_catalyst
+                    eval_realtime_article_catalyst(
+                        ticker=sp_ticker,
+                        sentiment_score=sp_score,
+                        confidence=sp_conf,
+                        headline=f"[Supply Chain Spillover from {sp_source}] {title}",
+                        reasoning=sp_reason,
+                        policy_signal=None,
+                        is_spillover=True,
+                        spillover_source_asset=sp_source,
+                        conn=conn
+                    )
+                except Exception as cat_err:
+                    print(f"  [Thread] [Warning] Spillover catalyst alert error for {sp_ticker}: {cat_err}")
+
+        # --- LLM supply chain discovery for high-impact headlines (|score| >= 0.7) ---
+        for imp in impacts:
+            score = imp[6]
+            ticker_val = imp[11]
+            if ticker_val and abs(score) >= 0.7:
+                try:
+                    from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                    discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
                     except Exception as llm_err:
                         print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
 
@@ -362,6 +405,23 @@ def process_article_batch(batch_articles: List[tuple]) -> int:
             execute_values(cur, sql, impacts)
             inserted = cur.rowcount
             total_impacts_inserted += inserted
+
+            # --- Compute & Insert Supply Chain Spillover Impacts (Batch path) ---
+            spillovers = []
+            try:
+                spillover_engine = _get_spillover_engine()
+                spillover_tuples = spillover_engine.run(
+                    article_id=aid,
+                    direct_impacts=assets,
+                    published_ts=now_ts
+                )
+                if spillover_tuples:
+                    execute_values(cur, sql, spillover_tuples)
+                    conn.commit()
+                    spillovers = spillover_tuples
+                    total_impacts_inserted += len(spillover_tuples)
+            except Exception as sp_err:
+                print(f"  [Batch] [Warning] Spillover engine error for article {aid}: {sp_err}")
 
             # Trigger real-time catalyst alerts + LLM supply chain discovery (batch path)
             for imp in impacts:

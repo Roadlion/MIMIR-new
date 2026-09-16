@@ -58,12 +58,10 @@ def process_new_ticks():
         except Exception as e:
             print(f"[LIVE DAEMON] Error triggering Guerilla Hybrid: {e}")
             
-        # 2. Trigger Event-Driven Technical Alerts
-        try:
-            from backend.app.routers.trade_alerts import evaluate_tick_technicals
-            evaluate_tick_technicals(price_cache)
-        except Exception as e:
-            print(f"[LIVE DAEMON] Error triggering Technical Alerts: {e}")
+        # 2. Event-Driven Technical Alerts: DEPRECATED
+        # Standalone 1-min technical breakouts have been eliminated to prevent knife-catching.
+        # Technicals now act strictly as microstructure invalidation gates within WarRigEngine.
+        pass
             
         # 3. Trigger Event-Driven Sentiment Validation
         try:

@@ -215,3 +215,60 @@ def is_buy_blocked_by_macro(ticker_sector: Optional[str], conn=None) -> tuple[bo
         return True, reason
 
     return False, ""
+
+
+def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
+    """
+    Checks if the broader US equity market is in a healthy, bullish/neutral regime:
+    1. SPY is trading above its 50-day Simple Moving Average (SMA_50).
+    2. ^VIX is at or below 25.0 (absence of high-volatility panic).
+    Returns (is_bullish: bool, reason: str).
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    cur = conn.cursor()
+    try:
+        # 1. Fetch SPY prices for 50-day SMA
+        cur.execute(f"""
+            SELECT close
+            FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+            WHERE ticker = 'SPY'
+            ORDER BY date DESC
+            LIMIT 50
+        """)
+        spy_rows = cur.fetchall()
+
+        if len(spy_rows) >= 20:
+            spy_closes = [float(r[0]) for r in spy_rows]
+            latest_spy = spy_closes[0]
+            sma_50 = sum(spy_closes) / len(spy_closes)
+
+            if latest_spy < sma_50:
+                return False, f"Market regime defensive: SPY (${latest_spy:.2f}) < 50-day SMA (${sma_50:.2f}). Swing longs paused."
+
+        # 2. Fetch latest ^VIX level
+        cur.execute(f"""
+            SELECT close
+            FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+            WHERE ticker IN ('^VIX', 'VIX')
+            ORDER BY date DESC
+            LIMIT 1
+        """)
+        vix_row = cur.fetchone()
+        if vix_row and vix_row[0] is not None:
+            latest_vix = float(vix_row[0])
+            if latest_vix > 25.0:
+                return False, f"Market regime elevated risk: VIX at {latest_vix:.1f} > 25.0 threshold. Swing longs paused."
+
+        return True, "Market regime healthy (SPY >= 50-SMA and VIX <= 25.0)."
+    except Exception as e:
+        logger.warning(f"[MACRO_TRACKER] is_market_regime_bullish check error: {e}")
+        return True, "Market check skipped on exception."
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+

@@ -1,10 +1,13 @@
 # backend/app/routers/portfolio.py
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Response
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from datetime import datetime, timezone
+from decimal import Decimal
 import requests
 import json
+import csv
+import io
 import re
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
@@ -73,46 +76,64 @@ class PortfolioSummary(BaseModel):
     grand_total_pl: float
     total_api_costs: float = 0.0
 
-# Helper to fetch current prices using yfinance
+# Helper to fetch current prices quickly from database with fallback
 def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
     if not tickers:
         return {}
     prices = {}
-    
-    from curl_cffi.requests import Session
-    session = Session(impersonate="chrome")
-    session.verify = False
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9"
-    })
+    clean_map = {t: t.strip().lstrip('$').upper() for t in tickers}
+    unique_symbols = list(set(clean_map.values()))
 
-    def fetch_single(t_symbol):
+    # 1. Fast batch lookup in mimir_hourly_ohlcv (sub-second)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT DISTINCT ON (ticker) ticker, close
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker = ANY(%s)
+            ORDER BY ticker, timestamp DESC
+        """, (unique_symbols,))
+        for row in cur.fetchall():
+            sym = row[0].upper()
+            prices[sym] = float(row[1]) if row[1] is not None else 0.0
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[PORTFOLIO] DB price lookup error: {e}")
+
+    # 2. Check MT5 for any missing symbols
+    missing = [sym for sym in unique_symbols if sym not in prices or prices[sym] <= 0]
+    if missing:
         try:
-            clean_symbol = t_symbol.strip().lstrip('$').upper()
-            t = yf.Ticker(clean_symbol, session=session)
-            # Try history first, it is most reliable under anti-bot protection
-            hist = t.history(period="1d")
-            if not hist.empty:
-                return t_symbol, float(hist["Close"].iloc[-1])
-            # Try fast_info fallback
-            val = t.fast_info.get("lastPrice")
-            if val is not None and not isinstance(val, str):
-                return t_symbol, float(val)
+            import MetaTrader5 as mt5
+            from ..analytics.mt5_bridge import resolve_mt5_symbol
+            for sym in missing:
+                mt5_sym = resolve_mt5_symbol(sym)
+                if mt5_sym:
+                    tick = mt5.symbol_info_tick(mt5_sym)
+                    if tick:
+                        price = float(tick.last if tick.last > 0 else (tick.bid if tick.bid > 0 else tick.ask))
+                        if price > 0:
+                            prices[sym] = price
         except Exception:
             pass
-        return t_symbol, None
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(fetch_single, tickers)
-        for t_symbol, price in results:
-            if price is not None:
-                prices[t_symbol] = price
+    # 3. For any remaining missing, fallback to fast yfinance history (1 thread per call, safe)
+    still_missing = [sym for sym in unique_symbols if sym not in prices or prices[sym] <= 0]
+    for sym in still_missing:
+        try:
+            t = yf.Ticker(sym)
+            hist = t.history(period="1d")
+            if not hist.empty:
+                prices[sym] = float(hist["Close"].iloc[-1])
             else:
-                prices[t_symbol] = 0.0 # Default fallback
-                
-    return prices
+                prices[sym] = 0.0
+        except Exception:
+            prices[sym] = 0.0
+
+    # Map back to original tickers requested
+    return {orig: prices.get(clean, 0.0) for orig, clean in clean_map.items()}
 
 @router.get("/portfolio/tickers")
 def get_portfolio_tickers(current_user: Optional[dict] = Depends(get_optional_current_user)):
@@ -283,9 +304,13 @@ def get_portfolio(current_user: Optional[dict] = Depends(get_optional_current_us
                 dividends_received += div_net
 
             qty_sum = round(qty_sum, 8)
-            if qty_sum <= 0:
+            if qty_sum <= 0.00001:
                 qty_sum = 0.0
                 avg_buy = 0.0
+
+        if qty_sum <= 0.00001:
+            qty_sum = 0.0
+            avg_buy = 0.0
 
         curr_price = current_prices.get(ticker, 0.0)
         
@@ -297,8 +322,8 @@ def get_portfolio(current_user: Optional[dict] = Depends(get_optional_current_us
             elif txs_sorted:
                 curr_price = float(txs_sorted[-1]["buy_price"])
             
-        cost_sum = qty_sum * avg_buy
-        curr_val = qty_sum * curr_price
+        cost_sum = qty_sum * avg_buy if qty_sum > 0 else 0.0
+        curr_val = qty_sum * curr_price if qty_sum > 0 else 0.0
         pl = curr_val - cost_sum
         pl_pct = (pl / cost_sum * 100) if cost_sum > 0 else 0.0
         
@@ -373,17 +398,25 @@ def add_transaction(tx: TransactionCreate, current_user: Optional[dict] = Depend
                 WHERE user_id = %s AND ticker = %s
             """, (user_id, tx.ticker.upper().strip()))
             existing_txs = cur.fetchall()
-            current_qty = 0.0
+            current_qty = Decimal("0")
             for etx in existing_txs:
-                etype = etx["transaction_type"].upper()
-                eqty = float(etx["quantity"])
+                etype = (etx["transaction_type"] or "BUY").upper()
+                eqty = Decimal(str(etx["quantity"])) if etx.get("quantity") is not None else Decimal("0")
                 if etype == "BUY":
                     current_qty += eqty
                 elif etype == "SELL":
                     current_qty -= eqty
             
-            if tx.quantity > current_qty:
-                raise HTTPException(status_code=400, detail=f"Cannot sell {tx.quantity} shares of {tx.ticker}. You only own {current_qty} shares.")
+            sell_qty = Decimal(str(tx.quantity))
+            # If sell_qty is within 0.00001 of current_qty (e.g. user selling full position with float rounding),
+            # snap sell_qty exactly to current_qty to eliminate floating-point dust leftovers
+            if abs(sell_qty - current_qty) < Decimal("0.00001"):
+                tx.quantity = float(current_qty)
+            elif sell_qty > current_qty + Decimal("0.00001"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot sell {tx.quantity} shares of {tx.ticker}. You only own {float(current_qty)} shares."
+                )
         finally:
             cur.close()
             conn.close()
@@ -395,7 +428,7 @@ def add_transaction(tx: TransactionCreate, current_user: Optional[dict] = Depend
             INSERT INTO {settings.mimir_schema}.mimir_portfolio (user_id, ticker, order_date, buy_price, quantity, transaction_type, brokerage_fee, regulatory_fee, other_fee)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at, brokerage_fee, regulatory_fee, other_fee
-        """, (user_id, tx.ticker.upper().strip(), localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(), tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0))
+        """, (user_id, tx.ticker.upper().strip(), localized_date, tx.buy_price, round(tx.quantity, 8), tx.transaction_type.upper(), tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0))
         new_tx = cur.fetchone()
         conn.commit()
         return new_tx
@@ -447,34 +480,34 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate, current_user: Optional[d
             all_proposed = old_ticker_txs + [proposed_tx]
             all_proposed_sorted = sorted(all_proposed, key=lambda x: x["order_date"])
             
-            qty_running = 0.0
+            qty_running = Decimal("0")
             for item in all_proposed_sorted:
-                itype = item["transaction_type"].upper()
-                iqty = float(item["quantity"])
+                itype = (item.get("transaction_type") or "BUY").upper()
+                iqty = Decimal(str(item["quantity"]))
                 if itype == "BUY":
                     qty_running += iqty
                 elif itype == "SELL":
                     qty_running -= iqty
-                if qty_running < 0:
+                if qty_running < -Decimal("0.00001"):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Proposed changes would result in a negative holding quantity ({qty_running}) for {old_ticker} at {item['order_date']}."
+                        detail=f"Proposed changes would result in a negative holding quantity ({float(qty_running)}) for {old_ticker} at {item['order_date']}."
                     )
         else:
             # Validate old ticker's inventory (excluding edited transaction)
             old_sorted = sorted(old_ticker_txs, key=lambda x: x["order_date"])
-            qty_running_old = 0.0
+            qty_running_old = Decimal("0")
             for item in old_sorted:
-                itype = item["transaction_type"].upper()
-                iqty = float(item["quantity"])
+                itype = (item.get("transaction_type") or "BUY").upper()
+                iqty = Decimal(str(item["quantity"]))
                 if itype == "BUY":
                     qty_running_old += iqty
                 elif itype == "SELL":
                     qty_running_old -= iqty
-                if qty_running_old < 0:
+                if qty_running_old < -Decimal("0.00001"):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Removing this transaction would result in negative holding quantity ({qty_running_old}) for {old_ticker} at {item['order_date']}."
+                        detail=f"Removing this transaction would result in negative holding quantity ({float(qty_running_old)}) for {old_ticker} at {item['order_date']}."
                     )
 
             # Validate new ticker's inventory (including proposed transaction)
@@ -492,18 +525,18 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate, current_user: Optional[d
             }
             all_proposed_new = new_ticker_txs + [proposed_tx]
             new_sorted = sorted(all_proposed_new, key=lambda x: x["order_date"])
-            qty_running_new = 0.0
+            qty_running_new = Decimal("0")
             for item in new_sorted:
-                itype = item["transaction_type"].upper()
-                iqty = float(item["quantity"])
+                itype = (item.get("transaction_type") or "BUY").upper()
+                iqty = Decimal(str(item["quantity"]))
                 if itype == "BUY":
                     qty_running_new += iqty
                 elif itype == "SELL":
                     qty_running_new -= iqty
-                if qty_running_new < 0:
+                if qty_running_new < -Decimal("0.00001"):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Proposed changes would result in a negative holding quantity ({qty_running_new}) for {new_ticker} at {item['order_date']}."
+                        detail=f"Proposed changes would result in a negative holding quantity ({float(qty_running_new)}) for {new_ticker} at {item['order_date']}."
                     )
 
         # 3. Perform the update
@@ -513,7 +546,7 @@ def edit_transaction(tx_id: int, tx: TransactionUpdate, current_user: Optional[d
                 brokerage_fee = %s, regulatory_fee = %s, other_fee = %s
             WHERE id = %s AND user_id = %s
             RETURNING id, ticker, order_date, buy_price, quantity, transaction_type, created_at, brokerage_fee, regulatory_fee, other_fee
-        """, (new_ticker, localized_date, tx.buy_price, tx.quantity, tx.transaction_type.upper(),
+        """, (new_ticker, localized_date, tx.buy_price, round(tx.quantity, 8), tx.transaction_type.upper(),
               tx.brokerage_fee or 0.0, tx.regulatory_fee or 0.0, tx.other_fee or 0.0, tx_id, user_id))
         updated_tx = cur.fetchone()
         conn.commit()
@@ -548,6 +581,176 @@ def delete_transaction(tx_id: int, current_user: Optional[dict] = Depends(get_op
     finally:
         cur.close()
         conn.close()
+
+@router.get("/portfolio/export")
+def export_portfolio_transactions(
+    format: str = Query("csv", description="Export format: 'csv' or 'json'"),
+    transaction_type: Optional[str] = Query(None, description="Filter by type: BUY, SELL, DIVIDEND, or ALL"),
+    ticker: Optional[str] = Query(None, description="Filter by ticker symbol"),
+    start_date: Optional[str] = Query(None, description="Filter orders from date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Filter orders to date (YYYY-MM-DD)"),
+    current_user: Optional[dict] = Depends(get_optional_current_user)
+):
+    """Exports portfolio buying and selling transaction history as a downloadable CSV or JSON file."""
+    user_id = current_user["id"] if current_user else 1
+
+    format_clean = format.lower().strip()
+    if format_clean not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="Invalid format. Supported formats are 'csv' and 'json'.")
+
+    query_parts = [
+        f"""SELECT id, ticker, order_date, buy_price, quantity, transaction_type,
+                  brokerage_fee, regulatory_fee, other_fee, source, created_at
+           FROM {settings.mimir_schema}.mimir_portfolio
+           WHERE user_id = %s AND (source IS NULL OR source = 'MANUAL' OR source = '')"""
+    ]
+    params = [user_id]
+
+    if ticker:
+        clean_ticker = ticker.strip().upper().lstrip('$')
+        query_parts.append("AND UPPER(ticker) = %s")
+        params.append(clean_ticker)
+
+    if transaction_type and transaction_type.strip().upper() != "ALL":
+        query_parts.append("AND UPPER(transaction_type) = %s")
+        params.append(transaction_type.strip().upper())
+
+    if start_date:
+        query_parts.append("AND order_date >= %s")
+        params.append(f"{start_date.strip()} 00:00:00")
+
+    if end_date:
+        query_parts.append("AND order_date <= %s")
+        params.append(f"{end_date.strip()} 23:59:59")
+
+    query_parts.append("ORDER BY order_date ASC, id ASC")
+    full_sql = " ".join(query_parts)
+
+    conn = get_db_connection_dict()
+    cur = conn.cursor()
+    try:
+        cur.execute(full_sql, tuple(params))
+        rows = cur.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+    from datetime import timezone, timedelta
+    gmt_plus_7 = timezone(timedelta(hours=7))
+
+    records = []
+    for r in rows:
+        order_dt = r.get("order_date")
+        if order_dt:
+            if order_dt.tzinfo is None:
+                order_dt_str = order_dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                order_dt_str = order_dt.astimezone(gmt_plus_7).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            order_dt_str = ""
+
+        created_dt = r.get("created_at")
+        if created_dt:
+            if created_dt.tzinfo is None:
+                created_dt_str = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                created_dt_str = created_dt.astimezone(gmt_plus_7).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            created_dt_str = ""
+
+        qty = float(r["quantity"]) if r.get("quantity") is not None else 0.0
+        price = float(r["buy_price"]) if r.get("buy_price") is not None else 0.0
+        b_fee = float(r.get("brokerage_fee") or 0.0)
+        r_fee = float(r.get("regulatory_fee") or 0.0)
+        o_fee = float(r.get("other_fee") or 0.0)
+        total_fees = round(b_fee + r_fee + o_fee, 4)
+        gross_total = round(qty * price, 4)
+        ttype = (r.get("transaction_type") or "BUY").upper()
+
+        if ttype == "BUY":
+            net_total = round(gross_total + total_fees, 4)
+        elif ttype in ("SELL", "DIVIDEND"):
+            net_total = round(gross_total - total_fees, 4)
+        else:
+            net_total = round(gross_total, 4)
+
+        records.append({
+            "id": r["id"],
+            "order_date": order_dt_str,
+            "ticker": r["ticker"].upper(),
+            "transaction_type": ttype,
+            "quantity": qty,
+            "price": price,
+            "gross_total": gross_total,
+            "brokerage_fee": b_fee,
+            "regulatory_fee": r_fee,
+            "other_fee": o_fee,
+            "total_fees": total_fees,
+            "net_total": net_total,
+            "source": r.get("source") or "MANUAL",
+            "created_at": created_dt_str
+        })
+
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if format_clean == "json":
+        json_content = json.dumps(records, indent=2)
+        filename = f"mimir_portfolio_history_{now_str}.json"
+        return Response(
+            content=json_content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    # Build CSV with UTF-8 BOM for Microsoft Excel compatibility
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow([
+        "Transaction ID",
+        "Order Date (GMT+7)",
+        "Ticker",
+        "Action",
+        "Quantity",
+        "Price ($)",
+        "Gross Total ($)",
+        "Brokerage Fee ($)",
+        "Regulatory Fee ($)",
+        "Other Fee ($)",
+        "Total Fees ($)",
+        "Net Total ($)",
+        "Source",
+        "Created At (GMT+7)"
+    ])
+    for rec in records:
+        writer.writerow([
+            rec["id"],
+            rec["order_date"],
+            rec["ticker"],
+            rec["transaction_type"],
+            rec["quantity"],
+            rec["price"],
+            rec["gross_total"],
+            rec["brokerage_fee"],
+            rec["regulatory_fee"],
+            rec["other_fee"],
+            rec["total_fees"],
+            rec["net_total"],
+            rec["source"],
+            rec["created_at"]
+        ])
+
+    csv_content = output.getvalue()
+    filename = f"mimir_portfolio_history_{now_str}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
 
 def fetch_online_stock_data(tickers: List[str]) -> Dict[str, List[str]]:
     if not tickers:
@@ -793,10 +996,10 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
                 qty_sum -= tx_qty
             
             qty_sum = round(qty_sum, 8)
-            if qty_sum <= 0:
+            if qty_sum <= 0.00001:
                 qty_sum = 0.0
                 avg_buy = 0.0
-        if qty_sum > 0:
+        if qty_sum > 0.00001:
             portfolio_list.append({
                 "ticker": ticker,
                 "quantity": qty_sum,
@@ -1522,10 +1725,10 @@ def evaluate_tick_stoploss(price_cache):
         # 1. Fetch current open positions from the shadow portfolio
         cur.execute(f"""
             SELECT ticker, 
-                   SUM(CASE WHEN transaction_type = 'BUY' THEN quantity ELSE -quantity END) as net_qty
+                   SUM(CASE WHEN transaction_type = 'BUY' THEN quantity WHEN transaction_type = 'SELL' THEN -quantity ELSE 0 END) as net_qty
             FROM {settings.mimir_schema}.mimir_portfolio
             GROUP BY ticker
-            HAVING SUM(CASE WHEN transaction_type = 'BUY' THEN quantity ELSE -quantity END) > 0
+            HAVING SUM(CASE WHEN transaction_type = 'BUY' THEN quantity WHEN transaction_type = 'SELL' THEN -quantity ELSE 0 END) > 0.00001
         """)
         open_positions = cur.fetchall()
         

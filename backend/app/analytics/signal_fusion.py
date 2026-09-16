@@ -827,11 +827,18 @@ def scan_ticker_for_signals(
             reason.append(f"XGBoost SELL prediction prob ({prob_sell * 100.0:.1f}%) >= threshold ({target_prob_sell * 100.0:.1f}%) in '{regime}' regime. [Params: {param_src}{feedback_note}]")
         
     if signal_type:
+        conviction = max_conviction if max_conviction > 0 else abs(effective_sentiment)
+        
+        # Muzzle standalone ML noise: empirical audit showed unvetted XGBoost signals have negative drift (-0.29%).
+        # Strictly require conviction >= 0.75 and active sentiment confirmation (|sentiment| >= 0.25)
+        if conviction < 0.75 or abs(effective_sentiment) < 0.25:
+            print(f"[SIGNAL_FUSION] {ticker} {signal_type} blocked: Conviction ({conviction:.2f}) < 0.75 or sentiment ({effective_sentiment:+.2f}) < 0.25.")
+            return None
+
         reason_str = " | ".join(reason)
         if not check_duplicate_signal(ticker, signal_type, conn=conn):
             # Build investment thesis from existing DeepSeek reasonings (zero extra API cost)
             thesis = build_thesis_from_reasonings(ticker, days=7, conn=conn)
-            conviction = max_conviction if max_conviction > 0 else abs(effective_sentiment)
 
             success = insert_trade_signal(
                 ticker, signal_type, current_price, rsi, effective_sentiment,
@@ -1021,15 +1028,16 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
 
     new_signals = []
     try:
-        # 1. Run Pre-Earnings Beat Catalyst Scan
+        # 1. Run Unified War Rig Transmission (Single Shaft Alpha Crankshaft)
+        # Converges Sector Rotation + Pre-Earnings Beats + Spillovers + Microstructure Gate
         try:
-            from .catalyst_engine import scan_pre_earnings_catalysts
-            pre_earnings_sigs = scan_pre_earnings_catalysts(conn=conn)
-            if pre_earnings_sigs:
-                new_signals.extend(pre_earnings_sigs)
-                print(f"[SIGNAL_FUSION] Generated {len(pre_earnings_sigs)} PRE_EARNINGS_BEAT catalyst signals.")
-        except Exception as pe_err:
-            print(f"[SIGNAL_FUSION] Pre-earnings catalyst scan error: {pe_err}")
+            from .war_rig_engine import run_war_rig_scan
+            war_rig_sigs = run_war_rig_scan(conn=conn, top_n=5)
+            if war_rig_sigs:
+                new_signals.extend(war_rig_sigs)
+                print(f"[SIGNAL_FUSION] War Rig Crankshaft generated {len(war_rig_sigs)} WAR_RIG_CONVERGENCE signals.")
+        except Exception as wr_err:
+            print(f"[SIGNAL_FUSION] War Rig scan error: {wr_err}")
 
         # 2. Run Ticker Scan for Sentiment Fusion Signals
         for ticker in target_tickers:

@@ -58,4 +58,8 @@ frontend/static/img/logos/
 *.webp
 *.ico
 
+# Scratch dumps & debug logs
+scratch_*.csv
+*.log
+
 

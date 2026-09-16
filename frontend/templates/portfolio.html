@@ -173,8 +173,25 @@
 
             <!-- Transaction Ledger -->
             <div id="ledgerSection" class="hidden card p-0 overflow-hidden">
-                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30]">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex flex-wrap justify-between items-center gap-2">
                     <h2 class="text-sm font-mono text-[#E8F1F0] uppercase tracking-wider"><i class="fas fa-scroll mr-1"></i> Detailed Transaction Ledger</h2>
+                    <div class="relative inline-block text-left" id="exportDropdownContainer">
+                        <button id="exportLedgerBtn" type="button" onclick="toggleExportMenu(event)" class="px-3 py-1.5 bg-[#081115] hover:bg-[#1A2A30] text-[#00A6B2] hover:text-[#00E5F2] border border-[#00A6B2]/40 hover:border-[#00A6B2] rounded text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-sm">
+                            <i class="fas fa-file-export"></i>
+                            <span>Export History</span>
+                            <i class="fas fa-chevron-down text-[10px] ml-0.5"></i>
+                        </button>
+                        <div id="exportMenu" class="hidden absolute right-0 mt-1 w-48 bg-[#111C21] border border-[#1A2A30] rounded shadow-2xl py-1 z-30 font-mono text-xs">
+                            <a href="#" onclick="exportHistory('csv', event); return false;" class="flex items-center gap-2.5 px-3.5 py-2 text-[#D6E5E3] hover:bg-[#00A6B2]/10 hover:text-[#00E5F2] transition-colors">
+                                <i class="fas fa-file-csv text-[#00E5F2] text-sm"></i>
+                                <span>Export as CSV (.csv)</span>
+                            </a>
+                            <a href="#" onclick="exportHistory('json', event); return false;" class="flex items-center gap-2.5 px-3.5 py-2 text-[#D6E5E3] hover:bg-[#00A6B2]/10 hover:text-[#00E5F2] transition-colors">
+                                <i class="fas fa-file-code text-[#FFD54F] text-sm"></i>
+                                <span>Export as JSON (.json)</span>
+                            </a>
+                        </div>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse min-w-[700px]">
@@ -211,17 +228,61 @@
             </div>
         </div>
 
-        <!-- Tab 4: Alert Paper Trader -->
+        <!-- Tab 4: Alert Paper Trader (MetaTrader 5 Direct Execution) -->
         <div id="contentPaper" class="hidden space-y-6">
-            <!-- Paper Trading Metrics Grid -->
+            <!-- MT5 Connection & Algo Trading Status Banner -->
+            <div id="mt5StatusBar" class="glass-card rounded-lg border border-[#1A2A30] p-4 flex flex-col md:flex-row items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-[#00E5F2]/10 border border-[#00E5F2]/30 flex items-center justify-center text-[#00E5F2] text-lg">
+                        <i class="fas fa-satellite-dish"></i>
+                    </div>
+                    <div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-sm font-bold font-mono text-[#D6E5E3]">MetaTrader 5 Paper Engine</span>
+                            <span id="mt5ConnBadge" class="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E676]/20 border border-[#00E676]/40 text-[#00E676]">CONNECTED</span>
+                            <span id="mt5AlgoBadge" class="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF9100]/20 border border-[#FF9100]/40 text-[#FF9100]">ALGO TRADING: OFF</span>
+                        </div>
+                        <p id="mt5AccountSubtext" class="text-xs text-[#8BA4A8] font-mono mt-1">
+                            Account: #109929071 | MetaQuotes-Demo (USD) | Company: MetaQuotes Ltd.
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 w-full md:w-auto justify-end">
+                    <button onclick="loadPaperSummary()" class="px-3 py-1.5 bg-[#081115] border border-[#1A2A30] hover:border-[#00E5F2] text-[#00E5F2] font-semibold rounded text-xs font-mono transition-all flex items-center gap-1.5 shadow-sm">
+                        <i class="fas fa-sync-alt"></i> Refresh MT5
+                    </button>
+                    <button onclick="closeAllPaperPositions()" class="px-3 py-1.5 bg-[#FF5252]/10 border border-[#FF5252]/30 hover:bg-[#FF5252]/20 text-[#FF5252] font-semibold rounded text-xs font-mono transition-all flex items-center gap-1.5">
+                        <i class="fas fa-ban"></i> Close All
+                    </button>
+                </div>
+            </div>
+
+            <!-- Warning if Algo Trading is disabled in MT5 -->
+            <div id="mt5AlgoWarningBox" class="hidden bg-[#FF9100]/15 border border-[#FF9100]/40 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono text-[#FFD54F]">
+                <div class="flex items-start sm:items-center gap-2.5">
+                    <i class="fas fa-exclamation-triangle text-base text-[#FF9100] mt-0.5 sm:mt-0"></i>
+                    <span>
+                        <strong>MT5 AutoTrading is Disabled:</strong> Paper orders cannot be placed until you enable <strong>Algo Trading</strong> in your MetaTrader 5 terminal (Click the <strong>Algo Trading</strong> button on the MT5 toolbar or press <kbd class="px-1.5 py-0.5 bg-[#081115] border border-[#FF9100]/50 rounded text-white font-bold">Ctrl+E</kbd>).
+                    </span>
+                </div>
+                <button onclick="loadPaperSummary()" class="px-2.5 py-1 bg-[#FF9100]/20 hover:bg-[#FF9100]/30 text-white rounded font-bold transition-all text-xs whitespace-nowrap self-end sm:self-auto">
+                    Re-check Status
+                </button>
+            </div>
+
+            <!-- MT5 Account Metrics Grid -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div class="card bg-[#111C21] p-4 flex flex-col justify-between border border-[#00A6B2]/30">
-                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Paper Equity</span>
-                    <span id="paperEquity" class="text-2xl font-bold text-[#00E5F2] font-mono mt-1">$200.00</span>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">MT5 Live Equity</span>
+                    <span id="paperEquity" class="text-2xl font-bold text-[#00E5F2] font-mono mt-1">$100,000.00</span>
                 </div>
                 <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
-                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Virtual Cash</span>
-                    <span id="paperCash" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$200.00</span>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Account Balance</span>
+                    <span id="paperCash" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$100,000.00</span>
+                </div>
+                <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Free Margin</span>
+                    <span id="paperFreeMargin" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$100,000.00</span>
                 </div>
                 <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
                     <span class="text-xs font-mono text-[#4A6A70] uppercase">Open Positions Val</span>
@@ -231,21 +292,17 @@
                     <span class="text-xs font-mono text-[#4A6A70] uppercase">Realized P&L</span>
                     <span id="paperRealizedPL" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
                 </div>
-                <div class="card bg-[#111C21] p-4 flex flex-col justify-between">
-                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Unrealized P&L</span>
-                    <span id="paperUnrealizedPL" class="text-xl font-bold text-[#D6E5E3] font-mono mt-1">$0.00</span>
-                </div>
                 <div class="card bg-[#111C21] p-4 flex flex-col justify-between border border-[#00E676]/30">
-                    <span class="text-xs font-mono text-[#4A6A70] uppercase">Closed Win Rate</span>
+                    <span class="text-xs font-mono text-[#4A6A70] uppercase">MT5 Closed Win Rate</span>
                     <span id="paperWinRate" class="text-xl font-bold text-[#00E676] font-mono mt-1">0.0%</span>
                 </div>
             </div>
 
-            <!-- Active Paper Positions Table -->
+            <!-- Active MT5 Positions Table -->
             <div class="card p-0 overflow-hidden">
                 <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
                     <h2 class="text-sm font-mono text-[#00E5F2] uppercase tracking-wider">
-                        <i class="fas fa-robot mr-1"></i> Active Paper Positions
+                        <i class="fas fa-chart-line mr-1.5"></i> Active MT5 Positions
                     </h2>
                     <div class="flex gap-2">
                         <button id="refreshPaperBtn" class="text-xs text-[#00E5F2] hover:text-[#00C5D2] font-mono">
@@ -254,22 +311,23 @@
                     </div>
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse min-w-[800px]">
+                    <table class="w-full text-left border-collapse min-w-[900px]">
                         <thead>
                             <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                                <th class="px-5 py-3">Ticket</th>
                                 <th class="px-5 py-3">Ticker</th>
-                                <th class="px-5 py-3">Quantity</th>
-                                <th class="px-5 py-3">Avg Entry</th>
+                                <th class="px-5 py-3">Type</th>
+                                <th class="px-5 py-3">Lots / Qty</th>
+                                <th class="px-5 py-3">Open Price</th>
                                 <th class="px-5 py-3">Live Price</th>
-                                <th class="px-5 py-3">Cost Basis</th>
-                                <th class="px-5 py-3">Current Value</th>
-                                <th class="px-5 py-3">Unrealized P&L</th>
-                                <th class="px-5 py-3 text-right">Action</th>
+                                <th class="px-5 py-3">SL / TP</th>
+                                <th class="px-5 py-3">Floating P&L</th>
+                                <th class="px-5 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="paperPositionsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                             <tr>
-                                <td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No active paper positions. Alerts will trigger automated entries.</td>
+                                <td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No active positions in MT5 demo account. Alerts will trigger automated entries.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -278,32 +336,37 @@
 
             <!-- Paper Trade History & Execution Logs -->
             <div class="card p-0 overflow-hidden">
-                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex flex-wrap justify-between items-center gap-2">
                     <h2 class="text-sm font-mono text-[#D6E5E3] uppercase tracking-wider">
-                        <i class="fas fa-history mr-1"></i> Paper Trade Execution Log
+                        <i class="fas fa-history mr-1.5"></i> MT5 Trade Deal History
                     </h2>
-                    <button id="resetPaperAccountBtn" class="text-xs text-[#FF5252] hover:bg-[#FF5252]/10 border border-[#FF5252]/30 px-2.5 py-1 rounded transition-all font-mono">
-                        <i class="fas fa-undo mr-1"></i> Reset Paper Account ($200)
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="exportPaperHistory('csv')" class="text-xs text-[#00E5F2] hover:bg-[#00E5F2]/10 border border-[#00E5F2]/30 px-2.5 py-1 rounded transition-all font-mono flex items-center gap-1.5">
+                            <i class="fas fa-file-export"></i> Export CSV
+                        </button>
+                        <button id="resetPaperAccountBtn" class="text-xs text-[#FF5252] hover:bg-[#FF5252]/10 border border-[#FF5252]/30 px-2.5 py-1 rounded transition-all font-mono">
+                            <i class="fas fa-undo mr-1"></i> Reset Paper Account
+                        </button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse min-w-[800px]">
+                    <table class="w-full text-left border-collapse min-w-[900px]">
                         <thead>
                             <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
+                                <th class="px-5 py-3">Ticket / Deal</th>
                                 <th class="px-5 py-3">Ticker</th>
                                 <th class="px-5 py-3">Action</th>
-                                <th class="px-5 py-3">Entry Price</th>
+                                <th class="px-5 py-3">Lots / Qty</th>
                                 <th class="px-5 py-3">Exit Price</th>
-                                <th class="px-5 py-3">Quantity</th>
                                 <th class="px-5 py-3">Exit Reason</th>
                                 <th class="px-5 py-3">Realized P&L</th>
-                                <th class="px-5 py-3">Entry Time</th>
+                                <th class="px-5 py-3">Close Time</th>
                                 <th class="px-5 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="paperLogsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                             <tr>
-                                <td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade logs available yet.</td>
+                                <td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No MT5 trade deal history available yet.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -311,31 +374,44 @@
             </div>
         </div>
 
-        <!-- Edit Paper Position Modal -->
+        <!-- Edit MT5 Paper Position Modal (SL / TP) -->
         <div id="editPaperPosModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-[#111C21] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4 font-mono">
                 <div class="flex justify-between items-center border-b border-[#1A2A30] pb-3">
                     <h3 class="text-sm font-bold text-[#D6E5E3] flex items-center gap-2">
-                        <i class="fas fa-edit text-[#00E5F2]"></i> Edit Paper Position
+                        <i class="fas fa-sliders-h text-[#00E5F2]"></i> Modify MT5 Position SL/TP
                     </h3>
                     <button id="closeEditPaperPosBtn" class="text-[#8BA4A8] hover:text-[#D6E5E3] text-lg font-bold">&times;</button>
                 </div>
                 <form id="editPaperPosForm" class="space-y-4 text-xs">
-                    <div>
-                        <label class="font-bold text-[#D6E5E3] block mb-1">Ticker</label>
-                        <input type="text" id="editPosTicker" readonly class="w-full bg-[#081115] border border-[#1A2A30] text-[#00E5F2] font-bold rounded px-3 py-2 text-xs focus:outline-none cursor-not-allowed">
+                    <input type="hidden" id="editPosTicket">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Ticker</label>
+                            <input type="text" id="editPosTicker" readonly class="w-full bg-[#081115] border border-[#1A2A30] text-[#00E5F2] font-bold rounded px-3 py-2 text-xs focus:outline-none cursor-not-allowed">
+                        </div>
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Volume (Lots)</label>
+                            <input type="text" id="editPosQuantity" readonly class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none cursor-not-allowed">
+                        </div>
                     </div>
                     <div>
-                        <label class="font-bold text-[#D6E5E3] block mb-1">Quantity (Shares)</label>
-                        <input type="number" id="editPosQuantity" step="0.0001" min="0.0001" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                        <label class="font-bold text-[#D6E5E3] block mb-1">Avg Entry Price ($)</label>
+                        <input type="text" id="editPosBuyPrice" readonly class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none cursor-not-allowed">
                     </div>
-                    <div>
-                        <label class="font-bold text-[#D6E5E3] block mb-1">Avg Entry / Buy Price ($)</label>
-                        <input type="number" id="editPosBuyPrice" step="0.01" min="0.01" required class="w-full bg-[#081115] border border-[#1A2A30] text-[#D6E5E3] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00A6B2]">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Stop Loss ($)</label>
+                            <input type="number" id="editPosSL" step="0.01" min="0" placeholder="0.00" class="w-full bg-[#081115] border border-[#1A2A30] text-[#FF5252] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#FF5252]">
+                        </div>
+                        <div>
+                            <label class="font-bold text-[#D6E5E3] block mb-1">Take Profit ($)</label>
+                            <input type="number" id="editPosTP" step="0.01" min="0" placeholder="0.00" class="w-full bg-[#081115] border border-[#1A2A30] text-[#00E676] rounded px-3 py-2 text-xs focus:outline-none focus:border-[#00E676]">
+                        </div>
                     </div>
                     <div class="flex justify-end gap-2 pt-2 border-t border-[#1A2A30]">
                         <button type="button" id="cancelEditPaperPosBtn" class="px-4 py-2 border border-[#1A2A30] hover:bg-[#1A2A30]/50 text-[#8BA4A8] rounded font-bold transition-all">Cancel</button>
-                        <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-bold rounded transition-all">Save Changes</button>
+                        <button type="submit" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-bold rounded transition-all">Update in MT5</button>
                     </div>
                 </form>
             </div>
@@ -991,7 +1067,7 @@
             renderLedger();
             
             // Fetch/update logos in background
-            const activeTickers = Object.keys(data.holdings).filter(t => data.holdings[t].quantity > 0);
+            const activeTickers = Object.keys(data.holdings).filter(t => data.holdings[t].quantity > 0.0001);
             if (activeTickers.length > 0) {
                 fetch(`/api/v1/prices/logos?tickers=${activeTickers.join(",")}`)
                     .then(r => r.ok ? r.json() : null)
@@ -1114,7 +1190,7 @@
         tbody.innerHTML = "";
         
         const holdingsKeys = Object.keys(holdings);
-        const activeHoldingsKeys = holdingsKeys.filter(t => holdings[t].quantity > 0);
+        const activeHoldingsKeys = holdingsKeys.filter(t => holdings[t].quantity > 0.0001);
         
         if (activeHoldingsKeys.length === 0) {
             tbody.innerHTML = `
@@ -1713,6 +1789,63 @@
         document.getElementById("nextPageBtn").disabled = currentLedgerPage >= totalPages;
     }
 
+    // --- TRANSACTION HISTORY EXPORT FUNCTIONS ---
+    function toggleExportMenu(event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        const menu = document.getElementById("exportMenu");
+        if (menu) {
+            menu.classList.toggle("hidden");
+        }
+    }
+    window.toggleExportMenu = toggleExportMenu;
+
+    // Close export dropdown on click outside
+    document.addEventListener("click", function(event) {
+        const menu = document.getElementById("exportMenu");
+        const btn = document.getElementById("exportLedgerBtn");
+        if (menu && !menu.classList.contains("hidden")) {
+            if (btn && !btn.contains(event.target) && !menu.contains(event.target)) {
+                menu.classList.add("hidden");
+            }
+        }
+    });
+
+    function exportHistory(format, event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        const menu = document.getElementById("exportMenu");
+        if (menu) menu.classList.add("hidden");
+
+        const fmt = encodeURIComponent(format || 'csv');
+        const url = `/api/v1/portfolio/export?format=${fmt}`;
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.setAttribute('download', '');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+    window.exportHistory = exportHistory;
+
+    function exportPaperHistory(format) {
+        const fmt = encodeURIComponent(format || 'csv');
+        const url = `/api/v1/paper-trading/export?format=${fmt}`;
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.setAttribute('download', '');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+    window.exportPaperHistory = exportPaperHistory;
+
     function formatCurrency(val) {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
     }
@@ -1758,28 +1891,59 @@
         document.getElementById("editModal").classList.add("hidden");
     }
 
-    // --- ALERT PAPER TRADER FUNCTIONS ---
+    // --- ALERT PAPER TRADER FUNCTIONS (METATRADER 5 DIRECT) ---
     async function loadPaperSummary() {
         try {
             const res = await fetch("/api/v1/paper-trading/summary");
-            if (!res.ok) throw new Error("Could not load paper trading summary");
+            if (!res.ok) throw new Error("Could not load MT5 paper trading summary");
             const data = await res.json();
 
+            // 1. Update MT5 Status Banner & Algo Trading diagnostics
+            const mt5 = data.mt5_status || {};
+            const connBadge = document.getElementById("mt5ConnBadge");
+            const algoBadge = document.getElementById("mt5AlgoBadge");
+            const subtext = document.getElementById("mt5AccountSubtext");
+            const warnBox = document.getElementById("mt5AlgoWarningBox");
+
+            if (mt5.connected) {
+                connBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E676]/20 border border-[#00E676]/40 text-[#00E676]";
+                connBadge.innerText = "CONNECTED";
+                subtext.innerText = `Account: #${mt5.login || 'N/A'} | ${mt5.server || 'MetaQuotes-Demo'} (${mt5.currency || 'USD'}) | Company: ${mt5.company || 'MetaQuotes Ltd.'}`;
+
+                if (mt5.trade_allowed) {
+                    algoBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E676]/20 border border-[#00E676]/40 text-[#00E676]";
+                    algoBadge.innerText = "ALGO TRADING: ACTIVE";
+                    warnBox.classList.add("hidden");
+                } else {
+                    algoBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF9100]/20 border border-[#FF9100]/40 text-[#FF9100]";
+                    algoBadge.innerText = "ALGO TRADING: DISABLED";
+                    warnBox.classList.remove("hidden");
+                }
+            } else {
+                connBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF5252]/20 border border-[#FF5252]/40 text-[#FF5252]";
+                connBadge.innerText = "DISCONNECTED";
+                algoBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF5252]/20 border border-[#FF5252]/40 text-[#FF5252]";
+                algoBadge.innerText = "OFFLINE";
+                subtext.innerText = mt5.error || "MetaTrader 5 terminal not detected. Ensure MT5 is running.";
+                warnBox.classList.add("hidden");
+            }
+
+            // 2. Account Metrics Grid
             document.getElementById("paperEquity").innerText = formatCurrency(data.current_equity);
             document.getElementById("paperCash").innerText = formatCurrency(data.cash_balance);
+            if (document.getElementById("paperFreeMargin")) {
+                document.getElementById("paperFreeMargin").innerText = formatCurrency(data.margin_free || data.cash_balance);
+            }
             document.getElementById("paperOpenVal").innerText = formatCurrency(data.total_open_value);
 
             const rPlEl = document.getElementById("paperRealizedPL");
             rPlEl.innerText = (data.total_realized_pnl >= 0 ? "+" : "") + formatCurrency(data.total_realized_pnl);
             rPlEl.className = `text-xl font-bold font-mono mt-1 ${data.total_realized_pnl >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]'}`;
 
-            const uPlEl = document.getElementById("paperUnrealizedPL");
-            uPlEl.innerText = (data.total_unrealized_pnl >= 0 ? "+" : "") + formatCurrency(data.total_unrealized_pnl);
-            uPlEl.className = `text-xl font-bold font-mono mt-1 ${data.total_unrealized_pnl >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]'}`;
+            document.getElementById("paperWinRate").innerText = `${data.win_rate_pct.toFixed(1)}% (${data.total_closed_trades} closed)`;
 
-            document.getElementById("paperWinRate").innerText = `${data.win_rate_pct.toFixed(1)}% (${data.total_closed_trades} trades)`;
-
-            renderPaperPositions(data.active_positions);
+            // 3. Render Positions & Deals
+            renderPaperPositions(data.active_positions_list || data.active_positions);
             renderPaperLogs(data.trade_logs);
         } catch (err) {
             console.error("Paper summary load error:", err);
@@ -1790,33 +1954,38 @@
         const tbody = document.getElementById("paperPositionsTableBody");
         tbody.innerHTML = "";
 
-        const keys = Object.keys(positions || {});
-        if (keys.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" class="px-5 py-8 text-center text-[#4A6A70]">No active paper positions. Alerts will trigger automated entries.</td></tr>`;
+        const posList = Array.isArray(positions) ? positions : Object.values(positions || {});
+        if (posList.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No active positions in MT5 demo account. Alerts will trigger automated entries.</td></tr>`;
             return;
         }
 
-        keys.forEach(t => {
-            const pos = positions[t];
+        posList.forEach(pos => {
             const pnlColor = pos.unrealized_pnl >= 0 ? "text-[#00E676]" : "text-[#FF5252]";
+            const actionStr = (pos.action || 'BUY').toUpperCase();
+            const actionBg = actionStr === 'SELL' ? 'bg-[#FF5252]/10 text-[#FF5252] border border-[#FF5252]/30' : 'bg-[#00E676]/10 text-[#00E676] border border-[#00E676]/30';
+            const slStr = pos.sl > 0 ? `$${parseFloat(pos.sl).toFixed(2)}` : '—';
+            const tpStr = pos.tp > 0 ? `$${parseFloat(pos.tp).toFixed(2)}` : '—';
+
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
             tr.innerHTML = `
+                <td class="px-5 py-3 font-mono text-xs text-[#8BA4A8]">#${pos.ticket}</td>
                 <td class="px-5 py-3 font-bold text-[#00E5F2]">${pos.ticker}</td>
-                <td class="px-5 py-3">${pos.quantity}</td>
-                <td class="px-5 py-3">$${pos.avg_entry_price.toFixed(2)}</td>
-                <td class="px-5 py-3 font-semibold">$${pos.current_price.toFixed(2)}</td>
-                <td class="px-5 py-3">$${pos.total_cost.toFixed(2)}</td>
-                <td class="px-5 py-3">$${pos.current_value.toFixed(2)}</td>
-                <td class="px-5 py-3 ${pnlColor} font-bold">
-                    ${pos.unrealized_pnl >= 0 ? '+' : ''}$${pos.unrealized_pnl.toFixed(2)} (${pos.unrealized_pnl_pct.toFixed(2)}%)
+                <td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${actionBg}">${actionStr}</span></td>
+                <td class="px-5 py-3 font-mono">${pos.quantity}</td>
+                <td class="px-5 py-3 font-mono">$${parseFloat(pos.avg_entry_price).toFixed(2)}</td>
+                <td class="px-5 py-3 font-mono font-semibold text-[#D6E5E3]">$${parseFloat(pos.current_price).toFixed(2)}</td>
+                <td class="px-5 py-3 font-mono text-xs"><span class="text-[#FF5252]">${slStr}</span> / <span class="text-[#00E676]">${tpStr}</span></td>
+                <td class="px-5 py-3 ${pnlColor} font-bold font-mono">
+                    ${pos.unrealized_pnl >= 0 ? '+' : ''}$${parseFloat(pos.unrealized_pnl).toFixed(2)} (${pos.unrealized_pnl_pct ? pos.unrealized_pnl_pct.toFixed(2) : '0.00'}%)
                 </td>
                 <td class="px-5 py-3 text-right">
                     <div class="flex justify-end gap-2">
-                        <button onclick="openEditPaperPosModal('${pos.ticker}', ${pos.quantity}, ${pos.avg_entry_price})" class="px-2.5 py-1 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/40 text-[#00E5F2] border border-[#00A6B2]/40 rounded text-xs font-mono font-bold transition-all">
-                            <i class="fas fa-edit mr-1"></i>Edit
+                        <button onclick="openEditPaperPosModal(${pos.ticket}, '${pos.ticker}', ${pos.quantity}, ${pos.avg_entry_price}, ${pos.sl || 0}, ${pos.tp || 0})" class="px-2.5 py-1 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/40 text-[#00E5F2] border border-[#00A6B2]/40 rounded text-xs font-mono font-bold transition-all" title="Modify SL/TP in MT5">
+                            <i class="fas fa-sliders-h mr-1"></i>SL/TP
                         </button>
-                        <button onclick="closePaperPos('${pos.ticker}')" class="px-2.5 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all">
+                        <button onclick="closePaperPos(${pos.ticket})" class="px-2.5 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all" title="Close position in MT5">
                             Close
                         </button>
                     </div>
@@ -1831,7 +2000,7 @@
         tbody.innerHTML = "";
 
         if (!logs || logs.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No paper trade execution logs available yet.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No MT5 trade deal history available yet.</td></tr>`;
             return;
         }
 
@@ -1840,39 +2009,36 @@
             const isSell = actionStr === 'SELL';
             const actionBg = isSell ? 'bg-[#FF5252]/10 text-[#FF5252]' : 'bg-[#00E676]/10 text-[#00E676]';
             
-            let pnlStr = "ACTIVE";
-            let pnlClass = "text-[#00E5F2] font-semibold";
+            let pnlStr = "—";
+            let pnlClass = "text-[#8BA4A8]";
             
             if (log.realized_pnl !== null && log.realized_pnl !== undefined) {
                 const rPnl = parseFloat(log.realized_pnl);
-                const rPnlPct = parseFloat(log.realized_pnl_pct || 0);
-                pnlStr = `${rPnl >= 0 ? '+' : ''}$${rPnl.toFixed(2)} (${rPnlPct.toFixed(2)}%)`;
-                pnlClass = rPnl >= 0 ? 'text-[#00E676] font-bold' : 'text-[#FF5252] font-bold';
-            } else if (isSell) {
-                pnlStr = "CLOSED";
-                pnlClass = "text-[#8BA4A8]";
+                pnlStr = `${rPnl >= 0 ? '+' : ''}$${rPnl.toFixed(2)}`;
+                pnlClass = rPnl >= 0 ? 'text-[#00E676] font-bold font-mono' : 'text-[#FF5252] font-bold font-mono';
             }
 
-            const entryTime = log.entry_time ? new Date(log.entry_time).toLocaleString() : 'N/A';
+            const closeTime = log.exit_time || (log.entry_time ? new Date(log.entry_time).toLocaleString() : 'N/A');
             const safeLogJson = JSON.stringify(log).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+            const ticketDisplay = log.deal_id || log.mt5_ticket || log.id || '—';
 
             const tr = document.createElement("tr");
             tr.className = "border-b border-[#1A2A30]/50 hover:bg-[#1f333b]/30 transition-colors";
             tr.innerHTML = `
+                <td class="px-5 py-3 font-mono text-xs text-[#8BA4A8]">#${ticketDisplay}</td>
                 <td class="px-5 py-3 font-bold text-[#D6E5E3]">${log.ticker}</td>
                 <td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ${actionBg}">${actionStr}</span></td>
-                <td class="px-5 py-3">$${parseFloat(log.entry_price).toFixed(2)}</td>
-                <td class="px-5 py-3">${log.exit_price ? '$' + parseFloat(log.exit_price).toFixed(2) : '—'}</td>
-                <td class="px-5 py-3">${log.quantity}</td>
-                <td class="px-5 py-3 text-xs text-[#00E5F2] font-mono">${log.exit_reason || 'ALERT_EXECUTION'}</td>
+                <td class="px-5 py-3 font-mono">${log.quantity}</td>
+                <td class="px-5 py-3 font-mono">${log.exit_price ? '$' + parseFloat(log.exit_price).toFixed(2) : (log.entry_price ? '$' + parseFloat(log.entry_price).toFixed(2) : '—')}</td>
+                <td class="px-5 py-3 text-xs text-[#00E5F2] font-mono">${log.exit_reason || log.comment || 'MT5_DEAL'}</td>
                 <td class="px-5 py-3 ${pnlClass}">${pnlStr}</td>
-                <td class="px-5 py-3 text-xs text-[#8BA4A8]">${entryTime}</td>
+                <td class="px-5 py-3 text-xs text-[#8BA4A8] font-mono">${closeTime}</td>
                 <td class="px-5 py-3 text-right">
                     <div class="flex justify-end gap-1.5">
-                        <button onclick="openEditPaperOrderModal(JSON.parse('${safeLogJson}'))" class="px-2 py-1 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/40 text-[#00E5F2] border border-[#00A6B2]/40 rounded text-xs font-mono font-bold transition-all" title="Edit Paper Order Entry">
+                        <button onclick="openEditPaperOrderModal(JSON.parse('${safeLogJson}'))" class="px-2 py-1 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/40 text-[#00E5F2] border border-[#00A6B2]/40 rounded text-xs font-mono font-bold transition-all" title="View / Edit Note">
                             <i class="fas fa-edit"></i>
                         </button>
-                        <button onclick="deletePaperOrder(${log.id})" class="px-2 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all" title="Delete Paper Order Entry">
+                        <button onclick="deletePaperOrder(${log.id || log.deal_id})" class="px-2 py-1 bg-[#FF5252]/20 hover:bg-[#FF5252]/40 text-[#FF5252] border border-[#FF5252]/40 rounded text-xs font-mono font-bold transition-all" title="Delete record">
                             <i class="fas fa-trash-alt"></i>
                         </button>
                     </div>
@@ -1882,42 +2048,67 @@
         });
     }
 
-    window.closePaperPos = async (ticker) => {
-        if (!confirm(`Are you sure you want to close the paper position for ${ticker}?`)) return;
+    window.closePaperPos = async (ticketOrTicker) => {
+        const isNum = !isNaN(ticketOrTicker);
+        const confirmMsg = isNum ? `Are you sure you want to close MT5 position #${ticketOrTicker}?` : `Are you sure you want to close position for ${ticketOrTicker}?`;
+        if (!confirm(confirmMsg)) return;
+
         try {
+            const bodyPayload = isNum ? { ticket: parseInt(ticketOrTicker) } : { ticker: String(ticketOrTicker) };
             const res = await fetch("/api/v1/paper-trading/close-position", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ticker })
+                body: JSON.stringify(bodyPayload)
             });
             const data = await res.json();
             if (res.ok) {
-                alert(data.message || "Position closed.");
+                alert(data.message || "Position closed in MT5.");
                 loadPaperSummary();
             } else {
-                alert("Error closing position: " + (data.detail || data.message));
+                alert("Error closing position in MT5: " + (data.detail || data.message));
             }
         } catch (err) {
             alert("Error closing position: " + err);
         }
     };
 
-    window.openEditPaperPosModal = function(ticker, qty, price) {
+    window.closeAllPaperPositions = async () => {
+        if (!confirm("Are you sure you want to close ALL active open positions in MetaTrader 5?")) return;
+        try {
+            const res = await fetch("/api/v1/paper-trading/close-all", {
+                method: "POST"
+            });
+            const data = await res.json();
+            if (res.ok) {
+                alert(data.message || "All positions closed in MT5.");
+                loadPaperSummary();
+            } else {
+                alert("Error closing positions: " + (data.detail || data.message));
+            }
+        } catch (err) {
+            alert("Error closing positions: " + err);
+        }
+    };
+
+    window.openEditPaperPosModal = function(ticket, ticker, qty, price, sl, tp) {
+        document.getElementById("editPosTicket").value = ticket;
         document.getElementById("editPosTicker").value = ticker;
         document.getElementById("editPosQuantity").value = qty;
-        document.getElementById("editPosBuyPrice").value = price;
+        document.getElementById("editPosBuyPrice").value = parseFloat(price).toFixed(2);
+        document.getElementById("editPosSL").value = sl > 0 ? parseFloat(sl).toFixed(2) : "";
+        document.getElementById("editPosTP").value = tp > 0 ? parseFloat(tp).toFixed(2) : "";
         const modal = document.getElementById("editPaperPosModal");
         if (modal) modal.classList.remove("hidden");
     };
 
     window.openEditPaperOrderModal = function(log) {
-        document.getElementById("editPaperLogId").value = log.id;
+        document.getElementById("editPaperLogId").value = log.id || log.deal_id;
         document.getElementById("editPaperOrderTicker").value = log.ticker;
         document.getElementById("editPaperOrderAction").value = (log.action || 'BUY').toUpperCase();
         document.getElementById("editPaperOrderQty").value = log.quantity;
-        document.getElementById("editPaperOrderEntryPrice").value = log.entry_price;
+        document.getElementById("editPaperOrderEntryPrice").value = log.entry_price || log.exit_price || 0.0;
         document.getElementById("editPaperOrderExitPrice").value = (log.exit_price !== null && log.exit_price !== undefined) ? log.exit_price : '';
-        document.getElementById("editPaperOrderExitReason").value = log.exit_reason || '';
+        document.getElementById("editPaperOrderExitReason").value = log.exit_reason || log.comment || '';
         document.getElementById("editPaperOrderNotes").value = log.notes || '';
         
         const modal = document.getElementById("editPaperOrderModal");
@@ -1964,19 +2155,21 @@
         if (editPaperPosForm) {
             editPaperPosForm.addEventListener("submit", async (e) => {
                 e.preventDefault();
-                const ticker = document.getElementById("editPosTicker").value;
-                const qty = parseFloat(document.getElementById("editPosQuantity").value);
-                const price = parseFloat(document.getElementById("editPosBuyPrice").value);
+                const ticket = parseInt(document.getElementById("editPosTicket").value);
+                const rawSL = document.getElementById("editPosSL").value;
+                const rawTP = document.getElementById("editPosTP").value;
+                const sl = rawSL !== "" ? parseFloat(rawSL) : null;
+                const tp = rawTP !== "" ? parseFloat(rawTP) : null;
 
                 try {
                     const res = await fetch("/api/v1/paper-trading/edit-position", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ ticker: ticker, quantity: qty, buy_price: price })
+                        body: JSON.stringify({ ticket: ticket, sl: sl, tp: tp })
                     });
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.detail || data.message || "Failed to update position");
-                    alert(data.message || "Position updated successfully!");
+                    alert(data.message || "MT5 Position updated successfully!");
                     editPaperPosModal.classList.add("hidden");
                     loadPaperSummary();
                 } catch (err) {
@@ -2034,11 +2227,11 @@
         const resetPaperBtn = document.getElementById("resetPaperAccountBtn");
         if (resetPaperBtn) {
             resetPaperBtn.addEventListener("click", async () => {
-                if (!confirm("Are you sure you want to reset paper trading balance back to $200 baseline?")) return;
+                if (!confirm("Are you sure you want to reset paper trading? This will close all open MT5 paper positions and reset audit logs.")) return;
                 try {
                     const res = await fetch("/api/v1/paper-trading/reset", { method: "POST" });
                     const data = await res.json();
-                    alert(data.message || "Paper account reset.");
+                    alert(data.message || "MT5 Paper account reset.");
                     loadPaperSummary();
                 } catch (err) {
                     alert("Reset error: " + err);

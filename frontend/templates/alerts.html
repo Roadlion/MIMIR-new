@@ -86,14 +86,20 @@
                     <i class="fas fa-robot"></i>
                 </div>
                 <div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <span class="text-base font-bold font-mono text-[#D6E5E3]">Paper Trading Engine</span>
                         <span id="paperStatusBadge" class="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E676]/20 border border-[#00E676]/40 text-[#00E676]">
                             ACTIVE
                         </span>
+                        <span id="alertsMt5Badge" class="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E5F2]/20 border border-[#00E5F2]/40 text-[#00E5F2]">
+                            <i class="fas fa-satellite-dish mr-1"></i> MT5 DEMO
+                        </span>
+                        <span id="alertsMt5AlgoBadge" class="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF9100]/20 border border-[#FF9100]/40 text-[#FF9100]">
+                            ALGO: OFF
+                        </span>
                     </div>
                     <p class="text-xs text-[#8BA4A8] font-mono mt-0.5">
-                        Simulating trades on live alerts to monitor MIMIR's signal accuracy without real money risk.
+                        Executing paper trades directly inside MetaTrader 5 demo account on validated signals.
                     </p>
                 </div>
             </div>
@@ -251,6 +257,14 @@
                 <input type="checkbox" id="cfgAutoExitHold" class="w-4 h-4 accent-[#00A6B2] cursor-pointer">
             </div>
 
+            <div class="flex items-center justify-between bg-[#081115] border border-[#1A2A30] p-3 rounded">
+                <div>
+                    <label class="font-bold text-[#D6E5E3] block">Ignore Market Hours (24/7 Execution)</label>
+                    <span class="text-[10px] text-[#8BA4A8]">Execute orders anytime in MT5 without waiting for US regular session (09:30-16:00 ET)</span>
+                </div>
+                <input type="checkbox" id="cfgIgnoreHours" class="w-4 h-4 accent-[#00A6B2] cursor-pointer">
+            </div>
+
             <div class="flex gap-2 pt-2">
                 <button type="submit" class="flex-grow py-2 bg-[#00E5F2] hover:bg-[#00C5D2] text-[#060A0D] font-bold rounded font-mono transition-all">
                     Save Parameters
@@ -376,6 +390,37 @@
                 document.getElementById("cfgTP").value = paperConfig.take_profit_pct;
                 document.getElementById("cfgAutoExitHold").checked = paperConfig.auto_exit_on_hold_days;
                 document.getElementById("cfgUSOnly").checked = paperConfig.us_stocks_only !== false;
+                document.getElementById("cfgIgnoreHours").checked = paperConfig.ignore_market_hours === true;
+
+                // Check MT5 live status
+                try {
+                    const sRes = await fetch("/api/v1/paper-trading/summary");
+                    if (sRes.ok) {
+                        const sData = await sRes.json();
+                        const mt5 = sData.mt5_status || {};
+                        const mt5Badge = document.getElementById("alertsMt5Badge");
+                        const algoBadge = document.getElementById("alertsMt5AlgoBadge");
+
+                        if (mt5.connected) {
+                            mt5Badge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E676]/20 border border-[#00E676]/40 text-[#00E676]";
+                            mt5Badge.innerHTML = `<i class="fas fa-check-circle mr-1"></i> MT5 #${mt5.login || 'DEMO'}`;
+
+                            if (mt5.trade_allowed) {
+                                algoBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E676]/20 border border-[#00E676]/40 text-[#00E676]";
+                                algoBadge.innerText = "ALGO: ON";
+                            } else {
+                                algoBadge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF9100]/20 border border-[#FF9100]/40 text-[#FF9100]";
+                                algoBadge.innerText = "ALGO: OFF (Ctrl+E)";
+                            }
+                        } else {
+                            mt5Badge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF5252]/20 border border-[#FF5252]/40 text-[#FF5252]";
+                            mt5Badge.innerText = "MT5: OFFLINE";
+                            algoBadge.className = "hidden";
+                        }
+                    }
+                } catch (mt5Err) {
+                    console.warn("Could not check MT5 status:", mt5Err);
+                }
             } catch (err) {
                 console.error("Error fetching paper config:", err);
             }
@@ -617,10 +662,13 @@
                     body: JSON.stringify({ quantity: qty })
                 });
                 if (res.ok) {
+                    const data = await res.json();
+                    alert(`Trade executed in MT5 for ${data.ticker} (${data.signal_type})!`);
                     fetchAlerts();
+                    fetchPaperConfig();
                 } else {
                     const errData = await res.json();
-                    alert("Approval failed: " + (errData.detail || "Unknown error"));
+                    alert("MT5 Approval failed: " + (errData.detail || "Unknown error"));
                 }
             } catch (err) {
                 alert("Network error: " + err);
@@ -699,7 +747,8 @@
                 stop_loss_pct: parseFloat(document.getElementById("cfgSL").value),
                 take_profit_pct: parseFloat(document.getElementById("cfgTP").value),
                 auto_exit_on_hold_days: document.getElementById("cfgAutoExitHold").checked,
-                us_stocks_only: document.getElementById("cfgUSOnly").checked
+                us_stocks_only: document.getElementById("cfgUSOnly").checked,
+                ignore_market_hours: document.getElementById("cfgIgnoreHours").checked
             };
 
             try {

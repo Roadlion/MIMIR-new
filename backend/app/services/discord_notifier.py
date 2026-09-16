@@ -200,7 +200,6 @@ def send_trade_alert(
         "content": content,
         "embeds": [embed],
         "username": "MIMIR Oracle",
-        "avatar_url": "https://i.imgur.com/mFLGDKb.png",  # fallback avatar
     }
 
     try:
@@ -308,7 +307,6 @@ def send_sitrep_notification(sitrep_data: dict) -> bool:
         "content": "📢 **NEW MIMIR SITUATION REPORT AVAILABLE**",
         "embeds": embeds,
         "username": "MIMIR Sit Rep",
-        "avatar_url": "https://i.imgur.com/mFLGDKb.png",
     }
 
     try:
@@ -385,7 +383,6 @@ def send_global_breaking_alert(
         "content": "🚨 @everyone **MARKET-MOVING GLOBAL EVENT DETECTED**" if abs(sentiment_score) >= 0.75 else "🚨 **GLOBAL EVENT ALERT**",
         "embeds": [embed],
         "username": "MIMIR Global Sentinel",
-        "avatar_url": "https://i.imgur.com/mFLGDKb.png",
     }
 
     try:

@@ -16,11 +16,21 @@ settings = get_settings()
 
 print("[SUCCESS] Initialized DB dependencies.")
 
-# --- 2. Connect to MT5 ---
-if not mt5.initialize():
-    print(f"[ERROR] MT5 initialization failed. Error code: {mt5.last_error()}")
-    quit()
-print("[SUCCESS] Connected to MT5 Terminal.")
+active_symbols = []
+symbol_map = {}
+
+def is_mt5_candidate(symbol: str) -> bool:
+    """Filter out non-equity indices, currency crosses with =X, and foreign exchange tickers."""
+    if not symbol or not isinstance(symbol, str):
+        return False
+    s = symbol.strip().upper()
+    if s.startswith("^") or "=" in s or "/" in s:
+        return False
+    if "." in s and s != "BRK.B":
+        return False
+    if not s.replace(".", "").isalnum():
+        return False
+    return True
 
 def get_db_tickers():
     conn = get_db_connection()
@@ -31,18 +41,21 @@ def get_db_tickers():
         cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_dynamic_tickers WHERE ticker IS NOT NULL")
         dynamic = [r[0] for r in cur.fetchall()]
         
-        # Get from sentiment impacts
-        cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_sentiment_impacts WHERE ticker IS NOT NULL")
+        # Get from recent sentiment impacts (last 7 days)
+        cur.execute(f"""
+            SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_sentiment_impacts 
+            WHERE ticker IS NOT NULL AND created_at >= NOW() - INTERVAL '7 days'
+        """)
         sentiment = [r[0] for r in cur.fetchall()]
         
         # Get from portfolio
         cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE ticker IS NOT NULL")
         portfolio = [r[0] for r in cur.fetchall()]
         
-        # Merge all unique
-        all_tickers = list(set(dynamic + sentiment + portfolio))
+        # Merge and filter valid candidates
+        all_tickers = [tk.strip().upper() for tk in set(dynamic + sentiment + portfolio) if is_mt5_candidate(tk)]
         
-        # Ensure some core ones just in case DB is empty
+        # Ensure core equities and crypto are present
         core = [
             "NVDA", "AAPL", "GOOGL", "MSFT", "AMZN", 
             "AVGO", "META", "TSLA", "MU", "BRK.B", 
@@ -59,10 +72,6 @@ def get_db_tickers():
     finally:
         conn.close()
 
-# List of tickers to track (Dynamic from DB + Core)
-symbols = get_db_tickers()
-print(f"[INFO] Loaded {len(symbols)} distinct tickers from database.")
-
 def resolve_broker_symbol(symbol: str) -> str:
     """Tries exact symbol name and broker variations (.US suffix, hash prefix, dot removal)."""
     candidates = [
@@ -76,52 +85,68 @@ def resolve_broker_symbol(symbol: str) -> str:
         candidates.extend(["BTCUSD", "BTC"])
     
     for cand in candidates:
-        if mt5.symbol_select(cand, True):
-            return cand
+        try:
+            if mt5.symbol_select(cand, True):
+                return cand
+        except Exception:
+            pass
     return None
 
-# Verify symbols actively and resolve broker naming scheme
-active_symbols = []
-symbol_map = {}
+def parse_bar_time(raw_time) -> str:
+    """Safely parse MT5 bar timestamp into '%Y-%m-%d %H:%M:%S' string, guarding against Windows CRT OSError."""
+    try:
+        if raw_time is None:
+            return None
+        ts = float(raw_time)
+        # Handle milliseconds/microseconds if returned
+        if ts > 1e14:
+            ts /= 1e6
+        elif ts > 1e11:
+            ts /= 1e3
 
-for symbol in symbols:
-    resolved = resolve_broker_symbol(symbol)
-    if resolved:
-        print(f"[SYMBOL OK] Active and tracking: {symbol} (Broker symbol: {resolved})")
-        if resolved not in active_symbols:
-            active_symbols.append(resolved)
-        symbol_map[resolved] = symbol
-    else:
-        print(f"[SYMBOL ERROR] '{symbol}' not found! Check your broker's exact spelling (e.g., AAPL.US or #AAPL)")
+        # Valid financial market timestamp must be reasonable (e.g. year 2000 to 2100)
+        # Year 2000: 946684800, Year 2100: 4102444800
+        if ts < 946684800 or ts > 4102444800:
+            return None
 
-if not active_symbols:
-    print("[CRITICAL] No valid symbols to track. Stopping script.")
-    mt5.shutdown()
-    quit()
+        return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+    except (OSError, ValueError, OverflowError, TypeError):
+        return None
 
 def fetch_and_log():
     log_time = datetime.now().strftime('%H:%M:%S')
     batch_rows = []
     
     for b_symbol in active_symbols:
-        rates = mt5.copy_rates_from_pos(b_symbol, mt5.TIMEFRAME_M1, 0, 1)
-        
-        if rates is not None and len(rates) > 0:
-            bar = rates[0]
-            bar_time = datetime.fromtimestamp(int(bar['time'])).strftime('%Y-%m-%d %H:%M:%S')
-            display_symbol = symbol_map.get(b_symbol, b_symbol)
+        try:
+            rates = mt5.copy_rates_from_pos(b_symbol, mt5.TIMEFRAME_M1, 0, 1)
             
-            batch_rows.append([
-                display_symbol,
-                bar_time,
-                float(bar['open']),
-                float(bar['high']),
-                float(bar['low']),
-                float(bar['close']),
-                int(bar['tick_volume'])
-            ])
-        else:
-            print(f"[DATA ERROR] Could not get data for {b_symbol}. Error: {mt5.last_error()}")
+            if rates is not None and len(rates) > 0:
+                bar = rates[0]
+                bar_time = parse_bar_time(bar['time'])
+                if not bar_time:
+                    # Fallback to current system time if broker bar time is corrupt or uninitialized
+                    bar_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                close_val = float(bar['close'])
+                if close_val <= 0.0:
+                    continue  # Skip zero-price or invalid candles
+
+                display_symbol = symbol_map.get(b_symbol, b_symbol)
+                
+                batch_rows.append([
+                    display_symbol,
+                    bar_time,
+                    float(bar['open']),
+                    float(bar['high']),
+                    float(bar['low']),
+                    close_val,
+                    int(bar['tick_volume'])
+                ])
+            else:
+                pass
+        except Exception as sym_err:
+            print(f"[DATA WARNING] Skipping {b_symbol} due to parse error: {sym_err}")
             
     if batch_rows:
         # Deduplicate and sort batch_rows by (ticker, timestamp) to enforce deterministic PostgreSQL lock ordering
@@ -181,24 +206,57 @@ def fetch_and_log():
                     print(f"[DB ERROR] {e}")
                     break
 
-# --- 3. Run Instantly First ---
-print("\n[STARTING] Pulling initial batch immediately...")
-fetch_and_log()
+def main():
+    # --- 2. Connect to MT5 ---
+    if not mt5.initialize():
+        print(f"[ERROR] MT5 initialization failed. Error code: {mt5.last_error()}")
+        sys.exit(1)
+    print("[SUCCESS] Connected to MT5 Terminal.")
 
-print("\n[RUNNING] Initial pull done. Now entering 1-minute clock sync loop...")
+    symbols = get_db_tickers()
+    print(f"[INFO] Loaded {len(symbols)} distinct candidate tickers from database.")
 
-try:
-    while True:
-        # Perfect 1-minute clock alignment loop
-        current_time = time.time()
-        sleep_time = 60 - (current_time % 60)
-        time.sleep(sleep_time)
-        
-        # Trigger every turnaround minute
+    for symbol in symbols:
+        resolved = resolve_broker_symbol(symbol)
+        if resolved:
+            print(f"[SYMBOL OK] Active and tracking: {symbol} (Broker symbol: {resolved})")
+            if resolved not in active_symbols:
+                active_symbols.append(resolved)
+            symbol_map[resolved] = symbol
+
+    if not active_symbols:
+        print("[CRITICAL] No valid symbols to track. Stopping script.")
+        mt5.shutdown()
+        sys.exit(1)
+
+    print(f"[INFO] Successfully resolved {len(active_symbols)} active broker symbols.")
+
+    # --- 3. Run Instantly First ---
+    print("\n[STARTING] Pulling initial batch immediately...")
+    try:
         fetch_and_log()
+    except Exception as init_err:
+        print(f"[INIT PULL ERROR] {init_err}")
 
-except KeyboardInterrupt:
-    print("\n[STOPPING] Script terminated by user.")
+    print("\n[RUNNING] Initial pull done. Now entering 1-minute clock sync loop...")
 
-finally:
-    mt5.shutdown()
+    try:
+        while True:
+            # Perfect 1-minute clock alignment loop
+            current_time = time.time()
+            sleep_time = 60 - (current_time % 60)
+            time.sleep(sleep_time)
+            
+            # Trigger every turnaround minute
+            try:
+                fetch_and_log()
+            except Exception as loop_err:
+                print(f"[LOOP FETCH ERROR] {loop_err}")
+
+    except KeyboardInterrupt:
+        print("\n[STOPPING] Script terminated by user.")
+    finally:
+        mt5.shutdown()
+
+if __name__ == "__main__":
+    main()

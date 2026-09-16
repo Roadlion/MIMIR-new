@@ -34,6 +34,7 @@ def run_test():
         policy_signal="AI_INFRASTRUCTURE_BOOM",
         is_spillover=True,
         spillover_source_asset="TSMC",
+        ignore_macro=True,
         conn=conn
     )
 
@@ -44,7 +45,7 @@ def run_test():
         print(f" - Holding Period: {res['holding_period']}")
         print(f" - Target Price: ${res['target_price']}")
         print(f" - Stop Loss: ${res['stop_loss']}")
-        print(f" - Thesis Preview: {res['investment_thesis'][:150]}...")
+        print(f" - Thesis Preview: {res['investment_thesis'][:150].encode('ascii', 'ignore').decode()}...")
     else:
         print("[TEST 1 FAILED] Catalyst alert creation returned None.")
 
