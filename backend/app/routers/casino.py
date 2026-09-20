@@ -782,3 +782,199 @@ def build_custom(request: CustomBuildRequest):
 @router.get("/templates")
 def get_templates():
     return {"templates": STRATEGY_TEMPLATES}
+
+
+# --- War Rig -> Casino Nitrous Express Bridge Endpoints ---
+
+class NitrousSolveRequest(BaseModel):
+    ticker: str
+    trigger_price: float
+    target_price: float
+    stop_loss: float
+    conviction_score: Optional[float] = 0.75
+    risk_reward_ratio: Optional[float] = 2.5
+    holding_period: Optional[str] = "5-14 Days"
+    catalyst_type: Optional[str] = "WAR_RIG_CONVERGENCE"
+    earnings_date: Optional[str] = None
+    days_until_earnings: Optional[int] = None
+    investment_thesis: Optional[str] = ""
+
+
+class NitrousInjectRequest(BaseModel):
+    ticker: str
+    mode: str  # "MODE_A" or "MODE_B"
+    strategy_payload: Dict[str, Any]
+    war_rig_signal_id: Optional[int] = None
+
+
+@router.get("/nitrous/active-convergences")
+def get_nitrous_active_convergences(limit: int = Query(10, ge=1, le=25)):
+    """
+    Fetches active War Rig Crankshaft convergence signals (>= 75% conviction)
+    and computes the Nitro Mode A and Mode B options configurations for each.
+    """
+    _check_tables()
+    from ..analytics.war_rig_nitrous import get_nitrous_bridge
+    bridge = get_nitrous_bridge()
+
+    conn = get_db_connection_dict()
+    schema = settings.mimir_schema
+    convergences = []
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT id, ticker, trigger_price, target_price, stop_loss, conviction_score,
+                   holding_period, headline, investment_thesis, reason, catalyst_type, created_at
+            FROM {schema}.mimir_trade_signals
+            WHERE catalyst_type = 'WAR_RIG_CONVERGENCE'
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cursor.fetchall()
+        cursor.close()
+
+        if not rows:
+            # Fallback to scanning top liquid names through the War Rig crankshaft
+            from ..analytics.war_rig_engine import WarRigEngine
+            from ..routers.prices import DEFAULT_TICKERS
+            engine = WarRigEngine(conn=conn)
+            scan_candidates = [t for t in DEFAULT_TICKERS[:12] if t]
+            for sym in scan_candidates:
+                try:
+                    cand = engine.evaluate_war_rig_candidate(sym, conn=conn)
+                    if cand and cand.get("conviction_score", 0) >= 0.75:
+                        rows.append(cand)
+                except Exception:
+                    continue
+
+        for r in rows:
+            sig_dict = dict(r)
+            if "id" in sig_dict:
+                sig_dict["signal_id"] = sig_dict["id"]
+            if isinstance(sig_dict.get("created_at"), datetime):
+                sig_dict["created_at"] = sig_dict["created_at"].isoformat()
+
+            try:
+                nitrous_data = bridge.generate_nitrous_deployment(sig_dict)
+                convergences.append({
+                    "signal": sig_dict,
+                    "nitrous": nitrous_data
+                })
+            except Exception as ex:
+                logger.warning(f"[CASINO_NITROUS] Error building nitrous for {sig_dict.get('ticker')}: {ex}")
+
+        return {
+            "status": "success",
+            "count": len(convergences),
+            "convergences": convergences
+        }
+    except Exception as e:
+        logger.error(f"[CASINO_NITROUS] Error getting active convergences: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/nitrous/solve")
+def solve_nitrous_options(request: NitrousSolveRequest):
+    """
+    Direct endpoint: Ingests War Rig execution bounds (trigger, target, stop loss)
+    and dynamically solves for Nitro Mode A (Bull Call Vertical Spread 3:1 - 5:1 asymmetry)
+    and Nitro Mode B (Gamma Straddles & IV Crush Harvester).
+    """
+    from ..analytics.war_rig_nitrous import get_nitrous_bridge
+    bridge = get_nitrous_bridge()
+    try:
+        result = bridge.generate_nitrous_deployment(request.model_dump())
+        return result
+    except Exception as e:
+        logger.error(f"[CASINO_NITROUS] Error solving nitrous options for {request.ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/nitrous/inject")
+def inject_nitrous_pod(request: NitrousInjectRequest):
+    """
+    Hit the NITROUS Button: Deploys the selected options strategy into mimir_casino_strategies
+    linked to the War Rig signal, marking it ready for execution.
+    """
+    _check_tables()
+    conn = get_db_connection_dict()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    schema = settings.mimir_schema
+    strat = request.strategy_payload
+
+    try:
+        cursor = conn.cursor()
+        legs_json = json.dumps(strat.get("legs", []))
+        strat_name = strat.get("strategy_name", f"{request.ticker} Nitrous {request.mode}")
+        cat_type = "bullish" if not strat.get("is_credit") else "income"
+        spot = float(strat.get("underlying_price", 100.0))
+        prem = float(strat.get("net_debit_or_credit", 0.0))
+        if not strat.get("is_credit"):
+            prem = -abs(prem)  # debit
+        else:
+            prem = abs(prem)   # credit
+
+        mp = strat.get("max_profit")
+        ml = strat.get("max_loss")
+        if ml is not None and not strat.get("is_credit"):
+            ml = -abs(ml)
+
+        be_list = [strat.get("breakeven")] if strat.get("breakeven") else []
+        pop = strat.get("probability_of_profit", 0.5)
+        rr = strat.get("asymmetry_ratio", 3.0)
+        conv = 0.85
+        risk_grade = "DEFINED_RISK_CAPPED"
+        snapshot = {
+            "nitrous_mode": request.mode,
+            "war_rig_signal_id": request.war_rig_signal_id,
+            "target_price": strat.get("target_price"),
+            "stop_loss": strat.get("stop_loss"),
+            "iv_rank": strat.get("iv_rank")
+        }
+        reasoning = strat.get("thesis", "War Rig Nitrous Oxide Injector deployment.")
+        exp_date = strat.get("expiration")
+
+        cursor.execute(f"""
+            INSERT INTO {schema}.mimir_casino_strategies
+            (ticker, strategy_name, strategy_type, legs, underlying_price, net_premium,
+             max_profit, max_loss, breakeven_points, probability_of_profit, risk_reward_ratio,
+             conviction, risk_grade, signal_snapshot, reasoning, recommended_at, status, expiration_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            request.ticker, strat_name, cat_type, legs_json,
+            spot, prem, mp, ml, be_list, pop, rr, conv,
+            risk_grade, json.dumps(snapshot), reasoning, get_now(), "pending_nitrous", exp_date
+        ))
+        row = cursor.fetchone()
+        strategy_id = row["id"]
+        conn.commit()
+
+        return {
+            "status": "success",
+            "strategy_id": strategy_id,
+            "ticker": request.ticker,
+            "mode": request.mode,
+            "strategy_name": strat_name,
+            "legs": strat.get("legs", []),
+            "max_profit": mp,
+            "max_loss": ml,
+            "asymmetry_ratio": rr,
+            "message": f"Nitrous Pod successfully deployed for {request.ticker}!"
+        }
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[CASINO_NITROUS] Error injecting nitrous pod: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+

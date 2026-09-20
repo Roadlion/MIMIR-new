@@ -313,53 +313,24 @@ def fire_surge_signals(surge_events: List[Dict], conn=None) -> int:
                 f"have not acted yet. Exit once attention_decay_ratio rises above 0.6."
             )
 
-            success = insert_trade_signal(
-                ticker=ticker,
-                signal_type="BUY",
-                trigger_price=current_price,
-                rsi=rsi_val,
-                sentiment=sentiment,
-                support=support,
-                resistance=resistance,
-                reason=reason,
-                investment_thesis=thesis,
-                conviction_score=round(min(surge_ratio / 10.0, 1.0), 3),
-                conn=conn,
+            # [PERMANENTLY DEPRECATED FOR STANDALONE EMISSION]
+            # Standalone social FOMO alerts are decommissioned. All alpha emission is strictly
+            # centralized through the single-shaft War Rig Transmission Engine.
+            logger.info(
+                f"[SURGE] Social surge tracked for {ticker} ({surge_ratio:.1f}x baseline). "
+                f"Standalone trade emission decommissioned in favor of War Rig Transmission Engine."
             )
-
-            if success:
-                fired += 1
-                logger.info(f"[SURGE] ✅ BUY signal fired for {ticker} (surge {surge_ratio:.1f}x)")
-
-                # Discord notification
-                try:
-                    _discord_alert(
-                        ticker=ticker,
-                        signal_type="BUY",
-                        trigger_price=current_price,
-                        target_price=resistance,
-                        stop_loss=support,
-                        sentiment_score=sentiment,
-                        conviction_score=min(surge_ratio / 10.0, 1.0),
-                        reasoning=reason[:300],
-                        investment_thesis=thesis[:500],
-                        alert_source="SOCIAL_SURGE",
-                    )
-                except Exception as dc_err:
-                    logger.warning(f"[SURGE] Discord alert failed for {ticker}: {dc_err}")
-
-                # Update status
-                try:
-                    cur = conn.cursor()
-                    cur.execute(f"""
-                        UPDATE {_SCHEMA}.mimir_social_surges
-                        SET status = 'FIRED'
-                        WHERE ticker = %s AND surge_date = %s
-                    """, (ticker, ev["surge_date"]))
-                    conn.commit()
-                    cur.close()
-                except Exception:
-                    pass
+            try:
+                cur = conn.cursor()
+                cur.execute(f"""
+                    UPDATE {_SCHEMA}.mimir_social_surges
+                    SET status = 'TRACKED'
+                    WHERE ticker = %s AND surge_date = %s
+                """, (ticker, ev["surge_date"]))
+                conn.commit()
+                cur.close()
+            except Exception:
+                pass
 
         except Exception as sig_err:
             logger.error(f"[SURGE] Signal generation failed for {ticker}: {sig_err}")

@@ -666,6 +666,22 @@ class WarRigEngine:
         headline = f"War Rig Convergence: {ticker} (Conviction: {composite_conviction:.0f}%, R/R: {rr:.1f}:1)"
         reason = f"WAR_RIG_CONVERGENCE: Sector [{c1_details.get('sector_phase')}] + Catalyst V8 + {rr:.1f}:1 Asymmetry"
 
+        # Nitrous Bridge Payload Hook
+        nitrous_input = {
+            "ticker": ticker,
+            "trigger_price": trigger_p,
+            "target_price": target_p,
+            "stop_loss": stop_p,
+            "conviction_score": round(composite_conviction / 100.0, 2),
+            "risk_reward_ratio": rr,
+            "holding_period": holding_period,
+            "catalyst_type": "WAR_RIG_CONVERGENCE",
+            "earnings_date": c2_details.get("pre_earnings", {}).get("earnings_date"),
+            "days_until_earnings": c2_details.get("pre_earnings", {}).get("days_until"),
+            "investment_thesis": thesis,
+            "evaluation_date": c_date
+        }
+
         return {
             "ticker": ticker,
             "signal_type": "BUY",
@@ -683,8 +699,19 @@ class WarRigEngine:
             "cylinder_1_score": c1_score,
             "cylinder_2_score": c2_score,
             "cylinder_3_score": c3_score,
-            "evaluation_date": c_date
+            "evaluation_date": c_date,
+            "nitrous_payload": nitrous_input
         }
+
+
+def get_war_rig_nitrous_options(signal: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Passes a War Rig signal to the Nitrous Express Bridge
+    to calculate Mode A and Mode B options configurations.
+    """
+    from .war_rig_nitrous import get_nitrous_bridge
+    bridge = get_nitrous_bridge()
+    return bridge.generate_nitrous_deployment(signal)
 
 
 def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:

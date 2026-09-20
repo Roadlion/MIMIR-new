@@ -22,6 +22,7 @@ Key Early Footprints Tracked:
 
 import logging
 import math
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
@@ -34,6 +35,10 @@ from .macro_tracker import is_market_regime_bullish
 logger = logging.getLogger(__name__)
 settings = get_settings()
 _SCHEMA = settings.mimir_schema
+
+# Fast in-memory caches to prevent 10,000 redundant database queries in backtests & scans
+_MATRIX_CACHE: Dict[str, Any] = {"data": None, "ts": 0.0}
+_TICKER_SECTOR_MAP: Dict[str, Optional[str]] = {}
 
 # 11 SPDR Sector ETFs mapped to database asset_sub_category names
 SECTOR_ETFS = {
@@ -86,6 +91,11 @@ def get_sector_rotation_matrix(conn=None) -> Dict[str, Any]:
     computes Relative Strength (RS), Money Flow (CMF), and DeepSeek sentiment,
     and returns a structured Sector Rotation Matrix.
     """
+    global _MATRIX_CACHE
+    now_ts = time.time()
+    if _MATRIX_CACHE["data"] is not None and (now_ts - _MATRIX_CACHE["ts"] < 300.0):
+        return _MATRIX_CACHE["data"]
+
     close_conn = False
     if conn is None:
         conn = get_db_connection()
@@ -205,7 +215,7 @@ def get_sector_rotation_matrix(conn=None) -> Dict[str, Any]:
         # Sort by 5-day Relative Strength alpha descending
         sectors_out.sort(key=lambda x: x["rs_vs_spy_5d_pct"], reverse=True)
 
-        return {
+        result_matrix = {
             "as_of": datetime.now(timezone.utc).isoformat(),
             "spy": {
                 "last_close": round(spy_last, 2),
@@ -214,6 +224,9 @@ def get_sector_rotation_matrix(conn=None) -> Dict[str, Any]:
             },
             "sectors": sectors_out
         }
+        _MATRIX_CACHE["data"] = result_matrix
+        _MATRIX_CACHE["ts"] = time.time()
+        return result_matrix
     except Exception as e:
         logger.error(f"[SECTOR_ROTATION] Error computing sector rotation matrix: {e}")
         return {"sectors": [], "spy": {}, "as_of": datetime.now(timezone.utc).isoformat()}
@@ -235,15 +248,20 @@ def get_ticker_sector_tailwinds(ticker: str, conn=None) -> Dict[str, Any]:
 
     cur = conn.cursor()
     try:
-        cur.execute(f"""
-            SELECT asset_sub_category
-            FROM {_SCHEMA}.mimir_sentiment_impacts
-            WHERE ticker = %s AND asset_sub_category IS NOT NULL
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (ticker,))
-        row = cur.fetchone()
-        sub_cat = row[0].strip().upper() if row and row[0] else None
+        global _TICKER_SECTOR_MAP
+        if ticker in _TICKER_SECTOR_MAP:
+            sub_cat = _TICKER_SECTOR_MAP[ticker]
+        else:
+            cur.execute(f"""
+                SELECT asset_sub_category
+                FROM {_SCHEMA}.mimir_sentiment_impacts
+                WHERE ticker = %s AND asset_sub_category IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (ticker,))
+            row = cur.fetchone()
+            sub_cat = row[0].strip().upper() if row and row[0] else None
+            _TICKER_SECTOR_MAP[ticker] = sub_cat
 
         if not sub_cat or sub_cat not in SUB_CATEGORY_TO_ETF:
             return {
@@ -429,38 +447,13 @@ def scan_sector_rotation_runners(conn=None) -> List[Dict[str, Any]]:
                 f"Sentiment +{float(avg_sent):.2f}"
             )
 
-            holding_period = f"Institutional Sector Rotation Swing (5-15 Days)"
-
-            success = insert_catalyst_trade_signal(
-                ticker=ticker,
-                signal_type="BUY",
-                catalyst_type=CatalystType.THEMATIC_TREND,
-                trigger_price=trigger_price,
-                target_price=target_price,
-                stop_loss=stop_loss,
-                holding_period=holding_period,
-                headline=f"Institutional Rotation Runner: {ticker} ({sector_label})",
-                investment_thesis=thesis,
-                conviction_score=conviction,
-                sentiment_score=float(avg_sent),
-                reason=reason_str,
-                conn=conn
+            # [PERMANENTLY DEPRECATED FOR STANDALONE EMISSION]
+            # Standalone sector runner alerts are decommissioned. Sector rotation tailwinds
+            # are centralized as Cylinder 1 of the War Rig Transmission Engine (war_rig_engine.py).
+            logger.info(
+                f"[SECTOR_ROTATION] Sector runner identified: {ticker} in {sector_label} (+{rs_alpha:.1f}% RS). "
+                f"Standalone emission decommissioned; will be captured through War Rig Transmission."
             )
-
-            if success:
-                logger.info(f"[SECTOR_ROTATION] Generated home run signal for {ticker} in {sector_label}!")
-                generated_signals.append({
-                    "ticker": ticker,
-                    "signal_type": "BUY",
-                    "catalyst_type": CatalystType.THEMATIC_TREND,
-                    "sector": sector_label,
-                    "trigger_price": trigger_price,
-                    "target_price": target_price,
-                    "stop_loss": stop_loss,
-                    "holding_period": holding_period,
-                    "conviction": conviction,
-                    "thesis": thesis
-                })
 
     except Exception as e:
         logger.error(f"[SECTOR_ROTATION] Error scanning rotation runners: {e}")

@@ -106,7 +106,19 @@ def insert_catalyst_trade_signal(
     reason: str,
     conn=None
 ) -> bool:
-    """Inserts a structured Catalyst Trade Signal into mimir_trade_signals."""
+    """
+    [PERMANENTLY DEPRECATED FOR STANDALONE EMISSION]
+    Standalone catalyst signals are decommissioned. All catalysts feed directly
+    into Cylinder 2 of the unified War Rig Transmission Engine (war_rig_engine.py).
+    Only WAR_RIG_CONVERGENCE is authorized to emit trade signals.
+    """
+    if catalyst_type != "WAR_RIG_CONVERGENCE":
+        logger.warning(
+            f"[CATALYST_ENGINE DECOMMISSIONED] Standalone catalyst signal for {ticker} "
+            f"({catalyst_type}) blocked. Catalyst data must converge through War Rig Cylinder 2."
+        )
+        return False
+
     close_conn = False
     if conn is None:
         conn = get_db_connection()

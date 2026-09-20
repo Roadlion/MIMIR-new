@@ -225,7 +225,16 @@ def insert_trade_signal(
     conviction_score: Optional[float] = None,
     conn=None
 ) -> bool:
-    """Inserts a new trade signal into the database."""
+    """
+    [PERMANENTLY DEPRECATED FOR STANDALONE EMISSION]
+    Only the War Rig Transmission Engine (catalyst_type == 'WAR_RIG_CONVERGENCE')
+    is authorized to emit trade signals into mimir_trade_signals.
+    All standalone sentiment fusion, surge, or unvetted emissions are blocked.
+    """
+    if catalyst_type != "WAR_RIG_CONVERGENCE":
+        print(f"[SIGNAL_FUSION DECOMMISSIONED] Standalone signal for {ticker} ({catalyst_type}) blocked. Only War Rig Transmission Engine is authorized.")
+        return False
+
     close_conn = False
     if conn is None:
         conn = get_db_connection()
@@ -1028,31 +1037,15 @@ def scan_all_tickers() -> List[Dict[str, Any]]:
 
     new_signals = []
     try:
-        # 1. Run Unified War Rig Transmission (Single Shaft Alpha Crankshaft)
-        # Converges Sector Rotation + Pre-Earnings Beats + Spillovers + Microstructure Gate
-        try:
-            from .war_rig_engine import run_war_rig_scan
-            war_rig_sigs = run_war_rig_scan(conn=conn, top_n=5)
-            if war_rig_sigs:
-                new_signals.extend(war_rig_sigs)
-                print(f"[SIGNAL_FUSION] War Rig Crankshaft generated {len(war_rig_sigs)} WAR_RIG_CONVERGENCE signals.")
-        except Exception as wr_err:
-            print(f"[SIGNAL_FUSION] War Rig scan error: {wr_err}")
-
-        # 2. Run Ticker Scan for Sentiment Fusion Signals
-        for ticker in target_tickers:
-            sig = scan_ticker_for_signals(
-                ticker,
-                conn=conn,
-                df_prices=prices_by_ticker.get(ticker),
-                df_sent=sentiment_by_ticker.get(ticker, pd.DataFrame(columns=['date', 'sentiment'])),
-                ticker_params=params_map.get(ticker),
-                fundamentals=fund_map.get(ticker),
-                live_success_rate=feedback_map.get(ticker)
-            )
-            if sig:
-                new_signals.append(sig)
-                print(f"[SIGNAL_FUSION] Generated {sig['signal_type']} signal for {ticker}: {sig['reason']}")
+        # Sole Authorized Alpha Crankshaft: Unified War Rig Transmission Engine
+        # Converges Sector Rotation + Pre-Earnings Beats + Spillovers + Microstructure Gate (Conviction >= 75%)
+        from .war_rig_engine import run_war_rig_scan
+        war_rig_sigs = run_war_rig_scan(conn=conn, top_n=10)
+        if war_rig_sigs:
+            new_signals.extend(war_rig_sigs)
+            print(f"[SIGNAL_FUSION] War Rig Crankshaft generated {len(war_rig_sigs)} WAR_RIG_CONVERGENCE signals.")
+    except Exception as wr_err:
+        print(f"[SIGNAL_FUSION] War Rig scan error: {wr_err}")
     finally:
         conn.close()
             

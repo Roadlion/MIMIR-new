@@ -395,15 +395,15 @@ async def start_sentiment_loop():
 
 
 async def start_signal_fusion_loop():
-    """10-minute async loop scanning price and sentiment for trade signals."""
+    """10-minute async loop scanning price and sentiment exclusively through the War Rig Transmission Engine."""
     await asyncio.sleep(45)  # Stagger startup
     from ..analytics.signal_fusion import scan_all_tickers
     while True:
         try:
-            print("[BG_WORKER] Starting Signal Fusion scan...")
+            print("[BG_WORKER] Starting War Rig Single-Shaft Transmission Scan...")
             await asyncio.to_thread(scan_all_tickers)
         except Exception as e:
-            print(f"[BG_WORKER] Error in Signal Fusion loop: {e}")
+            print(f"[BG_WORKER] Error in War Rig Transmission loop: {e}")
         await asyncio.sleep(600)  # every 10 minutes
 
 

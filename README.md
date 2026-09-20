@@ -47,14 +47,37 @@ Instead of running disparate, standalone technical indicators or uncoordinated a
                        ┌────────────────┴────────────────┐
                        │ YES                             │ NO
                        ▼                                 ▼
-          ┌─────────────────────────┐       ┌────────────────────────┐
-          │ EMIT WAR RIG CONVERGENCE│       │ DISCARD / NO ORDER     │
-          │   • Entry: T+1 Open     │       │   (Prevents Over-      │
-          │   • Target: 2.5-3x ATR  │       │    engineering & Drift)│
-          │   • Stop: 1.5x ATR      │       └────────────────────────┘
-          │   • Multi-Tier Ratchet  │
-          └─────────────────────────┘
+           ┌─────────────────────────┐       ┌────────────────────────┐
+           │ EMIT WAR RIG CONVERGENCE│       │ DISCARD / NO ORDER     │
+           │   • Entry: T+1 Open     │       │   (Prevents Over-      │
+           │   • Target: 2.5-3x ATR  │       │    engineering & Drift)│
+           │   • Stop: 1.5x ATR      │       └────────────────────────┘
+           │   • Multi-Tier Ratchet  │
+           └───────────┬─────────────┘
+                       │
+                       ▼ [NITROUS POD TRIGGER: >= 75% Conviction]
+           ┌────────────────────────────────────────┐
+           │     THE CASINO: NITROUS INJECTOR       │
+           │ (Non-Linear Asymmetric Options Engine) │
+           ├────────────────────────────────────────┤
+           │ • Nitro Mode A: Bull Call Spreads      │
+           │   3:1 - 5:1 Asymmetry, Capped Debit    │
+           │ • Nitro Mode B: Volatility Harvester   │
+           │   IV Rank < 35: High-Gamma Rocket      │
+           │   IV Rank > 85: Post-Earnings IV Crush │
+           └────────────────────────────────────────┘
 ```
+
+---
+
+## ⚡ The Modular Nitrous Oxide Injector (The Casino)
+
+When the War Rig crankshaft converges on $\ge 75\%$ conviction (e.g., MU pre-earnings at 78% conviction or a high-magnitude spillover), the trader can hit the **NITROUS** button to deploy options leverage instead of linear common shares:
+- **War Rig -> Casino Auto-Express Bridge (`backend/app/analytics/war_rig_nitrous.py`):** Ingests exact trigger price ($S_0$), stop loss ($1.5\times\text{ATR}$), target ($3.0\times\text{ATR}$), and holding window.
+- **Nitro Mode A (Skew-Optimized Bull Call Vertical Spreads):** Solves for optimal call debit spread with the short strike anchored to the $3.0\times\text{ATR}$ target and long strike near ATM. Targets $3:1$ to $5:1$ payoff asymmetry with strictly capped debit downside, completely immune to overnight gap-downs below stop loss.
+- **Nitro Mode B (Gamma Straddles & IV Crush Harvester):** Dynamically branches based on options implied volatility:
+  - If $\text{IV Rank} < 35$: recommends cheap directional high-gamma calls or long straddles to ride volatility explosion into the catalyst.
+  - If $\text{IV Rank} > 85$ (bloated retail hype): recommends bull put credit spreads beneath the $1.5\times\text{ATR}$ stop loss to harvest post-earnings volatility crush while preserving directional tailwinds.
 
 ---
 
@@ -121,6 +144,7 @@ Verified across 5,173 US equities and 10,091 candidate catalyst events via `scri
 
 ### 📁 Quantitative Analytics (`backend/app/analytics/`)
 * `war_rig_engine.py`: **The Central Crankshaft Transmission**. Unifies Macro, Sector Rotation, Pre-Earnings, Supply Chain Spillovers, and Bong Strats Microstructure into single-shaft conviction ($\ge 75\%$).
+* `war_rig_nitrous.py`: **The Casino Nitrous Express Bridge**. Translates War Rig directional signals into skew-optimized Bull Call Vertical Spreads (3:1 to 5:1 asymmetry) and gamma/volatility harvest options structures.
 * `technical_analysis.py`: Vectorized technical indicator computer (RSI, ATR, Bollinger Bands, Moving Averages).
 * `paper_trader.py`: Automated paper trading engine enforcing US regular market session execution, staged sizing, and trailing ratchets.
 * `signal_fusion.py`: Multi-factor signal combiner orchestrating the 10-minute automated War Rig universe scan.

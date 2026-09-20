@@ -3,7 +3,10 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None
 
 # Reentrant lock to serialize MT5 order and state requests
 _mt5_lock = threading.RLock()
@@ -47,7 +50,8 @@ MT5_RETCODE_DESCRIPTIONS = {
 
 
 def ensure_mt5_connected() -> bool:
-    """Ensures connection to MetaTrader 5 terminal. Returns True if connected."""
+    if mt5 is None:
+        return False
     with _mt5_lock:
         try:
             # Check existing connection first
