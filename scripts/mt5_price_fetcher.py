@@ -181,6 +181,46 @@ def fetch_and_log():
                 
                 execute_values(cur, sql, sorted_rows)
                 
+                # Also log to mimir_minute_ohlcv
+                min_sql = f"""
+                INSERT INTO {settings.mimir_schema}.mimir_minute_ohlcv 
+                (ticker, timestamp, open, high, low, close, volume)
+                VALUES %s
+                ON CONFLICT (ticker, timestamp) DO UPDATE 
+                SET open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    scraped_at = NOW();
+                """
+                execute_values(cur, min_sql, sorted_rows)
+
+                # Upsert into mimir_latest_prices for instant sub-millisecond retrieval
+                latest_rows = [
+                    (r[0], r[5], r[5], 0.0, r[6], r[2], r[3], r[4], r[1])
+                    for r in sorted_rows
+                ]
+                latest_sql = f"""
+                INSERT INTO {settings.mimir_schema}.mimir_latest_prices
+                (ticker, latest_price, prev_close_24h, change_percent, volume, open, high, low, timestamp, updated_at)
+                VALUES %s
+                ON CONFLICT (ticker) DO UPDATE SET
+                    latest_price = EXCLUDED.latest_price,
+                    change_percent = CASE 
+                        WHEN mimir_latest_prices.prev_close_24h IS NOT NULL AND mimir_latest_prices.prev_close_24h > 0 
+                        THEN ROUND(((EXCLUDED.latest_price - mimir_latest_prices.prev_close_24h) / mimir_latest_prices.prev_close_24h * 100)::numeric, 2)
+                        ELSE mimir_latest_prices.change_percent
+                    END,
+                    volume = EXCLUDED.volume,
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    timestamp = EXCLUDED.timestamp,
+                    updated_at = NOW();
+                """
+                execute_values(cur, latest_sql, latest_rows)
+                
                 # Send notification for realtime SSE
                 cur.execute("NOTIFY price_updates, 'new_prices';")
                 

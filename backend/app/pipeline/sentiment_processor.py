@@ -204,8 +204,8 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 try:
                     from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
                     discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
-                    except Exception as llm_err:
-                        print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+                except Exception as llm_err:
+                    print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
 
         # 3. Track Central Bank policy signals into mimir_macro_signals
         for imp in impacts:
@@ -639,7 +639,7 @@ def run_triage_batch(articles: List[tuple]) -> List[dict]:
     """DEPRECATED: Use triage_pending_articles() local Python triage instead."""
     return []
 
-def triage_pending_articles(batch_size: int = 200) -> int:
+def triage_pending_articles(batch_size: int = 1000) -> int:
     """
     Fetches articles in 'triage_pending' status, triages them locally using
     fast Python regex (DeepSeekSentiment.is_financial_or_macro), and updates

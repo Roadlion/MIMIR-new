@@ -9,6 +9,9 @@ import json
 import csv
 import io
 import re
+import math
+import time
+import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,6 +19,8 @@ from ..database import get_db_connection_dict, get_db_connection
 from ..config import get_settings
 from ..auth import get_optional_current_user, get_current_user
 from ..sentiment.llm_client import send_chat_completion
+from ..analytics.technical_analysis import find_support_resistance
+from ..services.sector_rotation_service import get_ticker_sector_tailwinds
 
 router = APIRouter()
 settings = get_settings()
@@ -84,15 +89,14 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
     clean_map = {t: t.strip().lstrip('$').upper() for t in tickers}
     unique_symbols = list(set(clean_map.values()))
 
-    # 1. Fast batch lookup in mimir_hourly_ohlcv (sub-second)
+    # 1. Fast batch lookup in mimir_latest_prices (<2ms)
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(f"""
-            SELECT DISTINCT ON (ticker) ticker, close
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            SELECT ticker, latest_price
+            FROM {settings.mimir_schema}.mimir_latest_prices
             WHERE ticker = ANY(%s)
-            ORDER BY ticker, timestamp DESC
         """, (unique_symbols,))
         for row in cur.fetchall():
             sym = row[0].upper()
@@ -100,7 +104,7 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"[PORTFOLIO] DB price lookup error: {e}")
+        print(f"[PORTFOLIO] mimir_latest_prices lookup error: {e}")
 
     # 2. Check MT5 for any missing symbols
     missing = [sym for sym in unique_symbols if sym not in prices or prices[sym] <= 0]
@@ -752,7 +756,7 @@ def export_portfolio_transactions(
 
 
 
-def fetch_online_stock_data(tickers: List[str]) -> Dict[str, List[str]]:
+def fetch_online_stock_data(tickers: List[str]) -> Dict[str, List[Dict]]:
     if not tickers:
         return {}
     from curl_cffi.requests import Session
@@ -764,15 +768,37 @@ def fetch_online_stock_data(tickers: List[str]) -> Dict[str, List[str]]:
         "Accept-Language": "en-US,en;q=0.9"
     })
     
-    news_by_ticker = {}
-    for ticker in tickers:
+    def fetch_single_news(ticker):
+        clean_ticker = ticker.strip().lstrip('$').upper()
         try:
-            t = yf.Ticker(ticker, session=session)
+            t = yf.Ticker(clean_ticker, session=session)
             news = t.news
-            headlines = [n["title"] for n in news[:4]] if news else []
-            news_by_ticker[ticker] = headlines
+            headlines = []
+            if news:
+                for n in news[:5]:
+                    pub_ts = n.get("providerPublishTime")
+                    recency = "Recent"
+                    if pub_ts:
+                        age_secs = int(time.time() - pub_ts)
+                        if age_secs < 3600:
+                            recency = f"{max(1, age_secs // 60)}m ago"
+                        elif age_secs < 86400:
+                            recency = f"{age_secs // 3600}h ago"
+                        else:
+                            recency = f"{age_secs // 86400}d ago"
+                    headlines.append({
+                        "title": n.get("title"),
+                        "publisher": n.get("publisher", "Market Wire"),
+                        "recency": recency
+                    })
+            return ticker, headlines
         except Exception:
-            news_by_ticker[ticker] = []
+            return ticker, []
+
+    news_by_ticker = {}
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for tkr, items in executor.map(fetch_single_news, tickers):
+            news_by_ticker[tkr] = items
     return news_by_ticker
 
 def fetch_macro_indicators() -> Dict[str, Dict]:
@@ -816,6 +842,9 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
         return {}
     trends = {}
     
+    # 1. Fetch real-time live prices from mimir_hourly_ohlcv and MT5 bridge
+    live_prices = fetch_current_prices(tickers)
+    
     from curl_cffi.requests import Session
     session = Session(impersonate="chrome")
     session.verify = False
@@ -825,9 +854,17 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
         "Accept-Language": "en-US,en;q=0.9"
     })
 
+    # Bong Strats Quantitative Indicators
+    try:
+        from bong_strats.indicators import compute_volatility_regime, compute_ou_features
+    except Exception:
+        compute_volatility_regime = None
+        compute_ou_features = None
+
     def fetch_single(t_symbol):
         try:
             clean_symbol = t_symbol.strip().lstrip('$').upper()
+            live_p = live_prices.get(clean_symbol, 0.0) or live_prices.get(t_symbol, 0.0)
             t = yf.Ticker(clean_symbol, session=session)
             
             # Fetch 200 days of history for technical analysis
@@ -837,20 +874,47 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
                 "dma_50": 0.0,
                 "dma_200": 0.0,
                 "volume_ratio": 1.0,
-                "price_trend_status": "Neutral"
+                "price_trend_status": "Neutral",
+                "support": 0.0,
+                "resistance": 0.0,
+                "atr_14": 0.0,
+                "volatility_regime": "STABLE",
+                "ou_zscore": 0.0,
+                "wyckoff_seller_exhausted": False,
+                "execution_bounds": {
+                    "trigger_price": 0.0,
+                    "stop_loss": 0.0,
+                    "target_price": 0.0,
+                    "risk_reward_ratio": 2.5,
+                    "upside_pct": 0.0,
+                    "downside_pct": 0.0
+                }
             }
             
-            current_price = 0.0
+            current_price = float(live_p) if live_p > 0 else 0.0
             change_5d_pct = 0.0
             
             if not hist.empty:
                 current_price = float(hist["Close"].iloc[-1])
+                # Overlay real-time live tick price if fresh and available
+                if live_p > 0:
+                    current_price = float(live_p)
+                    # Update latest bar close with the live tick price to ensure freshest technicals
+                    hist.iloc[-1, hist.columns.get_loc("Close")] = current_price
+                    if current_price > float(hist["High"].iloc[-1]):
+                        hist.iloc[-1, hist.columns.get_loc("High")] = current_price
+                    if current_price < float(hist["Low"].iloc[-1]):
+                        hist.iloc[-1, hist.columns.get_loc("Low")] = current_price
+
                 price_5d_ago = float(hist["Close"].iloc[-5]) if len(hist) >= 5 else float(hist["Close"].iloc[0])
                 change_5d_pct = ((current_price - price_5d_ago) / price_5d_ago * 100) if price_5d_ago > 0 else 0.0
                 
                 # Compute Moving Averages
                 closes = hist["Close"]
                 volumes = hist["Volume"]
+                highs = hist["High"]
+                lows = hist["Low"]
+                
                 dma50 = float(closes.tail(50).mean()) if len(closes) >= 50 else current_price
                 dma200 = float(closes.mean()) if len(closes) >= 200 else dma50
                 
@@ -866,10 +930,10 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
                     rsi_series = 100 - (100 / (1 + rs))
                     rsi14 = float(rsi_series.fillna(50.0).iloc[-1])
                     
-                # Compute Volume Ratio
+                # Compute Volume Ratio (current vs 20-day average)
                 vol_ratio = 1.0
                 if len(volumes) >= 5:
-                    avg_vol = float(volumes.tail(30).mean())
+                    avg_vol = float(volumes.tail(20).mean())
                     if avg_vol > 0:
                         vol_ratio = float(volumes.iloc[-1] / avg_vol)
                         
@@ -883,13 +947,96 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
                     trend_status = "Strongly Bearish (Death Cross/Downtrend)"
                 elif current_price < dma50:
                     trend_status = "Moderately Bearish (Below 50 DMA)"
+
+                # Support & Resistance
+                support, resistance = find_support_resistance(highs, lows, closes)
+
+                # 14-day ATR & War Rig Execution Bounds (1.5x ATR Stop, 3.0x ATR Target, R/R >= 2.5:1)
+                tr1 = highs - lows
+                tr2 = (highs - closes.shift(1)).abs()
+                tr3 = (lows - closes.shift(1)).abs()
+                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                atr = float(tr.rolling(14).mean().iloc[-1]) if len(tr) >= 14 else current_price * 0.03
+                if math.isnan(atr) or atr <= 0:
+                    atr = current_price * 0.03
+
+                sl_dist = max(0.038 * current_price, min(0.065 * current_price, 1.5 * atr))
+                tp_dist = max(0.120 * current_price, min(0.250 * current_price, 3.0 * atr))
+                tp_dist = max(tp_dist, sl_dist * 2.50)
+
+                stop_loss = round(current_price - sl_dist, 2)
+                target_price = round(current_price + tp_dist, 2)
+                rr_ratio = round((target_price - current_price) / max(0.01, (current_price - stop_loss)), 2)
+                upside_pct = round(((target_price / current_price) - 1.0) * 100.0, 1) if current_price > 0 else 0.0
+                downside_pct = round((1.0 - (stop_loss / current_price)) * 100.0, 1) if current_price > 0 else 0.0
+
+                # Volatility Regime
+                vol_regime = "STABLE"
+                if compute_volatility_regime is not None:
+                    try:
+                        df_norm = hist.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
+                        v_reg = compute_volatility_regime(df_norm)
+                        vol_regime = str(v_reg.iloc[-1]) if not v_reg.empty else "STABLE"
+                    except Exception:
+                        vol_regime = "STABLE"
+                else:
+                    if len(closes) >= 20:
+                        sma20 = closes.rolling(20).mean()
+                        std20 = closes.rolling(20).std()
+                        bw = (4 * std20) / sma20
+                        bw_curr = float(bw.iloc[-1])
+                        bw_avg = float(bw.rolling(50, min_periods=20).mean().iloc[-1]) if len(bw) >= 20 else bw_curr
+                        if bw_curr < bw_avg * 0.75:
+                            vol_regime = "SQUEEZE"
+                        elif bw_curr > bw_avg * 1.40:
+                            vol_regime = "EXHAUSTION"
+                        elif bw_curr > bw_avg:
+                            vol_regime = "EXPANDING"
+
+                # Ornstein-Uhlenbeck SDE Mean-Reversion Z-score
+                ou_z = 0.0
+                if compute_ou_features is not None:
+                    try:
+                        df_norm = hist.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
+                        ou_df = compute_ou_features(df_norm, lookback=min(40, len(df_norm) - 1))
+                        ou_z = float(ou_df["ou_zscore"].iloc[-1]) if pd.notna(ou_df["ou_zscore"].iloc[-1]) else 0.0
+                    except Exception:
+                        ou_z = 0.0
+
+                # Wyckoff Seller Absorption
+                seller_exhausted = False
+                try:
+                    if len(hist) >= 22:
+                        prior_vol = volumes.shift(1).rolling(20, min_periods=10).mean()
+                        prev_bar = hist.iloc[-2]
+                        curr_bar = hist.iloc[-1]
+                        prev_avg = prior_vol.iloc[-2]
+                        is_vol_surge = (pd.notna(prev_avg) and prev_avg > 0 and float(prev_bar["Volume"]) >= prev_avg * 1.5)
+                        bearish_surge = is_vol_surge and (float(prev_bar["Close"]) < float(prev_bar["Open"]))
+                        seller_exhausted = bool(bearish_surge and (float(curr_bar["Low"]) >= float(prev_bar["Low"])) and (float(curr_bar["Close"]) > float(curr_bar["Open"])))
+                except Exception:
+                    pass
                     
                 techs = {
                     "rsi_14": round(rsi14, 2),
                     "dma_50": round(dma50, 2),
                     "dma_200": round(dma200, 2),
                     "volume_ratio": round(vol_ratio, 2),
-                    "price_trend_status": trend_status
+                    "price_trend_status": trend_status,
+                    "support": round(support, 2),
+                    "resistance": round(resistance, 2),
+                    "atr_14": round(atr, 2),
+                    "volatility_regime": vol_regime,
+                    "ou_zscore": round(ou_z, 2),
+                    "wyckoff_seller_exhausted": seller_exhausted,
+                    "execution_bounds": {
+                        "trigger_price": current_price,
+                        "stop_loss": stop_loss,
+                        "target_price": target_price,
+                        "risk_reward_ratio": rr_ratio,
+                        "upside_pct": upside_pct,
+                        "downside_pct": downside_pct
+                    }
                 }
             
             # Fetch fundamental details
@@ -934,7 +1081,21 @@ def fetch_portfolio_price_trends(tickers: List[str]) -> Dict[str, Dict]:
                         "dma_50": 0.0,
                         "dma_200": 0.0,
                         "volume_ratio": 1.0,
-                        "price_trend_status": "Neutral"
+                        "price_trend_status": "Neutral",
+                        "support": 0.0,
+                        "resistance": 0.0,
+                        "atr_14": 0.0,
+                        "volatility_regime": "STABLE",
+                        "ou_zscore": 0.0,
+                        "wyckoff_seller_exhausted": False,
+                        "execution_bounds": {
+                            "trigger_price": 0.0,
+                            "stop_loss": 0.0,
+                            "target_price": 0.0,
+                            "risk_reward_ratio": 2.5,
+                            "upside_pct": 0.0,
+                            "downside_pct": 0.0
+                        }
                     },
                     "fundamental_analysis": {}
                 }
@@ -960,7 +1121,7 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
         cur.close()
         conn.close()
         return {
-            "advice": "Add some transactions to your portfolio first, and MIMIR will analyze them against market sentiment!"
+            "advice": "<div class='p-6 text-center text-[#8BA4A8] font-mono'>Add active transactions to your portfolio to activate the War Rig AI Sentinel strategic diagnostic!</div>"
         }
         
     # Group transactions by ticker
@@ -973,7 +1134,6 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
         
     portfolio_list = []
     for ticker, txs_list in raw_holdings.items():
-        # Sort chronologically to compute weighted average cost basis and realized P&L
         txs_sorted = sorted(txs_list, key=lambda x: x["order_date"])
         
         qty_sum = 0.0
@@ -1010,14 +1170,23 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
     tickers_list = [p["ticker"] for p in portfolio_list]
     tickers_tuple = tuple(tickers_list)
     
-    # 2. Get recent sentiment impacts for the user's stocks
+    # 2. Get recent sentiment impacts and detailed NLP reasoning for the user's stocks
     sentiment_data = []
     if tickers_tuple:
-        # Avoid tuple syntax error for single item
         if len(tickers_tuple) == 1:
             query = f"""
                 SELECT si.ticker, AVG(si.sentiment_score) as avg_score, COUNT(DISTINCT a.id) as article_count,
-                       json_agg(json_build_object('title', a.title, 'reasoning', si.reasoning, 'score', si.sentiment_score)) as articles
+                       json_agg(json_build_object(
+                           'title', a.title,
+                           'source', a.source_name,
+                           'published_ts', to_char(a.published_ts, 'YYYY-MM-DD HH24:MI'),
+                           'age_hours', round((EXTRACT(EPOCH FROM (NOW() - a.published_ts))/3600.0)::numeric, 1),
+                           'reasoning', si.reasoning,
+                           'score', round(si.sentiment_score::numeric, 2),
+                           'direction', si.direction,
+                           'is_spillover', COALESCE(si.is_spillover, false),
+                           'spillover_source_asset', si.spillover_source_asset
+                       ) ORDER BY a.published_ts DESC) as articles
                 FROM {settings.mimir_schema}.mimir_sentiment_impacts si
                 JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
                 WHERE si.ticker = %s AND a.published_ts > NOW() - INTERVAL '14 days'
@@ -1027,7 +1196,17 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
         else:
             query = f"""
                 SELECT si.ticker, AVG(si.sentiment_score) as avg_score, COUNT(DISTINCT a.id) as article_count,
-                       json_agg(json_build_object('title', a.title, 'reasoning', si.reasoning, 'score', si.sentiment_score)) as articles
+                       json_agg(json_build_object(
+                           'title', a.title,
+                           'source', a.source_name,
+                           'published_ts', to_char(a.published_ts, 'YYYY-MM-DD HH24:MI'),
+                           'age_hours', round((EXTRACT(EPOCH FROM (NOW() - a.published_ts))/3600.0)::numeric, 1),
+                           'reasoning', si.reasoning,
+                           'score', round(si.sentiment_score::numeric, 2),
+                           'direction', si.direction,
+                           'is_spillover', COALESCE(si.is_spillover, false),
+                           'spillover_source_asset', si.spillover_source_asset
+                       ) ORDER BY a.published_ts DESC) as articles
                 FROM {settings.mimir_schema}.mimir_sentiment_impacts si
                 JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
                 WHERE si.ticker IN %s AND a.published_ts > NOW() - INTERVAL '14 days'
@@ -1035,10 +1214,88 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
             """
             cur.execute(query, (tickers_tuple,))
         sentiment_data = cur.fetchall()
+
+    # 3. Upcoming earnings calendar lookup
+    earnings_calendar_map = {}
+    if tickers_list:
+        try:
+            cur.execute(f"""
+                SELECT ticker, company_name, earnings_date, earnings_time, estimated_eps
+                FROM {settings.mimir_schema}.mimir_earnings_calendar
+                WHERE ticker = ANY(%s) AND earnings_date >= CURRENT_DATE
+                ORDER BY earnings_date ASC
+            """, (tickers_list,))
+            for er in cur.fetchall():
+                t_k = er["ticker"].upper()
+                if t_k not in earnings_calendar_map:
+                    edate = er["earnings_date"]
+                    days_until = (edate - datetime.now(timezone.utc).date()).days if hasattr(edate, "strftime") else None
+                    earnings_calendar_map[t_k] = {
+                        "company_name": er["company_name"],
+                        "earnings_date": edate.strftime('%Y-%m-%d') if hasattr(edate, "strftime") else str(edate),
+                        "days_until": days_until,
+                        "earnings_time": er["earnings_time"] or "N/A",
+                        "estimated_eps": float(er["estimated_eps"]) if er["estimated_eps"] is not None else None
+                    }
+        except Exception as ec_err:
+            print(f"[PORTFOLIO EARNINGS ERROR] {ec_err}")
+
+    # 4. Fetch live War Rig Convergence signals from alpha pipeline
+    war_rig_signals = []
+    try:
+        cur.execute(f"""
+            SELECT ticker, signal_type, trigger_price, target_price, stop_loss, conviction_score,
+                   catalyst_type, holding_period, investment_thesis, headline, reason, created_at
+            FROM {settings.mimir_schema}.mimir_trade_signals
+            WHERE catalyst_type = 'WAR_RIG_CONVERGENCE'
+            ORDER BY created_at DESC
+            LIMIT 5
+        """)
+        for s_row in cur.fetchall():
+            trig = float(s_row["trigger_price"]) if s_row["trigger_price"] is not None else 0.0
+            targ = float(s_row["target_price"]) if s_row["target_price"] is not None else 0.0
+            sl = float(s_row["stop_loss"]) if s_row["stop_loss"] is not None else 0.0
+            rr = round((targ - trig) / max(0.01, (trig - sl)), 2) if (trig - sl) > 0 else 2.5
+            conv = float(s_row["conviction_score"]) if s_row["conviction_score"] is not None else 0.75
+            war_rig_signals.append({
+                "ticker": s_row["ticker"],
+                "signal_type": s_row["signal_type"],
+                "trigger_price": trig,
+                "target_price": targ,
+                "stop_loss": sl,
+                "risk_reward_ratio": rr,
+                "conviction_score": round(conv if conv <= 1.0 else conv / 100.0, 2),
+                "conviction_pct": round(conv * 100 if conv <= 1.0 else conv, 0),
+                "headline": s_row["headline"],
+                "holding_period": s_row["holding_period"],
+                "investment_thesis": s_row["investment_thesis"]
+            })
+    except Exception as wr_err:
+        print(f"[PORTFOLIO WAR RIG SIGNALS ERROR] {wr_err}")
+
+    # 5. Sector Tailwinds for user's tickers
+    sector_tailwinds = {}
+    for ticker in tickers_list:
+        try:
+            st = get_ticker_sector_tailwinds(ticker, conn=conn)
+            sector_tailwinds[ticker] = {
+                "sector_name": st.get("sector_name", "General Market"),
+                "sector_phase": st.get("phase", "CONSOLIDATION"),
+                "rs_5d_vs_spy": float(st.get("rs_5d", 0.0)),
+                "sector_thesis": st.get("sector_thesis", "")
+            }
+        except Exception:
+            sector_tailwinds[ticker] = {
+                "sector_name": "General Market",
+                "sector_phase": "CONSOLIDATION",
+                "rs_5d_vs_spy": 0.0,
+                "sector_thesis": "Sector tracking neutral."
+            }
         
-    # 3. Get top positive sentiment equities in the last 7 days as candidates for stock picks
+    # 6. Get top positive sentiment equities in the last 7 days as candidates for stock picks
     query_picks = f"""
-        SELECT si.ticker, si.asset_name, AVG(si.sentiment_score) as score, COUNT(DISTINCT a.id) as count
+        SELECT si.ticker, si.asset_name, AVG(si.sentiment_score) as score, COUNT(DISTINCT a.id) as count,
+               json_agg(json_build_object('title', a.title, 'reasoning', si.reasoning, 'source', a.source_name) ORDER BY a.published_ts DESC) as articles
         FROM {settings.mimir_schema}.mimir_sentiment_impacts si
         JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
         WHERE si.ticker IS NOT NULL AND si.asset_category = 'EQUITY'
@@ -1054,12 +1311,12 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
     cur.close()
     conn.close()
     
-    # 4. Look online for real-time news headlines, macro trend data, and recent price trends
+    # 7. Real-time online data, macro indicators, and technical price trends
     online_news = fetch_online_stock_data(tickers_list)
     macro_trends = fetch_macro_indicators()
     price_trends = fetch_portfolio_price_trends(tickers_list)
     
-    # Enrich portfolio_list with profit, price movement, technical indicators, and fundamental metrics
+    # Enrich portfolio_list with profit, price movement, technical indicators, fundamental metrics, sector, and bounds
     enriched_portfolio = []
     for p in portfolio_list:
         ticker = p["ticker"]
@@ -1075,7 +1332,21 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
                 "dma_50": 0.0,
                 "dma_200": 0.0,
                 "volume_ratio": 1.0,
-                "price_trend_status": "Neutral"
+                "price_trend_status": "Neutral",
+                "support": 0.0,
+                "resistance": 0.0,
+                "atr_14": 0.0,
+                "volatility_regime": "STABLE",
+                "ou_zscore": 0.0,
+                "wyckoff_seller_exhausted": False,
+                "execution_bounds": {
+                    "trigger_price": 0.0,
+                    "stop_loss": 0.0,
+                    "target_price": 0.0,
+                    "risk_reward_ratio": 2.5,
+                    "upside_pct": 0.0,
+                    "downside_pct": 0.0
+                }
             },
             "fundamental_analysis": {}
         })
@@ -1093,6 +1364,8 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
             "quantity": qty,
             "avg_buy_price": avg_price,
             "current_price": current_price,
+            "cost_basis": cost_basis,
+            "current_value": current_val,
             "unrealized_profit_loss": unrealized_pl,
             "unrealized_profit_loss_pct": unrealized_pl_pct,
             "realized_profit_loss": realized_pl,
@@ -1102,117 +1375,216 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
                 "change_5d_pct": trend["change_5d_pct"]
             },
             "technical_analysis": trend.get("technical_analysis", {}),
-            "fundamental_analysis": trend.get("fundamental_analysis", {})
+            "fundamental_analysis": trend.get("fundamental_analysis", {}),
+            "sector_context": sector_tailwinds.get(ticker, {}),
+            "earnings_calendar": earnings_calendar_map.get(ticker, None),
+            "asymmetric_execution_bounds": trend.get("technical_analysis", {}).get("execution_bounds", {})
         })
         
-    # 5. Formulate Prompt for DeepSeek
+    # Format top sentiment picks with catalyst headlines
+    formatted_picks = []
+    for pk in picks:
+        top_art = pk["articles"][0] if pk.get("articles") else {}
+        formatted_picks.append({
+            "ticker": pk["ticker"],
+            "name": pk["asset_name"],
+            "sentiment_score": float(pk["score"]),
+            "mentions": pk["count"],
+            "catalyst_headline": top_art.get("title", "Bullish institutional accumulation"),
+            "catalyst_reasoning": top_art.get("reasoning", "Positive fundamental sentiment momentum"),
+            "catalyst_source": top_art.get("source", "MIMIR Scraper"),
+            "catalyst_age_hours": top_art.get("age_hours")
+        })
+
+    # Format portfolio sentiment detail
+    portfolio_sentiment_detail = []
+    for s in sentiment_data:
+        articles_formatted = []
+        for art in (s["articles"] or [])[:4]:
+            articles_formatted.append({
+                "title": art.get("title"),
+                "source": art.get("source"),
+                "published_ts": art.get("published_ts"),
+                "age_hours": art.get("age_hours"),
+                "reasoning": art.get("reasoning"),
+                "sentiment_score": art.get("score"),
+                "direction": art.get("direction"),
+                "is_spillover": art.get("is_spillover", False),
+                "spillover_source_asset": art.get("spillover_source_asset")
+            })
+        portfolio_sentiment_detail.append({
+            "ticker": s["ticker"],
+            "avg_sentiment_score": round(float(s["avg_score"]), 2),
+            "article_count": s["article_count"],
+            "recent_articles": articles_formatted
+        })
+
+    # 8. Formulate Unified Prompt Context with Live Snapshot Timestamp
+    snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     prompt_context = {
-        "portfolio": enriched_portfolio,
-        "portfolio_sentiment": [
-            {
-                "ticker": s["ticker"],
-                "avg_sentiment_score": float(s["avg_score"]),
-                "article_count": s["article_count"],
-                "recent_headlines": [art["title"] for art in s["articles"][:3]]
-            }
-            for s in sentiment_data
-        ],
-        "online_recent_news": online_news,
-        "online_macro_trends": macro_trends,
-        "top_sentiment_candidates": [
-            {
-                "ticker": p["ticker"],
-                "name": p["asset_name"],
-                "sentiment_score": float(p["score"]),
-                "mentions": p["count"]
-            }
-            for p in picks
-        ]
+        "pipeline_snapshot_timestamp": snapshot_time,
+        "portfolio_holdings": enriched_portfolio,
+        "portfolio_sentiment_and_catalysts": portfolio_sentiment_detail,
+        "macro_regime_and_indicators": macro_trends,
+        "live_war_rig_convergence_signals": war_rig_signals,
+        "top_sentiment_and_catalyst_picks": formatted_picks,
+        "online_realtime_news": online_news
     }
     
     system_prompt = (
-        "You are MIMIR's Senior Investment Strategist, an expert quantitative portfolio manager and macro economist. "
-        "Your task is to analyze the user's portfolio data, technical analysis metrics, fundamental valuation metrics, "
-        "market sentiment, online news, and macroeconomic indicators, "
-        "and generate a highly professional, visually beautiful, and deeply insightful strategic report in HTML format. "
-        "Write in a sharp, professional financial-analyst tone. Avoid fluff. "
-        "STRICT GROUNDING RULE: You must rely SOLELY on the explicit technical indicators and fundamental metrics provided in the prompt context JSON (e.g. `technical_analysis` and `fundamental_analysis`). Do NOT hallucinate, approximate, or invent any indicators or ratios. If a metric is missing or null in the context, do not supply a placeholder or look it up; simply omit it from your reasoning or write 'N/A'."
+        "You are MIMIR's Chief Investment Officer and Lead Quantitative Strategist for the War Rig Alpha Transmission Engine. "
+        "Your task is to conduct an uncompromising, institutional-grade portfolio diagnostic and strategic briefing. "
+        "You synthesize quantitative microstructure (Cylinder 3), high-impact catalyst provenance & NLP news reasoning (Cylinder 2), "
+        "and SPDR macro sector flow transmission (Cylinder 1) into sharp, actionable strategic advice. "
+        "Write in an authoritative, hedge-fund partner tone. Avoid introductory remarks, generic disclaimers, or conversational fluff. "
+        "STRICT GROUNDING DIRECTIVE: Rely EXCLUSIVELY on the explicit metrics, execution bounds, news reasonings, and indicators "
+        "provided in the CONTEXT DATA JSON. Do NOT invent, hallucinate, or assume metrics. If an indicator is missing, mark it 'N/A'."
     )
+    
     user_prompt = f"""
-You are provided with the following real-time and historical context:
+You are provided with the following real-time and historical context from the MIMIR War Rig Pipeline:
 ---
 CONTEXT DATA:
 {json.dumps(prompt_context, indent=2)}
 ---
 
 Generate a comprehensive strategic briefing for the user's portfolio. The output MUST be raw HTML fragments (do not wrap in ```html or other markdown blocks; do NOT include <style>, <script>, <html>, <head>, or <body> tags; just start with the HTML elements directly).
-Use Tailwind CSS classes to style the output so it looks premium, sleek, and matches a high-end terminal dashboard (dark theme, using the application's palette of dark slate, emerald, cyan, amber, and gold/yellow).
+Use Tailwind CSS classes to style the output so it looks premium, sleek, and matches a high-end terminal dashboard (dark theme, using the application's palette of dark slate, emerald, cyan, amber, gold, and red/coral).
 
 STRICT HTML & STYLING DIRECTIVES:
 - Do NOT include <style> blocks, CSS definitions, or custom CSS rules under any circumstances.
 - Do NOT include <script> tags, external links, or stylesheet links.
+- Format all numeric values cleanly (dollar amounts prefixed with $, percentages to 1 or 2 decimals).
 
-STRICT DATA INTEGRITY DIRECTIVES:
+STRICT DATA INTEGRITY & FRESHNESS DIRECTIVES:
 - Do NOT search online, use pre-trained general knowledge, or fabricate numbers.
-- You MUST only use the exact values present in the CONTEXT DATA JSON under `technical_analysis` (RSI, DMAs, Volume Ratios, Trend Status) and `fundamental_analysis` (P/E, forward P/E, debt, profit margin) for each ticker.
-- If an indicator or metric is missing, write 'N/A' or omit it from your reasoning.
+- Ground your tactical directives in the freshest market data provided (note `pipeline_snapshot_timestamp`, article `age_hours`, and online headline `recency`). Prioritize breaking news developments and active intraday price momentum over stale narrative trends.
+- You MUST cite specific news headlines and catalyst reasoning from `portfolio_sentiment_and_catalysts` instead of vague sentiment scores.
+- You MUST utilize the exact War Rig execution bounds (`stop_loss`, `target_price`, `risk_reward_ratio`), technical metrics (`rsi_14`, `volume_ratio`, `volatility_regime`, `ou_zscore`), and sector context (`sector_name`, `sector_phase`, `rs_5d_vs_spy`) provided in each position.
+- Do NOT include any section titled "Alternative MIMIR Profit Strategies". That legacy section is permanently decommissioned.
 
-Ensure the HTML includes the following 4 sections, designed beautifully:
+Ensure the HTML includes EXACTLY the following 4 sections, designed beautifully:
 
-1. <div class="mb-6">
-     <h3 class="text-xl font-bold text-[#00A6B2] mb-3">📈 Portfolio Performance & Allocation Advice</h3>
-     <p class="text-[#8BA4A8] text-sm mb-3">
-       Provide a qualitative and quantitative assessment of the current portfolio's concentration, diversification, and general risk profile. 
-       Analyze each position by overlaying **Technical Analysis** (price relation to 50/200 DMAs, RSI momentum, volume ratios), **Fundamental Analysis** (P/E ratios, profit margins, debt ratios), and **Sentiment**.
+1. <div class="mb-8">
+     <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2 mb-4">
+       <h3 class="text-lg font-bold text-[#00E5F2] flex items-center gap-2">
+         <span>🛡️</span> Portfolio Health & 3-Cylinder Diagnostic Matrix
+       </h3>
+       <span class="text-xs font-mono text-[#8BA4A8]">Unified War Rig Single-Shaft Analysis</span>
+     </div>
+     <p class="text-[#8BA4A8] text-xs mb-4 leading-relaxed">
+       Comprehensive institutional assessment correlating portfolio concentration, sector rotation phases, microstructure asymmetry, and impending catalyst risk. Positions are stress-tested against War Rig Cylinder 1 (Sector Inflows), Cylinder 2 (Catalysts & Earnings), and Cylinder 3 (Microstructure Bounds).
      </p>
-     <div class="overflow-x-auto mb-4">
+     <div class="overflow-x-auto mb-4 border border-[#1A2A30] rounded bg-[#0A0E12]/80">
        <table class="w-full text-left text-xs text-[#D6E5E3] border-collapse">
          <thead>
-           <tr class="border-b border-[#1A2A30] text-[#8BA4A8]">
-             <th class="py-2 px-3">Ticker</th>
-             <th class="py-2 px-3">Value</th>
-             <th class="py-2 px-3">Unrealized P&L</th>
-             <th class="py-2 px-3">Action</th>
-             <th class="py-2 px-3">Rationale (TA + FA + Sentiment)</th>
+           <tr class="border-b border-[#1A2A30] bg-[#111C21] text-[#8BA4A8] font-mono uppercase text-[11px]">
+             <th class="py-2.5 px-3">Position</th>
+             <th class="py-2.5 px-3">Cylinder 1: Sector / RS</th>
+             <th class="py-2.5 px-3">Cylinder 2: Catalyst / News</th>
+             <th class="py-2.5 px-3">Cylinder 3: Microstructure</th>
+             <th class="py-2.5 px-3">War Rig Bounds</th>
+             <th class="py-2.5 px-3">Action</th>
+             <th class="py-2.5 px-3">Institutional Rationale</th>
            </tr>
          </thead>
-         <tbody>
-           <!-- Generate rows for each ticker in the portfolio here -->
+         <tbody class="divide-y divide-[#1A2A30]">
+           <!-- Generate rows for each position in portfolio_holdings -->
          </tbody>
        </table>
      </div>
    </div>
 
-2. <div class="mb-6">
-     <h3 class="text-xl font-bold text-[#ffd700] mb-3">🔥 Top Sentiment & Fundamental Picks</h3>
-     <p class="text-[#8BA4A8] text-sm mb-3">Recommend 2-3 stocks from 'top_sentiment_candidates' or select other high-performing names. Combine sentiment momentum with fundamental strength and technical breakout characteristics to justify these recommendations.</p>
+For each position's table row:
+- Position: Display Ticker bold, Market Value, Cost Basis, and Unrealized P&L formatted with green/red coloring.
+- Cylinder 1: Display Sector Name and Sector Phase badge (e.g. STEALTH ACCUMULATION, MARKUP, ACCUMULATION, DISTRIBUTION, CONSOLIDATION) with 5D RS vs SPY.
+- Cylinder 2: Cite specific headline or NLP reasoning from `portfolio_sentiment_and_catalysts`. If upcoming earnings exists in `earnings_calendar`, display an amber badge: `Earnings in Xd (BMO/AMC)`.
+- Cylinder 3: Display RSI momentum, Volume ratio, Volatility Regime badge (SQUEEZE, EXPANDING, EXHAUSTION, STABLE), and OU Z-score.
+- War Rig Bounds: Display Invalidation Stop Loss, Target Price, and Risk/Reward ratio (e.g., `Stop: $X | Target: $Y (R/R: Z:1)`).
+- Action Column Badge: Choose strictly one of:
+  * <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">CONVICTION BUY</span>
+  * <span class="bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">ACCUMULATE</span>
+  * <span class="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">HOLD RUNNER</span>
+  * <span class="bg-orange-500/10 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">TRIM PROFIT</span>
+  * <span class="bg-red-500/10 text-red-400 border border-red-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">EXIT INVALIDATED</span>
+- Institutional Rationale: A sharp 1-2 sentence institutional synthesis explicitly combining Technicals + Fundamentals + News Catalyst + Sector Phase.
+
+2. <div class="mb-8">
+     <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2 mb-4">
+       <h3 class="text-lg font-bold text-[#FFD700] flex items-center gap-2">
+         <span>⚔️</span> War Rig Convergence Alpha Opportunities
+       </h3>
+       <span class="text-xs font-mono text-[#8BA4A8]">Institutional Crankshaft Inflows (Conviction >= 75%)</span>
+     </div>
+     <p class="text-[#8BA4A8] text-xs mb-4 leading-relaxed">
+       Active convergence setups generated by MIMIR's automated multi-factor pipeline. These opportunities satisfy Cylinder 1 (Sector Tailwinds), Cylinder 2 (Pre-Earnings Beat or Supply Chain Contagion), and Cylinder 3 (Hard Asymmetry Gate >= 2.5:1 R/R).
+     </p>
+     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+       <!-- Generate card for 2-3 top candidates from live_war_rig_convergence_signals or top_sentiment_and_catalyst_picks -->
+     </div>
+   </div>
+   Format each opportunity card with:
+   - Header with Ticker, Conviction Score badge (e.g. 85% Conviction), and R/R ratio.
+   - 3-Cylinder Convergence breakdown: Sector Flow, Catalyst Trigger with headline/reasoning, and Technical Execution Bounds.
+   - Nitrous Express Options Pod recommendation (e.g., Mode A Vertical Bull Call Spread or Mode B Credit Bull Put Spread if IV is elevated).
+
+3. <div class="mb-8">
+     <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2 mb-4">
+       <h3 class="text-lg font-bold text-[#00E676] flex items-center gap-2">
+         <span>🌍</span> Macro Regime & Sector Transmission
+       </h3>
+       <span class="text-xs font-mono text-[#8BA4A8]">Global Multi-Asset Context</span>
+     </div>
+     <p class="text-[#8BA4A8] text-xs mb-3 leading-relaxed">
+       Synthesize the global indicators from `macro_regime_and_indicators` (S&P 500, Nasdaq 100, VIX, US Dollar Index, Gold, US 10Y Yield). Identify the prevailing macroeconomic regime (e.g. Risk-On Expansion, Hawkish Liquidity Drag, Dollar Flight, Stagflationary Squeeze) and directly evaluate its balance-sheet and multiple-compression impacts on the user's specific sector holdings.
+     </p>
    </div>
 
-3. <div class="mb-6">
-     <h3 class="text-xl font-bold text-[#00E676] mb-3">🌍 Macroeconomic Outlook & Market Regime</h3>
-     <p class="text-[#8BA4A8] text-sm mb-3">Synthesize the global indicators from 'online_macro_trends' (S&P 500, Nasdaq, VIX, US Dollar, Gold, US 10Y Yield). Identify the prevailing market regime (e.g., Risk-On, Risk-Off) and discuss how it directly impacts the user's specific holdings.</p>
+4. <div class="mb-6">
+     <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2 mb-4">
+       <h3 class="text-lg font-bold text-[#00A6B2] flex items-center gap-2">
+         <span>🎯</span> Tactical Execution Deck & Asymmetric Rebalancing
+       </h3>
+       <span class="text-xs font-mono text-[#8BA4A8]">Actionable Capital Allocation Directives</span>
+     </div>
+     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+       <div class="p-4 rounded border border-[#1A2A30] bg-[#0A0E12]/60">
+         <h4 class="text-xs font-bold font-mono uppercase text-[#FF5252] mb-2 flex items-center gap-1.5">
+           <i class="fas fa-shield-alt"></i> Immediate Invalidation Stops & Trims
+         </h4>
+         <p class="text-xs text-[#D6E5E3] leading-relaxed">
+           Specify exact portfolio holdings approaching or violating ATR stop-loss bounds, or trapped in distribution sectors, that require immediate trimming or stop protection.
+         </p>
+       </div>
+       <div class="p-4 rounded border border-[#1A2A30] bg-[#0A0E12]/60">
+         <h4 class="text-xs font-bold font-mono uppercase text-[#FFB300] mb-2 flex items-center gap-1.5">
+           <i class="fas fa-calendar-check"></i> Catalyst & Earnings Danger Radar
+         </h4>
+         <p class="text-xs text-[#D6E5E3] leading-relaxed">
+           Highlight upcoming earnings reports (2-14 days out) or major macro releases for held assets, specifying whether to hold runners into the print or de-risk ahead of implied volatility crush.
+         </p>
+       </div>
+       <div class="p-4 rounded border border-[#1A2A30] bg-[#0A0E12]/60">
+         <h4 class="text-xs font-bold font-mono uppercase text-[#00E5F2] mb-2 flex items-center gap-1.5">
+           <i class="fas fa-sync-alt"></i> Capital Rebalancing Directives
+         </h4>
+         <p class="text-xs text-[#D6E5E3] leading-relaxed">
+           Provide concrete capital rotation orders: reallocating cash from lagger/distribution names into top War Rig accumulation sectors.
+         </p>
+       </div>
+       <div class="p-4 rounded border border-[#1A2A30] bg-[#0A0E12]/60">
+         <h4 class="text-xs font-bold font-mono uppercase text-[#00E676] mb-2 flex items-center gap-1.5">
+           <i class="fas fa-layer-group"></i> Nitrous Convexity & Options Hedging
+         </h4>
+         <p class="text-xs text-[#D6E5E3] leading-relaxed">
+           Tactical options guidance to hedge downside exposure or capture asymmetric upside on core positions with strictly capped capital risk.
+         </p>
+       </div>
+     </div>
    </div>
 
-4. <div class="mb-4">
-     <h3 class="text-xl font-bold text-[#00E5F2] mb-3">💰 Alternative MIMIR Profit Strategies</h3>
-     <ul class="list-disc list-inside text-sm text-[#D6E5E3] space-y-2">
-       <li><strong>Swing Trading Sentinel:</strong> Describe how to set up alerts and swing trade stocks when sentiment swings heavily into bullish (>0.40) or bearish (&lt;-0.40) zones.</li>
-       <li><strong>Guerilla Arbitrage:</strong> Explain how to leverage the 'Guerilla Quant' tab to identify co-integrated statistical arbitrage pairs (e.g., tracking spread deviation from Z-score thresholds).</li>
-       <li><strong>Volume Anomaly Trigger:</strong> Outline how tracking abnormal volume spikes (relative volume > 2.0) alongside positive sentiment changes serves as a confirmation indicator for momentum breakouts.</li>
-     </ul>
-   </div>
-
-For the "Action" column in the table, please use one of these HTML badges exactly:
-- <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">BUY</span>
-- <span class="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">HOLD</span>
-- <span class="bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">TRIM</span>
-- <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded text-xs font-bold font-mono">SELL</span>
-
-For the "Rationale" column in the table, you MUST synthesize Technical Analysis (e.g. RSI, 50 DMA, Golden Cross), Fundamental Analysis (e.g. Forward P/E, debt profile), and Sentiment trends into a cohesive, institutional-grade single-sentence argument. Use ONLY the technical and fundamental metrics provided in the CONTEXT DATA.
-
-Format values nicely (e.g. prefixing dollar amounts with $, formatting percentages to 2 decimals). Do not include any greeting or conversational filler. Start directly with the first section's HTML wrapper.
+Do NOT include any generic concluding remarks, disclaimers, or conversational filler. Start directly with the first section's HTML wrapper.
 """
-
 
     # Call LLM via centralized completion router
     try:
@@ -1223,7 +1595,7 @@ Format values nicely (e.g. prefixing dollar amounts with $, formatting percentag
         content = send_chat_completion(
             messages=messages,
             temperature=0.3,
-            timeout=60
+            timeout=75
         )
         
         # Clean markdown code block wraps and sanitize HTML content
@@ -1240,12 +1612,13 @@ Format values nicely (e.g. prefixing dollar amounts with $, formatting percentag
         content = re.sub(r'<!DOCTYPE[^>]*>', '', content, flags=re.IGNORECASE)
         content = re.sub(r'</?(?:html|head|body)[^>]*>', '', content, flags=re.IGNORECASE)
         content = re.sub(r'<link[^>]*rel=["\']stylesheet["\'][^>]*>', '', content, flags=re.IGNORECASE)
-        content = content.strip()
-        
-        return {"advice": content}
+        return {
+            "advice": content,
+            "generated_at": datetime.now(timezone.utc).isoformat()
+        }
     except Exception as e:
         return {
-            "advice": f"<p class='text-[#FF5252]'>Error generating AI advice: {str(e)}. Please try again later.</p>"
+            "advice": f"<p class='text-[#FF5252] font-mono text-xs'>Error generating War Rig AI advice: {str(e)}. Please try again later.</p>"
         }
 
 

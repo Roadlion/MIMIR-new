@@ -147,54 +147,33 @@ def approve_alert(alert_id: int, payload: ActionPayload):
         signal_type = alert["signal_type"].upper()
         price = float(alert["trigger_price"])
         
-        # 2. Retrieve paper trading config for SL / TP
-        cfg = get_paper_config()
-        sl_pct = float(cfg.get("stop_loss_pct", 3.0))
-        tp_pct = float(cfg.get("take_profit_pct", 6.0))
-        magic = int(cfg.get("mt5_magic", MIMIR_MAGIC))
-        
-        # 3. Execute order directly in MT5
-        order_res = send_market_order(
+        # 2. Execute order directly in MT5 using centralized paper trader
+        from ..analytics.paper_trader import execute_single_paper_trade
+        order_res = execute_single_paper_trade(
+            signal_id=alert_id,
             ticker=ticker,
-            action=signal_type,
+            signal_type=signal_type,
+            trigger_price=price,
+            target_price=float(alert["target_price"]) if alert.get("target_price") else None,
+            stop_loss=float(alert["stop_loss"]) if alert.get("stop_loss") else None,
+            conviction_score=float(alert.get("conviction_score") or 0.5),
+            catalyst_type=alert.get("catalyst_type"),
+            reason=alert.get("reason"),
             fixed_quantity=payload.quantity,
-            sl_pct=sl_pct,
-            tp_pct=tp_pct,
-            comment=f"MIMIR:{alert_id}",
-            magic=magic
+            force=True,
+            conn=conn
         )
 
         if not order_res.get("success"):
             err_msg = order_res.get("message", "MT5 order placement failed.")
             raise HTTPException(status_code=400, detail=f"MT5 Order Execution Failed: {err_msg}")
 
-        mt5_ticket = order_res.get("ticket") or order_res.get("order_id")
-        exec_price = float(order_res.get("price", price))
-        exec_vol = float(order_res.get("volume", payload.quantity))
-
-        # 4. Create local audit records
-        gmt_plus_7 = timezone(timedelta(hours=7))
-        now_local = datetime.now(gmt_plus_7)
-        
         cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_paper_portfolio (ticker, order_date, buy_price, quantity, transaction_type, mt5_ticket)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (ticker, now_local, exec_price, exec_vol, signal_type, mt5_ticket))
-        
-        cur.execute(f"""
-            INSERT INTO {settings.mimir_schema}.mimir_paper_trade_log
-            (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes, mt5_ticket)
-            VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s, %s)
-        """, (alert_id, ticker, signal_type, exec_price, exec_vol, now_local, alert.get("reason"), mt5_ticket))
-        
-        # 5. Update the signal status
-        cur.execute(f"""
-            UPDATE {settings.mimir_schema}.mimir_trade_signals
-            SET status = 'APPROVED', acted_at = %s
+            SELECT id, ticker, signal_type, trigger_price, rsi_value, sentiment_score, 
+                   support_level, resistance_level, reason, status, created_at, acted_at
+            FROM {settings.mimir_schema}.mimir_trade_signals
             WHERE id = %s
-            RETURNING id, ticker, signal_type, trigger_price, rsi_value, sentiment_score, 
-                      support_level, resistance_level, reason, status, created_at, acted_at
-        """, (now_local, alert_id))
+        """, (alert_id,))
         
         updated_alert = cur.fetchone()
         conn.commit()

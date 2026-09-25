@@ -1,8 +1,11 @@
 # backend/app/analytics/paper_trader.py
 import sys
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -395,6 +398,206 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
 
+def execute_single_paper_trade(
+    signal_id: Optional[int],
+    ticker: str,
+    signal_type: str,
+    trigger_price: float,
+    target_price: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    conviction_score: Optional[float] = None,
+    catalyst_type: Optional[str] = None,
+    reason: Optional[str] = None,
+    fixed_quantity: Optional[float] = None,
+    force: bool = False,
+    conn = None
+) -> Dict[str, Any]:
+    """
+    Directly executes an automated MT5 paper trade for a trade signal.
+    - Honors MT5 risk bounds (stop_loss and target_price).
+    - Checks regular market hours (unless force=True or config.ignore_market_hours=True).
+    - Records execution to mimir_paper_trade_log and mimir_paper_portfolio on success.
+    - Updates mimir_trade_signals status to 'APPROVED'.
+    """
+    config = get_paper_config()
+    if not config.get("is_enabled"):
+        return {"success": False, "status": "DISABLED", "message": "Paper trading is disabled in settings."}
+
+    ticker = ticker.strip().upper()
+    signal_type = signal_type.strip().upper()
+    us_only = config.get("us_stocks_only", True)
+    if us_only and not is_us_stock(ticker):
+        return {"success": False, "status": "NON_US", "message": f"{ticker} is not an eligible US stock."}
+
+    # Market hours check
+    ignore_hours = config.get("ignore_market_hours", False)
+    if not force and not is_execution_allowed(ignore_market_hours=ignore_hours):
+        print(f"[PAPER_TRADER] Signal #{signal_id} for {ticker} queued: market currently closed. Remaining PENDING for market open.")
+        return {
+            "success": False,
+            "status": "QUEUED_MARKET_CLOSED",
+            "message": f"Outside regular market hours. Alert #{signal_id} ({ticker}) queued for execution at 09:30 ET."
+        }
+
+    # MT5 Terminal status
+    mt5_status = get_terminal_and_account_status()
+    if not mt5_status.get("connected"):
+        return {
+            "success": False,
+            "status": "MT5_ERROR",
+            "message": f"MT5 Terminal is not connected: {mt5_status.get('error')}"
+        }
+    if not mt5_status.get("trade_allowed"):
+        return {
+            "success": False,
+            "status": "MT5_ERROR",
+            "message": "MT5 AutoTrading is disabled. Click 'Algo Trading' in MT5 (Ctrl+E)."
+        }
+
+    # Open positions check
+    open_positions = get_open_positions()
+    open_tickers = {p["ticker"].upper() for p in open_positions}
+    max_open_pos = int(config.get("max_open_positions", 5))
+
+    if signal_type == "BUY" and ticker in open_tickers:
+        return {"success": False, "status": "ALREADY_HELD", "message": f"Position in {ticker} is already active in MT5."}
+    if signal_type == "BUY" and len(open_tickers) >= max_open_pos and not force:
+        return {"success": False, "status": "MAX_POSITIONS_REACHED", "message": f"Portfolio concurrency limit ({max_open_pos}) reached."}
+    if signal_type == "SELL" and ticker not in open_tickers:
+        return {"success": False, "status": "NOT_HELD", "message": f"Cannot SELL {ticker}: not currently held in MT5."}
+
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection_dict()
+        close_conn = True
+
+    try:
+        cur = conn.cursor()
+
+        # Macro Regime check for BUY signals (unless forced)
+        if signal_type == "BUY" and not force:
+            try:
+                from backend.app.services.macro_tracker import is_market_regime_bullish
+                market_bullish, macro_reason = is_market_regime_bullish(conn=conn)
+                if not market_bullish:
+                    return {"success": False, "status": "MACRO_BLOCKED", "message": f"Suppressed by macro gate: {macro_reason}"}
+            except Exception as m_err:
+                logger.warning(f"[PAPER_TRADER] Macro check warning: {m_err}")
+
+        # Position Sizing (Fixed quantity or Dynamic Kelly scale)
+        if fixed_quantity is not None and fixed_quantity > 0:
+            trade_alloc = 500.0
+        else:
+            base_alloc = float(config.get("position_size_value", 500.0))
+            conviction = float(conviction_score or 0.5)
+            cat_type = str(catalyst_type or "")
+
+            if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
+                multiplier = 3.0
+            elif conviction >= 0.65:
+                multiplier = 1.5
+            else:
+                multiplier = 1.0
+
+            trade_alloc = base_alloc * multiplier
+
+        magic = int(config.get("mt5_magic", MIMIR_MAGIC))
+
+        # Dynamic SL / TP
+        if stop_loss and trigger_price > 0:
+            trade_sl_pct = abs(trigger_price - stop_loss) / trigger_price * 100.0
+            trade_sl_pct = max(3.5, min(7.5, trade_sl_pct))
+        else:
+            trade_sl_pct, _ = get_ticker_atr_bounds(ticker, trigger_price, cur=cur)
+
+        if target_price and trigger_price > 0:
+            trade_tp_pct = abs(target_price - trigger_price) / trigger_price * 100.0
+            trade_tp_pct = max(6.0, min(15.0, trade_tp_pct))
+        else:
+            _, trade_tp_pct = get_ticker_atr_bounds(ticker, trigger_price, cur=cur)
+
+        trade_tp_pct = max(trade_tp_pct, round(trade_sl_pct * 1.67, 2))
+
+        # Order placement
+        order_comment = f"MIMIR:{signal_id}" if signal_id else f"MIMIR:{ticker}"
+        order_res = send_market_order(
+            ticker=ticker,
+            action=signal_type,
+            target_usd=trade_alloc,
+            fixed_quantity=fixed_quantity,
+            sl_pct=trade_sl_pct,
+            tp_pct=trade_tp_pct,
+            sl_price=stop_loss,
+            tp_price=target_price,
+            comment=order_comment,
+            magic=magic
+        )
+
+        if order_res.get("success"):
+            mt5_ticket = order_res.get("ticket") or order_res.get("order_id")
+            exec_price = float(order_res.get("price", trigger_price))
+            exec_vol = float(order_res.get("volume", 1.0))
+            gmt_plus_7 = timezone(timedelta(hours=7))
+            now_local = datetime.now(gmt_plus_7)
+            schema = settings.mimir_schema
+
+            # Insert into paper trade log
+            cur.execute(f"""
+                INSERT INTO {schema}.mimir_paper_trade_log
+                (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes, mt5_ticket)
+                VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s, %s)
+            """, (signal_id, ticker, signal_type, exec_price, exec_vol, now_local, reason, mt5_ticket))
+
+            # Insert into paper portfolio
+            cur.execute(f"""
+                INSERT INTO {schema}.mimir_paper_portfolio
+                (ticker, order_date, buy_price, quantity, transaction_type, mt5_ticket)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (ticker, now_local, exec_price, exec_vol, signal_type, mt5_ticket))
+
+            # Update signal status to APPROVED / AUTO_TRADED
+            if signal_id:
+                cur.execute(f"""
+                    UPDATE {schema}.mimir_trade_signals
+                    SET status = 'APPROVED', acted_at = %s
+                    WHERE id = %s
+                """, (now_local, signal_id))
+
+            conn.commit()
+            return {
+                "success": True,
+                "status": "EXECUTED",
+                "mt5_ticket": mt5_ticket,
+                "exec_price": exec_price,
+                "volume": exec_vol,
+                "message": order_res.get("message")
+            }
+        else:
+            retcode = order_res.get("retcode")
+            if retcode == 10018:
+                return {
+                    "success": False,
+                    "status": "QUEUED_MARKET_CLOSED",
+                    "retcode": 10018,
+                    "message": "Market is closed for symbol. Kept in PENDING for market open execution."
+                }
+            return {
+                "success": False,
+                "status": "REJECTED",
+                "retcode": retcode,
+                "message": order_res.get("message")
+            }
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"[PAPER_TRADER ERROR] execute_single_paper_trade for {ticker}: {e}")
+        return {"success": False, "status": "ERROR", "message": str(e)}
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+
 def auto_execute_pending_alerts() -> Dict[str, Any]:
     """
     Scans pending trade signals in mimir_trade_signals, validates rules,
@@ -431,12 +634,8 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
     us_only = config.get("us_stocks_only", True)
     min_win_rate = float(config.get("min_win_rate", 55.0))
     min_sentiment = float(config.get("min_sentiment_score", 0.0))
-    sl_pct = float(config.get("stop_loss_pct", 4.5))
-    tp_pct = float(config.get("take_profit_pct", 8.0))
-    magic = int(config.get("mt5_magic", MIMIR_MAGIC))
-    base_alloc = float(config.get("position_size_value", 500.0))
-    max_open_pos = int(config.get("max_open_positions", 5))
     min_conviction = float(config.get("min_conviction_score", 0.65))
+    max_open_pos = int(config.get("max_open_positions", 5))
 
     # Get active open positions in MT5 to prevent duplicate positions and enforce concurrency
     open_positions = get_open_positions()
@@ -446,13 +645,6 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
     cur = conn.cursor()
     executed_count = 0
     executed_details = []
-
-    # Upgrade 1: Macro Regime Gate Check (SPY 50-day SMA and VIX volatility filter)
-    try:
-        from backend.app.services.macro_tracker import is_market_regime_bullish
-        market_bullish, macro_reason = is_market_regime_bullish(conn=conn)
-    except Exception as e:
-        market_bullish, macro_reason = True, str(e)
 
     try:
         schema = settings.mimir_schema
@@ -478,165 +670,76 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             ticker = alert["ticker"].upper()
             signal_type = alert["signal_type"].upper()
             trigger_price = float(alert["trigger_price"])
-            win_rate = float(alert["win_rate"])
-            sentiment = float(alert["sentiment_score"] or 0.0)
-            conviction = float(alert.get("conviction_score") or 0.5)
             cat_type = alert.get("catalyst_type") or ""
-            reason_text = str(alert.get("reason") or "")
+            is_institutional = cat_type in ["WAR_RIG_CONVERGENCE", "PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER"]
 
             # Filter rules
             if us_only and not is_us_stock(ticker):
                 continue
-            if win_rate < min_win_rate:
-                continue
-            if sentiment < min_sentiment:
-                continue
 
-            # Upgrade 1: Macro Regime Gate (Suppress BUY entries during broad market downtrends/panics)
-            if signal_type == "BUY" and not market_bullish:
-                print(f"[PAPER_TRADER] Suppressed alert #{alert_id} for {ticker}: {macro_reason}")
-                continue
-
-            # Upgrade 2: Portfolio Concurrency Cap (Limit simultaneous holdings to max_open_pos)
-            if signal_type == "BUY" and len(open_tickers) >= max_open_pos:
-                print(f"[PAPER_TRADER] Portfolio concurrency limit reached ({len(open_tickers)}/{max_open_pos} positions). Deferring entry for {ticker}.")
-                continue
-
-            # Daily Entry Pacing: Max 2 new entries admitted per day to prevent morning slot exhaustion
-            if signal_type == "BUY":
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {schema}.mimir_paper_trade_log
-                    WHERE entry_time::date = %s
-                """, (now_local.date(),))
-                today_count_row = cur.fetchone()
-                today_entries = today_count_row[0] if today_count_row else 0
-                if today_entries >= 2:
-                    print(f"[PAPER_TRADER] Daily entry pacing limit reached ({today_entries}/2 trades today). Deferring entry for {ticker}.")
+            if not is_institutional:
+                win_rate = float(alert["win_rate"])
+                sentiment = float(alert["sentiment_score"] or 0.0)
+                conviction = float(alert.get("conviction_score") or 0.5)
+                if win_rate < min_win_rate or sentiment < min_sentiment or conviction < min_conviction:
                     continue
-
-            # Reject unmanaged naked alerts (must have predefined risk bounds)
-            if not alert.get("stop_loss") and not alert.get("target_price"):
-                print(f"[PAPER_TRADER] Suppressed naked alert #{alert_id} for {ticker}: Missing stop_loss and target_price.")
-                continue
-
-            # Upgrade 2: High-Conviction Selection Floor (Filter out low-conviction noise)
-            if conviction < min_conviction and cat_type not in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
-                print(f"[PAPER_TRADER] Suppressed alert #{alert_id} for {ticker}: Conviction {conviction:.2f} < {min_conviction:.2f} threshold.")
-                continue
-
-            # Narrative Lifecycle Filter (Block PEAK and FADING narrative entries)
-            if "PEAK Narrative" in reason_text or "FADING Narrative" in reason_text:
-                print(f"[PAPER_TRADER] Suppressed alert #{alert_id} for {ticker}: Narrative in PEAK/FADING phase.")
-                continue
-
-            try:
-                from backend.app.analytics.narrative_tracker import is_narrative_enterable
-                if not is_narrative_enterable(ticker, conn=conn):
-                    print(f"[PAPER_TRADER] Suppressed alert #{alert_id} for {ticker}: Narrative lifecycle stale or fading.")
-                    continue
-            except Exception:
-                pass
 
             # Prevent position stacking for BUY
             if signal_type == "BUY" and ticker in open_tickers:
                 continue
 
-            # If SELL, only execute if we already hold an open position in MT5
-            if signal_type == "SELL" and ticker not in open_tickers:
+            # Check open positions limit
+            if signal_type == "BUY" and len(open_tickers) >= max_open_pos:
+                print(f"[PAPER_TRADER] Portfolio concurrency limit reached ({len(open_tickers)}/{max_open_pos} positions). Deferring {ticker}.")
                 continue
 
-            # Update 3: Calculate Dynamic ATR-Based Volatility Stop Loss & Take Profit
-            target_price = float(alert["target_price"]) if alert.get("target_price") else None
-            stop_loss = float(alert["stop_loss"]) if alert.get("stop_loss") else None
+            # Daily Entry Pacing (exempt institutional convergence setups)
+            if signal_type == "BUY" and not is_institutional:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {schema}.mimir_paper_trade_log
+                    WHERE entry_time::date = %s
+                """, (now_local.date(),))
+                today_count_row = cur.fetchone()
+                today_entries = (today_count_row["count"] if isinstance(today_count_row, dict) else today_count_row[0]) if today_count_row else 0
+                if today_entries >= 2:
+                    print(f"[PAPER_TRADER] Daily entry pacing limit reached ({today_entries}/2 trades today). Deferring entry for {ticker}.")
+                    continue
 
-            if stop_loss and trigger_price > 0:
-                trade_sl_pct = abs(trigger_price - stop_loss) / trigger_price * 100.0
-                trade_sl_pct = max(3.5, min(7.5, trade_sl_pct))
-            else:
-                trade_sl_pct, _ = get_ticker_atr_bounds(ticker, trigger_price, cur=cur)
-
-            if target_price and trigger_price > 0:
-                trade_tp_pct = abs(target_price - trigger_price) / trigger_price * 100.0
-                trade_tp_pct = max(6.0, min(15.0, trade_tp_pct))
-            else:
-                _, trade_tp_pct = get_ticker_atr_bounds(ticker, trigger_price, cur=cur)
-
-            # Ensure minimum 1:1.67 Risk/Reward ratio
-            trade_tp_pct = max(trade_tp_pct, round(trade_sl_pct * 1.67, 2))
-
-            # Dynamic Conviction Sizing (Kelly Criterion Scale)
-            if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
-                multiplier = 3.0  # 3x Sizing for asymmetric home runs
-            elif conviction >= 0.65:
-                multiplier = 1.5  # 1.5x Sizing for high conviction
-            else:
-                multiplier = 1.0  # 1.0x Base Sizing
-
-            trade_alloc = base_alloc * multiplier
-
-            # Send order directly to MT5 with dynamic ATR volatility boundaries
-            order_res = send_market_order(
+            # Execute trade via execute_single_paper_trade
+            res = execute_single_paper_trade(
+                signal_id=alert_id,
                 ticker=ticker,
-                action=signal_type,
-                target_usd=trade_alloc,
-                sl_pct=trade_sl_pct,
-                tp_pct=trade_tp_pct,
-                comment=f"MIMIR:{alert_id}",
-                magic=magic
+                signal_type=signal_type,
+                trigger_price=trigger_price,
+                target_price=float(alert["target_price"]) if alert.get("target_price") else None,
+                stop_loss=float(alert["stop_loss"]) if alert.get("stop_loss") else None,
+                conviction_score=float(alert.get("conviction_score") or 0.5),
+                catalyst_type=cat_type,
+                reason=alert.get("reason"),
+                conn=conn
             )
 
-            if order_res.get("success"):
-                mt5_ticket = order_res.get("ticket") or order_res.get("order_id")
-                exec_price = float(order_res.get("price", trigger_price))
-                exec_vol = float(order_res.get("volume", 1.0))
-
-                # Insert into local audit log
-                cur.execute(f"""
-                    INSERT INTO {schema}.mimir_paper_trade_log
-                    (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes, mt5_ticket)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s, %s)
-                """, (alert_id, ticker, signal_type, exec_price, exec_vol, now_local, alert.get("reason"), mt5_ticket))
-
-                # Also record into paper portfolio table
-                cur.execute(f"""
-                    INSERT INTO {schema}.mimir_paper_portfolio 
-                    (ticker, order_date, buy_price, quantity, transaction_type, mt5_ticket)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (ticker, now_local, exec_price, exec_vol, signal_type, mt5_ticket))
-
-                # Mark trade signal as APPROVED / AUTO_TRADED
-                cur.execute(f"""
-                    UPDATE {schema}.mimir_trade_signals
-                    SET status = 'APPROVED', acted_at = %s
-                    WHERE id = %s
-                """, (now_local, alert_id))
-
+            if res.get("success"):
                 executed_count += 1
                 open_tickers.add(ticker)
-                executed_details.append({
-                    "alert_id": alert_id,
-                    "ticker": ticker,
-                    "signal_type": signal_type,
-                    "mt5_ticket": mt5_ticket,
-                    "exec_price": exec_price,
-                    "volume": exec_vol
-                })
+                executed_details.append(res)
             else:
                 executed_details.append({
                     "alert_id": alert_id,
                     "ticker": ticker,
-                    "error": order_res.get("message")
+                    "status": res.get("status"),
+                    "message": res.get("message")
                 })
 
         conn.commit()
         return {
             "executed_count": executed_count,
             "executed_details": executed_details,
-            "message": f"Successfully auto-executed {executed_count} paper trades directly in MT5."
+            "message": f"Successfully processed {len(pending_alerts)} alerts ({executed_count} executed in MT5)."
         }
     except Exception as e:
         conn.rollback()
-        print(f"[PAPER_TRADER ERROR] Auto execution error: {e}")
+        logger.error(f"[PAPER_TRADER ERROR] Auto execution error: {e}")
         return {"executed_count": 0, "error": str(e)}
     finally:
         cur.close()

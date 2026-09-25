@@ -95,6 +95,33 @@ def fetch_and_cache_minute_ticker(ticker_symbol: str, conn=None):
                     scraped_at = NOW();
                 """
                 execute_values(cur, sql, sorted_records)
+                
+                # Upsert latest price into mimir_latest_prices and notify listeners
+                if sorted_records:
+                    latest_rec = sorted_records[-1]
+                    prev_close = sorted_records[0][5]
+                    chg_pct = round(((latest_rec[5] - prev_close) / prev_close * 100), 2) if prev_close > 0 else 0.0
+                    latest_sql = f"""
+                    INSERT INTO {settings.mimir_schema}.mimir_latest_prices
+                    (ticker, latest_price, prev_close_24h, change_percent, volume, open, high, low, timestamp, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        latest_price = EXCLUDED.latest_price,
+                        prev_close_24h = EXCLUDED.prev_close_24h,
+                        change_percent = EXCLUDED.change_percent,
+                        volume = EXCLUDED.volume,
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        timestamp = EXCLUDED.timestamp,
+                        updated_at = NOW();
+                    """
+                    cur.execute(latest_sql, (
+                        latest_rec[0], latest_rec[5], prev_close, chg_pct, latest_rec[6],
+                        latest_rec[2], latest_rec[3], latest_rec[4], latest_rec[1]
+                    ))
+                    cur.execute("NOTIFY price_updates, 'new_prices';")
+
                 cur_conn.commit()
                 cur.close()
                 if close_conn:

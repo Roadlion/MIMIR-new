@@ -146,8 +146,14 @@ def get_sector_rotation_matrix(conn=None) -> Dict[str, Any]:
               AND si.asset_sub_category IS NOT NULL
             GROUP BY si.asset_sub_category
         """
-        cur.execute(sql_sent)
-        sent_map = {r[0].strip().upper(): {"avg_sent": float(r[1]), "count": int(r[2])} for r in cur.fetchall() if r[0]}
+        sent_rows = cur.fetchall()
+        sent_map = {}
+        for r in sent_rows:
+            sub = r.get("asset_sub_category") if isinstance(r, dict) else r[0]
+            avg_s = r.get("avg_sent") if isinstance(r, dict) else r[1]
+            cnt = r.get("art_count") if isinstance(r, dict) else r[2]
+            if sub:
+                sent_map[sub.strip().upper()] = {"avg_sent": float(avg_s), "count": int(cnt)}
 
         sectors_out = []
         for etf, meta in SECTOR_ETFS.items():
@@ -185,15 +191,24 @@ def get_sector_rotation_matrix(conn=None) -> Dict[str, Any]:
             if rs_5d >= 1.0 and ret_5d <= 4.0 and (cmf_14 >= -0.02 or avg_sentiment >= 0.10):
                 phase = "STEALTH_ACCUMULATION"
                 summary = f"Institutions quietly absorbing shares (+{rs_5d:.1f}% RS vs SPY) while price base is tight. Early entry window."
-            elif rs_5d > 1.5 and ret_5d > 4.0 and above_sma20:
+            elif rs_5d > 1.2 and ret_5d > 3.0 and above_sma20:
                 phase = "MARKUP"
                 summary = f"Markup phase underway (+{ret_5d:.1f}% 5D). Strong institutional trend; retail momentum chasing."
+            elif rs_5d >= 0.3:
+                phase = "ACCUMULATION"
+                summary = f"Positive institutional interest (+{rs_5d:.1f}% RS vs SPY). Outperforming broad market base."
+            elif rs_5d >= -0.5:
+                phase = "CONSOLIDATION"
+                summary = f"Neutral base / tracking market ({rs_5d:+.1f}% RS vs SPY). Stable sector foundation."
+            elif rs_5d >= -1.2:
+                phase = "IMPROVING"
+                summary = f"Mild sector lag ({rs_5d:+.1f}% RS vs SPY). Sector consolidating without severe liquidation."
             elif rs_5d < -0.8 and ret_20d > 2.0:
                 phase = "DISTRIBUTION"
                 summary = f"Smart money taking profits. RS fading ({rs_5d:.1f}%) despite previous gains. Long risk elevated."
             else:
                 phase = "OUTFLOW"
-                summary = f"Lagging market ({rs_5d:.1f}% RS vs SPY). Capital rotating out into stronger sectors."
+                summary = f"Severe sector lag ({rs_5d:.1f}% RS vs SPY). Capital rotating out into stronger sectors."
 
             sectors_out.append({
                 "ticker": etf,
@@ -260,7 +275,11 @@ def get_ticker_sector_tailwinds(ticker: str, conn=None) -> Dict[str, Any]:
                 LIMIT 1
             """, (ticker,))
             row = cur.fetchone()
-            sub_cat = row[0].strip().upper() if row and row[0] else None
+            if row:
+                raw_val = row.get("asset_sub_category") if isinstance(row, dict) else row[0]
+                sub_cat = raw_val.strip().upper() if raw_val else None
+            else:
+                sub_cat = None
             _TICKER_SECTOR_MAP[ticker] = sub_cat
 
         if not sub_cat or sub_cat not in SUB_CATEGORY_TO_ETF:
@@ -293,13 +312,19 @@ def get_ticker_sector_tailwinds(ticker: str, conn=None) -> Dict[str, Any]:
         rs_5d = sector_entry["rs_vs_spy_5d_pct"]
         name = sector_entry["name"]
 
-        has_tailwind = phase in ("STEALTH_ACCUMULATION", "MARKUP") and rs_5d >= 0.5
-        is_outflow = phase in ("OUTFLOW", "DISTRIBUTION") or rs_5d < -1.0
+        has_tailwind = phase in ("STEALTH_ACCUMULATION", "MARKUP", "ACCUMULATION") and rs_5d >= 0.3
+        is_outflow = (phase in ("OUTFLOW", "DISTRIBUTION") and rs_5d < -0.8) or rs_5d < -1.5
 
         if phase == "STEALTH_ACCUMULATION":
             reason = f"Institutional Capital Inflow: Parent sector {name} ({etf}) in STEALTH ACCUMULATION (+{rs_5d:.1f}% RS vs SPY)."
         elif phase == "MARKUP":
             reason = f"Strong Sector Momentum: Parent sector {name} ({etf}) in MARKUP (+{rs_5d:.1f}% RS vs SPY)."
+        elif phase == "ACCUMULATION":
+            reason = f"Steady Sector Inflow: Parent sector {name} ({etf}) in ACCUMULATION (+{rs_5d:.1f}% RS vs SPY)."
+        elif phase == "CONSOLIDATION":
+            reason = f"Neutral Sector Base: Parent sector {name} ({etf}) tracking broad market ({rs_5d:+.1f}% RS vs SPY)."
+        elif phase == "IMPROVING":
+            reason = f"Mild Sector Consolidation: Parent sector {name} ({etf}) mildly lagging ({rs_5d:+.1f}% RS vs SPY)."
         elif phase == "DISTRIBUTION":
             reason = f"Institutional Headwind: Parent sector {name} ({etf}) in DISTRIBUTION (-{abs(rs_5d):.1f}% RS vs SPY)."
         else:

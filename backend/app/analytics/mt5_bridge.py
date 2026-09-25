@@ -243,12 +243,14 @@ def send_market_order(
     fixed_quantity: Optional[float] = None,
     sl_pct: Optional[float] = None,
     tp_pct: Optional[float] = None,
+    sl_price: Optional[float] = None,
+    tp_price: Optional[float] = None,
     comment: str = "",
     magic: int = MIMIR_MAGIC
 ) -> Dict[str, Any]:
     """
     Places a live market BUY or SELL deal in the connected MT5 account.
-    Attaches Stop Loss and Take Profit levels according to sl_pct and tp_pct.
+    Attaches Stop Loss and Take Profit levels according to sl_price/tp_price or sl_pct/tp_pct.
     """
     with _mt5_lock:
         if not ensure_mt5_connected():
@@ -316,20 +318,33 @@ def send_market_order(
         digits = sym_info.digits or 2
 
         # Calculate SL / TP prices
-        sl_price = 0.0
-        tp_price = 0.0
+        final_sl_price = 0.0
+        final_tp_price = 0.0
 
-        if sl_pct and sl_pct > 0:
+        if sl_price is not None and sl_price > 0:
+            final_sl_price = round(sl_price, digits)
+        elif sl_pct and sl_pct > 0:
             if is_buy:
-                sl_price = round(price * (1.0 - (sl_pct / 100.0)), digits)
+                final_sl_price = round(price * (1.0 - (sl_pct / 100.0)), digits)
             else:
-                sl_price = round(price * (1.0 + (sl_pct / 100.0)), digits)
+                final_sl_price = round(price * (1.0 + (sl_pct / 100.0)), digits)
 
-        if tp_pct and tp_pct > 0:
-            if is_buy:
-                tp_price = round(price * (1.0 + (tp_pct / 100.0)), digits)
-            else:
-                tp_price = round(price * (1.0 - (tp_pct / 100.0)), digits)
+        # Validate and adjust SL/TP distance against broker stop level and current spread
+        min_stop_pts = sym_info.trade_stops_level or 1
+        point = sym_info.point or (10 ** -digits)
+        min_distance = max(min_stop_pts * point, 2 * point)
+
+        if final_sl_price > 0:
+            if is_buy and final_sl_price >= (tick.bid - min_distance):
+                final_sl_price = round(tick.bid - min_distance, digits)
+            elif not is_buy and final_sl_price <= (tick.ask + min_distance):
+                final_sl_price = round(tick.ask + min_distance, digits)
+
+        if final_tp_price > 0:
+            if is_buy and final_tp_price <= (tick.ask + min_distance):
+                final_tp_price = round(tick.ask + min_distance, digits)
+            elif not is_buy and final_tp_price >= (tick.bid - min_distance):
+                final_tp_price = round(tick.bid - min_distance, digits)
 
         # Truncate comment to MT5 limit (max 31 characters)
         order_comment = (comment or f"MIMIR:{ticker}")[:31]
@@ -344,8 +359,8 @@ def send_market_order(
                 "volume": volume,
                 "type": order_type,
                 "price": price,
-                "sl": sl_price,
-                "tp": tp_price,
+                "sl": final_sl_price,
+                "tp": final_tp_price,
                 "deviation": 20,
                 "magic": magic,
                 "comment": order_comment,

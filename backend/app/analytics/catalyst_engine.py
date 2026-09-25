@@ -130,11 +130,14 @@ def insert_catalyst_trade_signal(
             (ticker, signal_type, catalyst_type, trigger_price, target_price, stop_loss,
              holding_period, headline, investment_thesis, conviction_score, sentiment_score, reason, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+            RETURNING id
         """
         cur.execute(sql, (
             ticker, signal_type, catalyst_type, trigger_price, target_price, stop_loss,
             holding_period, headline, investment_thesis, conviction_score, sentiment_score, reason
         ))
+        row = cur.fetchone()
+        sig_id = row[0] if row else None
         conn.commit()
         logger.info(f"[CATALYST_ENGINE] Created {catalyst_type} alert for {ticker} ({signal_type}): {headline[:60]}")
 
@@ -155,6 +158,25 @@ def insert_catalyst_trade_signal(
             )
         except Exception as discord_err:
             logger.warning(f"[CATALYST_ENGINE] Discord notify failed (non-fatal): {discord_err}")
+        # ────────────────────────────────────────────────────────────────────
+
+        # ── Automated MT5 Paper Trade execution ───────────────────────────────
+        try:
+            from .paper_trader import execute_single_paper_trade
+            execute_single_paper_trade(
+                signal_id=sig_id,
+                ticker=ticker,
+                signal_type=signal_type,
+                trigger_price=trigger_price,
+                target_price=target_price,
+                stop_loss=stop_loss,
+                conviction_score=conviction_score,
+                catalyst_type=catalyst_type,
+                reason=reason,
+                conn=conn
+            )
+        except Exception as pt_err:
+            logger.warning(f"[CATALYST_ENGINE] MT5 Paper Trade dispatch failed (non-fatal): {pt_err}")
         # ────────────────────────────────────────────────────────────────────
 
         return True

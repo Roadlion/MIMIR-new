@@ -166,33 +166,12 @@ def get_sentiment_summary(
         active_tickers AS (
             SELECT DISTINCT ticker FROM sentiment_24h WHERE ticker IS NOT NULL
         ),
-        ticker_prices AS (
-            SELECT DISTINCT ON (ticker)
-                ticker,
-                close AS latest_price,
-                timestamp AS latest_ts
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
-            WHERE ticker IN (SELECT ticker FROM active_tickers)
-            ORDER BY ticker, timestamp DESC
-        ),
-        ticker_prices_24h AS (
-            SELECT DISTINCT ON (h.ticker)
-                h.ticker,
-                h.close AS prev_price
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv h
-            WHERE h.ticker IN (SELECT ticker FROM active_tickers)
-              AND h.timestamp <= NOW() - INTERVAL '24 hours'
-            ORDER BY h.ticker, h.timestamp DESC
-        ),
         price_changes AS (
             SELECT 
-                p.ticker,
-                CASE 
-                    WHEN p24.prev_price > 0 THEN ((p.latest_price - p24.prev_price) / p24.prev_price) * 100
-                    ELSE 0.0
-                END AS price_change_percent
-            FROM ticker_prices p
-            LEFT JOIN ticker_prices_24h p24 ON p.ticker = p24.ticker
+                ticker,
+                change_percent AS price_change_percent
+            FROM {settings.mimir_schema}.mimir_latest_prices
+            WHERE ticker IN (SELECT ticker FROM active_tickers)
         ),
         sentiment_prev AS (
             SELECT 

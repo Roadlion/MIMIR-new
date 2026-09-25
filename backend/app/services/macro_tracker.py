@@ -242,7 +242,7 @@ def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
         spy_rows = cur.fetchall()
 
         if len(spy_rows) >= 20:
-            spy_closes = [float(r[0]) for r in spy_rows]
+            spy_closes = [float(r['close'] if isinstance(r, dict) else r[0]) for r in spy_rows]
             latest_spy = spy_closes[0]
             sma_50 = sum(spy_closes) / len(spy_closes)
 
@@ -258,10 +258,12 @@ def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
             LIMIT 1
         """)
         vix_row = cur.fetchone()
-        if vix_row and vix_row[0] is not None:
-            latest_vix = float(vix_row[0])
-            if latest_vix > 25.0:
-                return False, f"Market regime elevated risk: VIX at {latest_vix:.1f} > 25.0 threshold. Swing longs paused."
+        if vix_row is not None:
+            raw_vix = vix_row['close'] if isinstance(vix_row, dict) else vix_row[0]
+            if raw_vix is not None:
+                latest_vix = float(raw_vix)
+                if latest_vix > 25.0:
+                    return False, f"Market regime elevated risk: VIX at {latest_vix:.1f} > 25.0 threshold. Swing longs paused."
 
         return True, "Market regime healthy (SPY >= 50-SMA and VIX <= 25.0)."
     except Exception as e:

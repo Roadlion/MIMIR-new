@@ -16,7 +16,7 @@ Setup:
 
 import requests
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ _COLORS = {
 
 # Catalyst type → human-readable label
 _CATALYST_LABELS = {
+    "WAR_RIG_CONVERGENCE":    "⚔️ War Rig Alpha Convergence",
     "PRE_EARNINGS_BEAT":      "📅 Pre-Earnings Beat",
     "SUPPLY_CHAIN_SPILLOVER": "🔗 Supply Chain Spillover",
     "MICRO_CATALYST":         "⚡ Micro Catalyst",
@@ -53,6 +54,10 @@ def _conviction_tier(conviction_score: Optional[float], catalyst_type: Optional[
     if conviction_score is None:
         conviction_score = abs(sentiment)
 
+    if catalyst_type == "WAR_RIG_CONVERGENCE" or (conviction_score and conviction_score >= 0.75):
+        pct = round(conviction_score * 100) if conviction_score <= 1.0 else round(conviction_score)
+        return f"🏆 **Tier 1 — War Rig Institutional ({pct}%)**"
+
     is_catalyst_driven = catalyst_type and catalyst_type != "SENTIMENT_FUSION"
 
     if is_catalyst_driven and conviction_score >= 0.45:
@@ -67,18 +72,21 @@ def send_trade_alert(
     ticker: str,
     signal_type: str,                       # "BUY" or "SELL"
     trigger_price: float,
-    target_price: Optional[float],
-    stop_loss: Optional[float],
-    sentiment_score: Optional[float],
-    catalyst_type: Optional[str],
-    headline: Optional[str],
-    reason: str,
+    target_price: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    sentiment_score: Optional[float] = None,
+    catalyst_type: Optional[str] = None,
+    headline: Optional[str] = None,
+    reason: str = "",
     holding_period: Optional[str] = None,
     conviction_score: Optional[float] = None,
     rsi: Optional[float] = None,
+    investment_thesis: Optional[str] = None,
+    cylinder_details: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Posts a rich Discord embed for a new MIMIR trade alert.
+    Displays detailed breakdown of points and elements across all 3 War Rig cylinders.
     Returns True if the message was sent successfully, False otherwise.
     Silently skips if DISCORD_WEBHOOK_URL is not configured.
     """
@@ -138,20 +146,21 @@ def send_trade_alert(
             "inline": True,
         })
 
-    # Sentiment
+    # Sentiment & RSI
     fields.append({
         "name": "😶 Sentiment",
         "value": _sentiment_bar(sentiment_score),
-        "inline": False,
+        "inline": True,
     })
 
-    # RSI if available
     if rsi is not None:
         fields.append({
             "name": "📈 RSI (14)",
             "value": f"`{rsi:.1f}`",
             "inline": True,
         })
+    else:
+        fields.append({"name": "\u200b", "value": "\u200b", "inline": True})
 
     # Holding period
     if holding_period:
@@ -163,7 +172,6 @@ def send_trade_alert(
 
     # Headline (catalyst trigger)
     if headline:
-        # Truncate to Discord field limit
         hl = headline[:500] + "…" if len(headline) > 500 else headline
         fields.append({
             "name": "📰 Catalyst Headline",
@@ -171,13 +179,136 @@ def send_trade_alert(
             "inline": False,
         })
 
-    # Reason / thesis summary
-    reason_short = reason[:800] + "…" if len(reason) > 800 else reason
-    fields.append({
-        "name": "🧠 Signal Reason",
-        "value": f"```{reason_short}```",
-        "inline": False,
-    })
+    # ── War Rig Point Breakdown by Cylinder ──────────────────────────────────
+    if cylinder_details:
+        c1 = cylinder_details.get("c1", {})
+        c2 = cylinder_details.get("c2", {})
+        c3 = cylinder_details.get("c3", {})
+        c1_s = cylinder_details.get("c1_score", 0.0)
+        c2_s = cylinder_details.get("c2_score", 0.0)
+        c3_s = cylinder_details.get("c3_score", 0.0)
+
+        # Cylinder 1 Elements
+        c1_lines = [
+            f"**Points Awarded:** `{c1_s:.1f} / 25.0 pts`",
+            f"• **Sector:** {c1.get('sector_name', 'General Market')} (`{c1.get('sector_phase', 'NEUTRAL')}`)",
+            f"• **Relative Strength:** `{c1.get('rs_vs_spy_5d', 0.0):+.1f}%` vs SPY",
+            f"• **Thesis:** {c1.get('sector_thesis', 'Sector alignment')}",
+        ]
+        if c1.get("macro_status") and c1.get("macro_status") != "CLEAR":
+            c1_lines.append(f"• **Macro Filter:** {c1.get('macro_status')} ({c1.get('macro_reason')})")
+
+        fields.append({
+            "name": f"⚡ Cylinder 1: Macro & Sector Inflows (`{c1_s:.1f} pts`)",
+            "value": "\n".join(c1_lines)[:1024],
+            "inline": False,
+        })
+
+        # Cylinder 2 Elements
+        c2_lines = [
+            f"**Points Awarded:** `{c2_s:.1f} / 50.0 pts`",
+        ]
+        if c2.get("turbo_a_active"):
+            pe = c2.get("pre_earnings", {})
+            eps_txt = f"+{pe['eps_growth']*100:.0f}%" if pe.get("eps_growth") is not None else "N/A"
+            c2_lines.append(
+                f"• **Turbo A (Pre-Earnings):** `{c2.get('turbo_a_score', 0):.1f} pts`\n"
+                f"  └ Report in `{pe.get('days_until', '?')}d` ({pe.get('earnings_date')}) | EPS Growth: `{eps_txt}` | Sentiment: `{pe.get('avg_sentiment', 0.0):+.2f}`"
+            )
+        else:
+            c2_lines.append("• **Turbo A (Pre-Earnings):** `0.0 pts` (No earnings scheduled in 2–14d window)")
+
+        if c2.get("turbo_b_active"):
+            sp = c2.get("spillover", {})
+            if sp:
+                c2_lines.append(
+                    f"• **Turbo B (Spillover):** `{c2.get('turbo_b_score', 0):.1f} pts`\n"
+                    f"  └ Supplier/Peer: `{sp.get('source_asset')}` (Sentiment: `+{sp.get('spillover_score', 0):.2f}`, Conf: `{sp.get('spillover_confidence', 0):.2f}`)"
+                )
+            elif c2.get("headlines"):
+                c2_lines.append(
+                    f"• **Turbo B (High-Impact News):** `{c2.get('turbo_b_score', 0):.1f} pts`\n"
+                    f"  └ *{c2['headlines'][0][:100]}*"
+                )
+        else:
+            c2_lines.append("• **Turbo B (News/Spillover):** `0.0 pts` (No high-magnitude catalyst found)")
+
+        if c2.get("turbo_c_active"):
+            bf = c2.get("breakout_flow", {})
+            c2_lines.append(
+                f"• **Turbo C (Institutional Breakout Flow):** `{c2.get('turbo_c_score', 0):.1f} pts`\n"
+                f"  └ Volume Surge: `{bf.get('volume_ratio', 1.0):.2f}x` | 5D Return: `+{bf.get('rs_5d', 0.0):.1f}%` | Level: `${bf.get('breakout_level', 0):.2f}`"
+            )
+
+        if c2.get("twin_turbo_synergy"):
+            c2_lines.append(f"• **Multi-Chamber Synergy:** `+{c2.get('synergy_bonus', 15.0):.1f} pts` (Catalyst Confluence Bonus)")
+
+        fields.append({
+            "name": f"🔥 Cylinder 2: Catalyst V8 Multi-Chamber (`{c2_s:.1f} pts`)",
+            "value": "\n".join(c2_lines)[:1024],
+            "inline": False,
+        })
+
+        rsi_val = c3.get('rsi', 50)
+        c3_lines = [
+            f"**Points Awarded:** `{c3_s:.1f} / 28.0 pts`",
+            f"• **Moving Averages:** {c3.get('trend_note', 'Bullish structure')}",
+            f"• **RSI Sweet Spot:** {c3.get('rsi_note', f'RSI: {rsi_val:.1f}')}",
+            f"• **Volume Expansion:** {c3.get('vol_note', 'Normal turnover')}",
+        ]
+        quant_parts = []
+        if c3.get("vol_regime") in ("SQUEEZE", "EXHAUSTION", "EXPANDING"):
+            quant_parts.append(f"Regime: `{c3.get('vol_regime')}`")
+        if c3.get("seller_exhausted"):
+            quant_parts.append("`Wyckoff Seller Absorption`")
+        if c3.get("ou_zscore") is not None and abs(c3.get("ou_zscore")) >= 0.5:
+            quant_parts.append(f"OU Z: `{c3.get('ou_zscore'):.2f}`")
+        if quant_parts:
+            c3_lines.append(f"• **Bong Strats Quant:** {' | '.join(quant_parts)}")
+
+        up_pct = c3.get("upside_pct", 0)
+        down_pct = c3.get("downside_pct", 0)
+        rr_val = c3.get("rr_ratio", 2.5)
+        c3_lines.append(f"• **Asymmetry Gate:** Target `+{up_pct}%` vs Stop `-{down_pct}%` | **R/R: `{rr_val:.2f}:1`** (Min 2.5:1 required)")
+
+        fields.append({
+            "name": f"🎯 Cylinder 3: Microstructure & Asymmetry (`{c3_s:.1f} pts`)",
+            "value": "\n".join(c3_lines)[:1024],
+            "inline": False,
+        })
+
+    elif investment_thesis and "CYLINDER 1" in investment_thesis:
+        # Structured breakdown parsed from existing stored thesis
+        lines = [ln.strip() for ln in investment_thesis.split("\n") if ln.strip()]
+        c1_val = ""
+        c2_val = ""
+        c3_val = ""
+        asym_val = ""
+        for line in lines:
+            if "CYLINDER 1" in line:
+                c1_val = line.replace("⚡ CYLINDER 1 (Macro & Sector):", "").strip()
+            elif "CYLINDER 2" in line:
+                c2_val = line.replace("🔥 CYLINDER 2 (Catalyst V8):", "").strip()
+            elif "CYLINDER 3" in line:
+                c3_val = line.replace("🎯 CYLINDER 3 (Microstructure):", "").strip()
+            elif "ASYMMETRY GATE" in line:
+                asym_val = line.replace("⚖️ ASYMMETRY GATE:", "").strip()
+
+        if c1_val:
+            fields.append({"name": "⚡ Cylinder 1: Macro & Sector", "value": f"```{c1_val[:1000]}```", "inline": False})
+        if c2_val:
+            fields.append({"name": "🔥 Cylinder 2: Catalyst V8", "value": f"```{c2_val[:1000]}```", "inline": False})
+        if c3_val or asym_val:
+            c3_combined = f"{c3_val}\n\n⚖️ Asymmetry: {asym_val}" if asym_val else c3_val
+            fields.append({"name": "🎯 Cylinder 3: Microstructure & Asymmetry", "value": f"```{c3_combined[:1000]}```", "inline": False})
+    else:
+        # Fallback summary
+        reason_short = reason[:800] + "…" if len(reason) > 800 else reason
+        fields.append({
+            "name": "🧠 Signal Reason",
+            "value": f"```{reason_short}```",
+            "inline": False,
+        })
 
     # ── Assemble payload ──────────────────────────────────────────────────────
     embed = {

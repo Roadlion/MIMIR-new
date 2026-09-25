@@ -168,6 +168,7 @@ class WarRigEngine:
         self,
         ticker: str,
         as_of_date: Optional[date] = None,
+        df_prices: Optional[pd.DataFrame] = None,
         conn = None
     ) -> Tuple[float, Dict[str, Any]]:
         """
@@ -179,6 +180,7 @@ class WarRigEngine:
         db = conn or self.conn
         score = 0.0
         details = {}
+        eval_date = as_of_date if as_of_date is not None else datetime.now(timezone.utc).date()
 
         # 1. Sector Rotation Matrix Check
         try:
@@ -199,12 +201,15 @@ class WarRigEngine:
             elif phase == "MARKUP":
                 score = 20.0
                 details["sector_thesis"] = f"Strong Sector Momentum (+{rs_5d:.1f}% RS vs SPY). Full institutional trend established."
-            elif phase in ("ACCUMULATION", "IMPROVING"):
-                score = 15.0
-                details["sector_thesis"] = f"Early Rotation / Improving (+{rs_5d:.1f}% RS vs SPY)."
-            elif phase == "CONSOLIDATION" or rs_5d >= 0.0:
-                score = 10.0
-                details["sector_thesis"] = f"Neutral Sector Base (RS: {rs_5d:+.1f}% vs SPY)."
+            elif phase == "ACCUMULATION":
+                score = 18.0
+                details["sector_thesis"] = f"Steady Sector Accumulation (+{rs_5d:.1f}% RS vs SPY). Institutional inflows intact."
+            elif phase == "CONSOLIDATION":
+                score = 12.0
+                details["sector_thesis"] = f"Neutral Sector Base ({rs_5d:+.1f}% RS vs SPY). Stable sector foundation."
+            elif phase == "IMPROVING":
+                score = 8.0
+                details["sector_thesis"] = f"Mild Sector Lag ({rs_5d:+.1f}% RS vs SPY). Sector consolidating."
             elif phase == "DISTRIBUTION":
                 score = 0.0
                 details["sector_thesis"] = f"Institutional Distribution ({rs_5d:+.1f}% RS). Heavy supply overhead."
@@ -212,9 +217,38 @@ class WarRigEngine:
                 score = 0.0
                 details["sector_thesis"] = f"Sector Outflow / Markdown ({rs_5d:+.1f}% RS). Capital flowing into leaders."
 
-            # Bonus for exceptional relative strength (> +2.0% vs SPY)
+            # Bonus for exceptional sector relative strength (> +2.0% vs SPY)
             if rs_5d >= 2.0 and score > 0:
                 score = min(25.0, score + 3.0)
+
+            # Bonus for idiosyncratic ticker outperformance (5D return >= +3.0%)
+            if df_prices is not None and len(df_prices) >= 6:
+                c_now = float(df_prices['close'].iloc[-1])
+                c_5d_ago = float(df_prices['close'].iloc[-6])
+                stock_5d = ((c_now / c_5d_ago) - 1.0) * 100.0
+                if stock_5d >= 3.0 and score > 0:
+                    score = min(25.0, score + 3.0)
+                    details["sector_thesis"] += f" (+{stock_5d:.1f}% Ticker Leader Outperformance)"
+
+            # Catalyst Overdrive Safety Floor (Idiosyncratic Alpha Protection)
+            # If the ticker has an impending Tier 1 Pre-Earnings Beat (2-14d),
+            # ensure minor tracking noise doesn't zero out idiosyncratic alpha (guarantees 15.0 pts if rs_5d > -2.5%)
+            if score < 15.0 and rs_5d > -2.5:
+                try:
+                    c_cur = db.cursor()
+                    c_cur.execute(f"""
+                        SELECT 1 FROM {settings.mimir_schema}.mimir_earnings_calendar
+                        WHERE ticker = %s 
+                          AND earnings_date >= %s + INTERVAL '2 days'
+                          AND earnings_date <= %s + INTERVAL '14 days'
+                        LIMIT 1
+                    """, (ticker.strip().upper(), eval_date, eval_date))
+                    if c_cur.fetchone():
+                        score = 15.0
+                        details["sector_thesis"] += " (Catalyst Overdrive: Pre-Earnings Alpha Floor 15pts Applied)"
+                    c_cur.close()
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.warning(f"[WAR_RIG] Cylinder 1 error for {ticker}: {e}")
@@ -243,13 +277,15 @@ class WarRigEngine:
         self,
         ticker: str,
         as_of_date: Optional[date] = None,
+        df_prices: Optional[pd.DataFrame] = None,
         conn = None
     ) -> Tuple[float, Dict[str, Any]]:
         """
-        Cylinder 2: Catalyst V8 Twin-Turbo (Max 50 pts).
-        - Turbo A: Pre-Earnings Beat Anticipation (0 - 30 pts)
-        - Turbo B: Supply Chain Spillover / High-Magnitude Catalyst (0 - 30 pts)
-        - Synergy Bonus: +15 pts when both turbos converge (capped at 50 pts total).
+        Cylinder 2: Catalyst V8 Multi-Chamber Engine (Max 50 pts).
+        - Turbo A: Pre-Earnings Beat Anticipation (0 - 38 pts standalone, up to 28 in combo)
+        - Turbo B: Supply Chain Spillover / High-Magnitude News (0 - 38 pts standalone, up to 28 in combo)
+        - Turbo C: Institutional Breakout & Relative Strength Flow (0 - 35 pts standalone, up to 28 in combo)
+        - Twin-Chamber Synergy Bonus: +15 pts when multiple chambers fire together (capped at 50 pts total).
         """
         db = conn or self.conn
         close_conn = False
@@ -260,12 +296,15 @@ class WarRigEngine:
         cur = db.cursor()
         turbo_a_score = 0.0
         turbo_b_score = 0.0
+        turbo_c_score = 0.0
         details = {
             "turbo_a_active": False,
             "turbo_b_active": False,
+            "turbo_c_active": False,
             "pre_earnings": {},
             "spillover": {},
-            "headlines": []
+            "headlines": [],
+            "breakout_flow": {}
         }
 
         eval_date = as_of_date if as_of_date is not None else datetime.now(timezone.utc).date()
@@ -284,7 +323,16 @@ class WarRigEngine:
             earn_row = cur.fetchone()
 
             if earn_row:
-                earn_date, earn_time, comp_name = earn_row
+                if isinstance(earn_row, dict):
+                    earn_date = earn_row.get("earnings_date")
+                    earn_time = earn_row.get("earnings_time")
+                    comp_name = earn_row.get("company_name")
+                else:
+                    earn_date, earn_time, comp_name = earn_row
+                if isinstance(earn_date, str):
+                    earn_date = datetime.strptime(earn_date[:10], '%Y-%m-%d').date()
+                elif hasattr(earn_date, "date"):
+                    earn_date = earn_date.date()
                 days_until = (earn_date - eval_date).days
 
                 # Fetch 7-day pre-earnings sentiment leading into print
@@ -312,21 +360,26 @@ class WarRigEngine:
                 valuation = str(fund_row[2]) if fund_row and fund_row[2] is not None else "FAIRLY_VALUED"
 
                 # Turbo A Score Calculation:
-                # Base for entering the 3-10 day sweet spot
+                # Base for entering the sweet spot window
                 if 3 <= days_until <= 10:
-                    turbo_a_score = 15.0
+                    turbo_a_score = 18.0
                 elif 2 <= days_until <= 14:
-                    turbo_a_score = 10.0
+                    turbo_a_score = 12.0
 
                 # Positive sentiment impulse into print
                 if avg_sent >= 0.35:
                     turbo_a_score += min(10.0, avg_sent * 15.0)
                 elif avg_sent > 0.0:
-                    turbo_a_score += 4.0
+                    turbo_a_score += 5.0
 
                 # Fundamental growth confirmation
-                if eps_growth is not None and eps_growth > 0.10:
-                    turbo_a_score += 5.0
+                if eps_growth is not None and eps_growth > 0.50:
+                    turbo_a_score += 10.0
+                elif eps_growth is not None and eps_growth > 0.10:
+                    turbo_a_score += 6.0
+
+                if valuation != "OVERVALUED":
+                    turbo_a_score += 2.0
 
                 details["turbo_a_active"] = True
                 details["pre_earnings"] = {
@@ -356,16 +409,24 @@ class WarRigEngine:
             """, (ticker.strip().upper(), eval_date, eval_date))
             spill_row = cur.fetchone()
 
-            if spill_row and spill_row[1] is not None and float(spill_row[1]) >= 0.12:
-                source_asset, spill_score, spill_conf, spill_titles = spill_row
-                turbo_b_score = min(28.0, 16.0 + float(spill_score) * 20.0)
-                details["turbo_b_active"] = True
-                details["spillover"] = {
-                    "source_asset": source_asset,
-                    "spillover_score": round(float(spill_score), 2),
-                    "spillover_confidence": round(float(spill_conf), 2),
-                    "headlines": spill_titles[:150] if spill_titles else ""
-                }
+            if spill_row:
+                if isinstance(spill_row, dict):
+                    source_asset = spill_row.get("spillover_source_asset")
+                    spill_score = spill_row.get("avg") or spill_row.get("sentiment_score") or 0.0
+                    spill_conf = spill_row.get("confidence") or 0.50
+                    spill_titles = spill_row.get("string_agg") or ""
+                else:
+                    source_asset, spill_score, spill_conf, spill_titles = spill_row
+
+                if spill_score is not None and float(spill_score) >= 0.12:
+                    turbo_b_score = min(28.0, 16.0 + float(spill_score) * 20.0)
+                    details["turbo_b_active"] = True
+                    details["spillover"] = {
+                        "source_asset": source_asset,
+                        "spillover_score": round(float(spill_score), 2),
+                        "spillover_confidence": round(float(spill_conf), 2),
+                        "headlines": spill_titles[:150] if spill_titles else ""
+                    }
 
             # 2. Check for Direct High-Magnitude Catalyst Articles (Tier 1 earnings/contract/guidance)
             cur.execute(f"""
@@ -385,8 +446,15 @@ class WarRigEngine:
             if mag_rows:
                 high_mag_boost = 0.0
                 for row in mag_rows:
-                    title, score, conf, mag, reasoning = row
-                    details["headlines"].append(title[:120])
+                    if isinstance(row, dict):
+                        title = row.get("title", "")
+                        score = row.get("sentiment_score", 0.0)
+                        conf = row.get("confidence", 0.5)
+                        mag = row.get("magnitude", "MEDIUM")
+                        reasoning = row.get("reasoning", "")
+                    else:
+                        title, score, conf, mag, reasoning = row
+                    details["headlines"].append(str(title)[:120])
                     mag_weight = 14.0 if mag == 'HIGH' else 8.0
                     art_score = float(score) * 16.0 + mag_weight * float(conf)
                     high_mag_boost = max(high_mag_boost, art_score)
@@ -395,18 +463,96 @@ class WarRigEngine:
                 turbo_b_score = max(turbo_b_score, min(30.0, high_mag_boost))
                 details["turbo_b_active"] = True
 
-            # ── TWIN-TURBO SUPERCHARGING SYNERGY ─────────────────────────────
-            # When Pre-Earnings Beat runs with Upstream Supply Chain / High-Mag News:
+            # ── TURBO C: Institutional Breakout & Relative Strength Flow ────────
+            # Detects massive institutional volume expansion and market outperformance
+            # even when direct scheduled earnings or news are absent.
+            if df_prices is not None and len(df_prices) >= 20:
+                try:
+                    c_now = float(df_prices['close'].iloc[-1])
+                    v_now = float(df_prices['volume'].iloc[-1])
+                    v_prior_avg = float(df_prices['volume'].iloc[-21:-1].mean()) if len(df_prices) >= 21 else float(df_prices['volume'].mean())
+                    vol_surge = v_now / max(1.0, v_prior_avg)
+
+                    # 5-day return of stock
+                    ret_5d = ((c_now / float(df_prices['close'].iloc[-6])) - 1.0) * 100.0 if len(df_prices) >= 6 else 0.0
+
+                    # 20-day high breakout
+                    high_20d_prior = float(df_prices['high'].iloc[-21:-1].max()) if len(df_prices) >= 21 else c_now
+                    is_breakout = (c_now >= high_20d_prior * 0.99)  # Breaking out at or within 1% of 20D high
+
+                    # Moving averages alignment
+                    sma20 = float(df_prices['close'].rolling(20).mean().iloc[-1])
+                    sma50 = float(df_prices['close'].rolling(50).mean().iloc[-1]) if len(df_prices) >= 50 else sma20
+                    above_smas = (c_now >= sma20) and (c_now >= sma50)
+
+                    # Bong Strats Quant Safety Check (no blow-off exhaustion, no extreme overextension)
+                    try:
+                        v_regimes = compute_volatility_regime(df_prices)
+                        curr_regime = v_regimes.iloc[-1] if not v_regimes.empty else "STABLE"
+                    except Exception:
+                        curr_regime = "STABLE"
+
+                    is_safe_flow = (curr_regime != "EXHAUSTION")
+
+                    # Qualify Turbo C: Needs strong volume (>= 1.4x) AND strong 5D return (>= 3.0%) AND above SMAs AND safe regime
+                    if vol_surge >= 1.40 and ret_5d >= 3.0 and above_smas and is_safe_flow:
+                        tc_score = 0.0
+                        # Volume expansion score (up to 12 pts)
+                        if vol_surge >= 1.80:
+                            tc_score += 12.0
+                        elif vol_surge >= 1.40:
+                            tc_score += 8.0
+
+                        # Momentum velocity score (up to 12 pts)
+                        if ret_5d >= 6.0:
+                            tc_score += 12.0
+                        elif ret_5d >= 3.0:
+                            tc_score += 8.0
+
+                        # Structural breakout score (up to 8 pts)
+                        if is_breakout:
+                            tc_score += 8.0
+                        else:
+                            tc_score += 4.0
+
+                        turbo_c_score = min(30.0, tc_score)
+                        details["turbo_c_active"] = True
+                        details["breakout_flow"] = {
+                            "volume_ratio": round(vol_surge, 2),
+                            "ret_5d": round(ret_5d, 1),
+                            "rs_5d": round(ret_5d, 1),
+                            "breakout_level": round(high_20d_prior, 2),
+                            "is_breakout": is_breakout
+                        }
+                except Exception as c_err:
+                    logger.warning(f"[WAR_RIG] Turbo C calculation error for {ticker}: {c_err}")
+
+            # ── MULTI-TURBO SUPERCHARGING SYNERGY & STANDALONE OVERDRIVE ──────
+            active_count = sum([
+                1 if details["turbo_a_active"] else 0,
+                1 if details["turbo_b_active"] else 0,
+                1 if details["turbo_c_active"] else 0,
+            ])
+
             synergy_bonus = 0.0
-            if details["turbo_a_active"] and details["turbo_b_active"]:
+            if active_count >= 2:
                 synergy_bonus = 15.0
                 details["twin_turbo_synergy"] = True
+                total_cylinder_2 = min(50.0, turbo_a_score + turbo_b_score + turbo_c_score + synergy_bonus)
+            elif active_count == 1:
+                details["twin_turbo_synergy"] = False
+                # Standalone Overdrive Scaling:
+                # If a single chamber is firing with top-tier conviction, scale it up to 38.0 pts
+                # so that monster setups (like pre-earnings beats with +1,300% EPS) reach conviction threshold
+                single_score = max(turbo_a_score, turbo_b_score, turbo_c_score)
+                total_cylinder_2 = min(38.0, single_score * 1.25)
             else:
                 details["twin_turbo_synergy"] = False
+                total_cylinder_2 = 0.0
 
-            total_cylinder_2 = min(50.0, turbo_a_score + turbo_b_score + synergy_bonus)
             details["turbo_a_score"] = round(turbo_a_score, 1)
             details["turbo_b_score"] = round(turbo_b_score, 1)
+            details["turbo_c_score"] = round(turbo_c_score, 1)
             details["synergy_bonus"] = round(synergy_bonus, 1)
 
             return total_cylinder_2, details
@@ -462,7 +608,14 @@ class WarRigEngine:
         else:
             trend_note = "Below key moving averages (downward drift)"
 
-        # 2. RSI Health (Up to 8 pts)
+        # 2. Bong Strats: Volatility Regime (+4 Squeeze / -8 Exhaustion)
+        try:
+            vol_regimes = compute_volatility_regime(df_prices)
+            current_regime = vol_regimes.iloc[-1] if not vol_regimes.empty else "STABLE"
+        except Exception:
+            current_regime = "STABLE"
+
+        # 3. RSI Health (Up to 8 pts)
         if 42.0 <= rsi <= 65.0:
             score += 8.0
             rsi_note = f"Optimal momentum launchpad (RSI: {rsi:.1f})"
@@ -470,12 +623,15 @@ class WarRigEngine:
             score += 5.0
             rsi_note = f"Oversold stabilization (RSI: {rsi:.1f})"
         elif 65.0 < rsi <= 72.0:
-            score += 4.0
+            score += 5.0
             rsi_note = f"Active momentum but elevated (RSI: {rsi:.1f})"
+        elif 72.0 < rsi <= 78.0 and vol_ratio >= 1.40 and current_regime != "EXHAUSTION":
+            score += 5.0
+            rsi_note = f"Institutional breakout momentum (RSI: {rsi:.1f}, Vol: {vol_ratio:.1f}x)"
         else:
             rsi_note = f"Suboptimal RSI ({rsi:.1f}) — overextended or weak"
 
-        # 3. Volume Expansion (Up to 7 pts)
+        # 4. Volume Expansion (Up to 7 pts)
         if vol_ratio >= 1.20:
             score += 7.0
             vol_note = f"Institutional volume expansion ({vol_ratio:.2f}x 20D avg)"
@@ -485,13 +641,7 @@ class WarRigEngine:
         else:
             vol_note = f"Light volume ({vol_ratio:.2f}x 20D avg)"
 
-        # 4. Bong Strats: Volatility Regime (+4 Squeeze / -8 Exhaustion)
-        try:
-            vol_regimes = compute_volatility_regime(df_prices)
-            current_regime = vol_regimes.iloc[-1] if not vol_regimes.empty else "STABLE"
-        except Exception:
-            current_regime = "STABLE"
-
+        # Apply Volatility Regime points
         if current_regime == "SQUEEZE":
             score += 4.0
             regime_note = "Bollinger Squeeze (Volatility Coiling)"
@@ -537,8 +687,14 @@ class WarRigEngine:
             score += 4.0
             ou_note = f"OU Mean-Reversion Pocket (Z={ou_z:.2f})"
         elif ou_z > 2.2:
-            score -= 8.0
-            ou_note = f"OU Overextended (Z={ou_z:.2f})"
+            # During an active Stage 2 institutional breakout expansion with high volume,
+            # high positive Z-score reflects momentum acceleration, not mean-reversion exhaustion.
+            # Do NOT penalize unless volume is drying up or regime is already in EXHAUSTION.
+            if current_regime == "EXPANDING" and vol_ratio >= 1.40:
+                ou_note = f"OU Breakout Expansion (Z={ou_z:.2f}, Ignored Penalty)"
+            else:
+                score -= 8.0
+                ou_note = f"OU Overextended (Z={ou_z:.2f})"
         else:
             ou_note = f"OU Neutral (Z={ou_z:.2f})"
 
@@ -602,14 +758,14 @@ class WarRigEngine:
             return None
 
         # Cylinder 1: Macro & Sector Inflow (Max 25 pts)
-        c1_score, c1_details = self.evaluate_cylinder_1_macro_sector(ticker, as_of_date=as_of_date, conn=db)
+        c1_score, c1_details = self.evaluate_cylinder_1_macro_sector(ticker, as_of_date=as_of_date, df_prices=df_prices, conn=db)
         if c1_details.get("macro_status") == "BLOCKED":
             return None
 
-        # Cylinder 2: Catalyst V8 Twin-Turbo (Max 50 pts)
-        c2_score, c2_details = self.evaluate_cylinder_2_catalysts(ticker, as_of_date=as_of_date, conn=db)
-        # Must have at least one catalyst turbo firing
-        if not c2_details.get("turbo_a_active") and not c2_details.get("turbo_b_active"):
+        # Cylinder 2: Catalyst V8 Multi-Chamber (Max 50 pts)
+        c2_score, c2_details = self.evaluate_cylinder_2_catalysts(ticker, as_of_date=as_of_date, df_prices=df_prices, conn=db)
+        # Must have at least one catalyst turbo firing (A, B, or C)
+        if not c2_details.get("turbo_a_active") and not c2_details.get("turbo_b_active") and not c2_details.get("turbo_c_active"):
             return None
 
         # Cylinder 3: Microstructure & Asymmetry Gate (Max 28 pts)
@@ -640,6 +796,9 @@ class WarRigEngine:
                 catalyst_desc.append(f"Supply Chain Spillover (+{sp['spillover_score']:.2f} from {sp['source_asset']})")
             elif c2_details.get("headlines"):
                 catalyst_desc.append(f"High-Impact Catalyst: {c2_details['headlines'][0][:80]}")
+        if c2_details.get("turbo_c_active"):
+            bf = c2_details["breakout_flow"]
+            catalyst_desc.append(f"Institutional Breakout Flow ({bf['volume_ratio']}x Vol Surge, +{bf['rs_5d']:.1f}% 5D Momentum)")
 
         micro_notes = [c3_details['trend_note'], c3_details['rsi_note'], c3_details['vol_note']]
         if c3_details.get('vol_regime') in ('SQUEEZE', 'EXHAUSTION'):
@@ -699,6 +858,14 @@ class WarRigEngine:
             "cylinder_1_score": c1_score,
             "cylinder_2_score": c2_score,
             "cylinder_3_score": c3_score,
+            "cylinder_details": {
+                "c1_score": c1_score,
+                "c1": c1_details,
+                "c2_score": c2_score,
+                "c2": c2_details,
+                "c3_score": c3_score,
+                "c3": c3_details,
+            },
             "evaluation_date": c_date,
             "nitrous_payload": nitrous_input
         }
@@ -734,7 +901,36 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
         # Universe assembly: active tickers with upcoming earnings, recent catalysts, or top liquidity
         candidate_tickers = set([t.strip().upper() for t in DEFAULT_TICKERS if t])
 
-        # Add upcoming earnings tickers in the next 14 days
+        # 1. Add top institutional liquid equities from daily OHLCV (dollar volume >= $25M)
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ticker
+                FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                WHERE date >= CURRENT_DATE - INTERVAL '4 days'
+                  AND close >= 5.0
+                  AND (close * volume) >= 25000000
+                LIMIT 100
+            """)
+            for r in cur.fetchall():
+                if r[0]:
+                    candidate_tickers.add(r[0].strip().upper())
+        except Exception as l_err:
+            logger.warning(f"[WAR_RIG] Liquid universe fetch warning: {l_err}")
+
+        # 2. Add dynamically tracked portfolio and alert tickers
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ticker
+                FROM {settings.mimir_schema}.mimir_dynamic_tickers
+                WHERE ticker IS NOT NULL
+            """)
+            for r in cur.fetchall():
+                if r[0]:
+                    candidate_tickers.add(r[0].strip().upper())
+        except Exception:
+            pass
+
+        # 3. Add upcoming earnings tickers in the next 14 days
         cur.execute(f"""
             SELECT DISTINCT ticker
             FROM {settings.mimir_schema}.mimir_earnings_calendar
@@ -746,7 +942,7 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
             if r[0]:
                 candidate_tickers.add(r[0].strip().upper())
 
-        # Add recent positive catalyst tickers (last 7 days)
+        # 4. Add recent positive catalyst tickers (last 7 days)
         cur.execute(f"""
             SELECT DISTINCT si.ticker
             FROM {settings.mimir_schema}.mimir_sentiment_impacts si
@@ -781,12 +977,15 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
                     (ticker, signal_type, catalyst_type, trigger_price, target_price, stop_loss,
                      holding_period, headline, investment_thesis, conviction_score, sentiment_score, reason, status, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW())
+                    RETURNING id
                 """, (
                     sig["ticker"], sig["signal_type"], sig["catalyst_type"],
                     sig["trigger_price"], sig["target_price"], sig["stop_loss"],
                     sig["holding_period"], sig["headline"], sig["investment_thesis"],
                     sig["conviction_score"], sig["cylinder_2_score"] / 50.0, sig["reason"]
                 ))
+                sig_id_row = cur.fetchone()
+                new_signal_id = sig_id_row[0] if sig_id_row else None
                 conn.commit()
 
                 # Dispatch Discord Notification
@@ -797,14 +996,37 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
                         trigger_price=sig["trigger_price"],
                         target_price=sig["target_price"],
                         stop_loss=sig["stop_loss"],
+                        sentiment_score=sig.get("cylinder_2_score", 0.0) / 50.0,
                         catalyst_type=sig["catalyst_type"],
                         headline=sig["headline"],
                         reason=sig["reason"],
                         holding_period=sig["holding_period"],
                         conviction_score=sig["conviction_score"],
+                        investment_thesis=sig.get("investment_thesis"),
+                        cylinder_details=sig.get("cylinder_details"),
                     )
                 except Exception as d_err:
                     logger.warning(f"[WAR_RIG] Discord notify warning: {d_err}")
+
+                # Automatically trigger MT5 Paper Trade execution for this signal
+                try:
+                    from .paper_trader import execute_single_paper_trade
+                    paper_trade_res = execute_single_paper_trade(
+                        signal_id=new_signal_id,
+                        ticker=sig["ticker"],
+                        signal_type=sig["signal_type"],
+                        trigger_price=sig["trigger_price"],
+                        target_price=sig["target_price"],
+                        stop_loss=sig["stop_loss"],
+                        conviction_score=sig["conviction_score"],
+                        catalyst_type=sig["catalyst_type"],
+                        reason=sig["reason"],
+                        conn=conn
+                    )
+                    sig["paper_trade"] = paper_trade_res
+                    logger.info(f"[WAR_RIG] MT5 Paper Trade result for {sig['ticker']}: {paper_trade_res.get('message')}")
+                except Exception as pt_err:
+                    logger.warning(f"[WAR_RIG] MT5 Paper Trade dispatch failed for {sig['ticker']}: {pt_err}")
 
                 generated_signals.append(sig)
                 logger.info(f"[WAR_RIG] Generated War Rig Signal: {sig['ticker']} ({sig['raw_conviction_pct']:.0f}% Conviction | {sig['risk_reward_ratio']:.1f}:1 R/R)")

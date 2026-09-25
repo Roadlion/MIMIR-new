@@ -1,5 +1,4 @@
-# backend/app/routers/prices.py
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import yfinance as yf
@@ -30,7 +29,7 @@ router = APIRouter()
 settings = get_settings()
 
 _ticker_changes_cache = {}
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 15
 
 
 # Thread-local curl_cffi sessions — one per thread, reused across fetches
@@ -164,6 +163,36 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
                     scraped_at = NOW();
                 """
                 execute_values(cur, sql, sorted_records)
+                
+                # Also upsert latest price into mimir_latest_prices for O(1) lookups
+                if sorted_records:
+                    latest_rec = sorted_records[-1]
+                    target_prev_ts = latest_rec[1] - timedelta(hours=24)
+                    prev_candidates = [r for r in sorted_records if r[1] <= target_prev_ts]
+                    prev_close = prev_candidates[-1][5] if prev_candidates else sorted_records[0][5]
+                    chg_pct = round(((latest_rec[5] - prev_close) / prev_close * 100), 2) if prev_close > 0 else 0.0
+                    
+                    latest_sql = f"""
+                    INSERT INTO {settings.mimir_schema}.mimir_latest_prices
+                        (ticker, latest_price, prev_close_24h, change_percent, volume, open, high, low, timestamp, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        latest_price = EXCLUDED.latest_price,
+                        prev_close_24h = EXCLUDED.prev_close_24h,
+                        change_percent = EXCLUDED.change_percent,
+                        volume = EXCLUDED.volume,
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        timestamp = EXCLUDED.timestamp,
+                        updated_at = NOW();
+                    """
+                    cur.execute(latest_sql, (
+                        latest_rec[0], latest_rec[5], prev_close, chg_pct, latest_rec[6],
+                        latest_rec[2], latest_rec[3], latest_rec[4], latest_rec[1]
+                    ))
+                    _ticker_changes_cache.clear()
+
                 cur_conn.commit()
                 cur.close()
                 if close_conn:
@@ -370,38 +399,154 @@ def get_ticker_price_data(ticker_symbol: str, conn):
         "change_percent": round(change_percent, 2)
     }
 
+class PriceBroadcaster:
+    def __init__(self):
+        self.subscribers: set = set()
+        self._listener_started = False
+        self._lock = _thr.Lock()
+
+    def subscribe(self) -> asyncio.Queue:
+        q = asyncio.Queue(maxsize=100)
+        self.subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue):
+        self.subscribers.discard(q)
+
+    def broadcast(self, data: dict):
+        for q in list(self.subscribers):
+            try:
+                q.put_nowait(data)
+            except Exception:
+                pass
+
+    def ensure_listener(self):
+        with self._lock:
+            if not self._listener_started:
+                self._listener_started = True
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.get_event_loop()
+                t = _thr.Thread(target=self._run_listener, args=(loop,), daemon=True)
+                t.start()
+
+    def _run_listener(self, main_loop: asyncio.AbstractEventLoop):
+        import select
+        import psycopg2
+        import psycopg2.extensions
+        print("[SSE BROADCASTER] Initializing dedicated PostgreSQL price listener thread...")
+        while True:
+            conn = None
+            try:
+                conn = psycopg2.connect(
+                    host=settings.db_host,
+                    port=settings.db_port,
+                    dbname=settings.db_name,
+                    user=settings.db_user,
+                    password=settings.db_password,
+                )
+                conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+                cur = conn.cursor()
+                cur.execute("LISTEN price_updates;")
+                print("[SSE BROADCASTER] Shared PostgreSQL LISTEN price_updates active.")
+
+                while True:
+                    if select.select([conn], [], [], 5.0) == ([], [], []):
+                        if not main_loop.is_closed():
+                            main_loop.call_soon_threadsafe(self.broadcast, {"type": "ping"})
+                    else:
+                        conn.poll()
+                        got_update = False
+                        while conn.notifies:
+                            notify = conn.notifies.pop(0)
+                            got_update = True
+
+                        if got_update:
+                            _ticker_changes_cache.clear()
+                            try:
+                                fconn = get_db_connection_dict()
+                                fcur = fconn.cursor()
+                                fcur.execute(f"""
+                                    SELECT ticker, latest_price, prev_close_24h, change_percent, updated_at
+                                    FROM {settings.mimir_schema}.mimir_latest_prices
+                                    WHERE updated_at >= NOW() - INTERVAL '30 seconds'
+                                    ORDER BY updated_at DESC
+                                    LIMIT 100
+                                """)
+                                rows = fcur.fetchall()
+                                fcur.close()
+                                fconn.close()
+
+                                ticks = []
+                                for r in rows:
+                                    lp = float(r["latest_price"])
+                                    pp = float(r["prev_close_24h"]) if r["prev_close_24h"] is not None else lp
+                                    chg = float(r["change_percent"]) if r["change_percent"] is not None else 0.0
+                                    ticks.append({
+                                        "ticker": r["ticker"],
+                                        "price": lp,
+                                        "prev_close": pp,
+                                        "change_percent": chg
+                                    })
+
+                                payload = {
+                                    "type": "price_ticks",
+                                    "ticks": ticks
+                                }
+                                if not main_loop.is_closed():
+                                    main_loop.call_soon_threadsafe(self.broadcast, payload)
+                            except Exception as fetch_err:
+                                print(f"[SSE BROADCASTER TICK ERROR] {fetch_err}")
+                                if not main_loop.is_closed():
+                                    main_loop.call_soon_threadsafe(
+                                        self.broadcast, {"type": "price_update", "payload": "new_prices"}
+                                    )
+            except Exception as e:
+                print(f"[SSE BROADCASTER RECONNECT] {e}")
+                time.sleep(3)
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+price_broadcaster = PriceBroadcaster()
+
 @router.get("/prices/stream")
-async def stream_prices():
+async def stream_prices(request: Request):
     from fastapi.responses import StreamingResponse
     import json
-    import select
-    import psycopg2.extensions
-    
-    def event_generator():
-        conn = get_db_connection()
+
+    price_broadcaster.ensure_listener()
+    queue = price_broadcaster.subscribe()
+
+    async def event_generator():
         try:
-            # Get underlying psycopg2 connection for set_isolation_level
-            real_conn = conn._conn
-            real_conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-            cur = real_conn.cursor()
-            cur.execute("LISTEN price_updates;")
+            yield "data: {\"type\": \"connected\"}\n\n"
             while True:
-                # 5 second timeout to send a keep-alive ping
-                if select.select([real_conn], [], [], 5.0) == ([], [], []):
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"data: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
                     yield "data: {\"type\": \"ping\"}\n\n"
-                else:
-                    real_conn.poll()
-                    while real_conn.notifies:
-                        notify = real_conn.notifies.pop(0)
-                        yield f"data: {json.dumps({'type': 'price_update', 'payload': notify.payload})}\n\n"
-        except Exception as e:
-            print(f"[SSE ERROR] {e}")
+        except asyncio.CancelledError:
+            pass
         finally:
-            if 'cur' in locals():
-                cur.close()
-            conn.close()
-            
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+            price_broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @router.get("/prices/ticker-changes")
 def get_ticker_changes(tickers: Optional[str] = Query(None)):
@@ -424,82 +569,71 @@ def get_ticker_changes(tickers: Optional[str] = Query(None)):
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
-    # 1. Bulk check when tickers were last scraped
+    # 1. Ultra-fast lookup from mimir_latest_prices (<4ms)
     cur.execute(f"""
-        SELECT ticker, MAX(scraped_at) as last_scraped 
-        FROM {settings.mimir_schema}.mimir_hourly_ohlcv 
+        SELECT ticker, latest_price, prev_close_24h, change_percent, updated_at
+        FROM {settings.mimir_schema}.mimir_latest_prices
         WHERE ticker = ANY(%s)
-        GROUP BY ticker
     """, (ticker_list,))
-    rows = cur.fetchall()
-    last_scraped_map = {r["ticker"]: r["last_scraped"] for r in rows}
+    price_rows = cur.fetchall()
+    price_map = {r["ticker"]: r for r in price_rows}
     
-    # Identify which tickers are missing or stale (>2m)
-    now_ts = datetime.now(timezone.utc)
-    stale_tickers = []
-    for ticker in ticker_list:
-        last_scraped = last_scraped_map.get(ticker)
-        if not last_scraped or (now_ts - last_scraped > timedelta(minutes=2)):
-            stale_tickers.append(ticker)
-            
-    # Fetch from yfinance concurrently only for stale tickers
-    if stale_tickers:
-        print(f"[DATABASE] Cache miss/stale for tickers: {stale_tickers}. Fetching from yfinance concurrently...")
-        fetch_and_cache_tickers_concurrently(stale_tickers)
-        
-    # 2. Bulk fetch latest price and close price nearest to 24h ago
-
-    cur.execute(f"""
-        WITH latest_prices AS (
-            SELECT DISTINCT ON (ticker)
-                ticker,
-                close AS latest_price,
-                timestamp AS latest_ts
+    # 2. Check if any tickers are missing from mimir_latest_prices
+    missing_tickers = [t for t in ticker_list if t not in price_map]
+    if missing_tickers:
+        # Fast fallback check in mimir_hourly_ohlcv for missing tickers only
+        cur.execute(f"""
+            SELECT DISTINCT ON (ticker) ticker, close AS latest_price, timestamp
             FROM {settings.mimir_schema}.mimir_hourly_ohlcv
             WHERE ticker = ANY(%s)
             ORDER BY ticker, timestamp DESC
-        ),
-        prev_prices AS (
-            SELECT DISTINCT ON (l.ticker)
-                l.ticker,
-                h.close AS prev_price
-            FROM latest_prices l
-            JOIN {settings.mimir_schema}.mimir_hourly_ohlcv h ON l.ticker = h.ticker
-            WHERE h.timestamp <= l.latest_ts - INTERVAL '24 hours'
-            ORDER BY l.ticker, h.timestamp DESC
-        )
-        SELECT 
-            l.ticker,
-            l.latest_price,
-            COALESCE(p.prev_price, (
-                SELECT close FROM {settings.mimir_schema}.mimir_hourly_ohlcv h2 
-                WHERE h2.ticker = l.ticker 
-                ORDER BY timestamp ASC LIMIT 1
-            )) as prev_price
-        FROM latest_prices l
-        LEFT JOIN prev_prices p ON l.ticker = p.ticker
-    """, (ticker_list,))
-    
-    price_rows = cur.fetchall()
+        """, (missing_tickers,))
+        fallback_rows = cur.fetchall()
+        for fr in fallback_rows:
+            t_sym = fr["ticker"]
+            lp = float(fr["latest_price"])
+            price_map[t_sym] = {
+                "ticker": t_sym,
+                "latest_price": lp,
+                "prev_close_24h": lp,
+                "change_percent": 0.0,
+                "updated_at": fr["timestamp"]
+            }
+            try:
+                cur.execute(f"""
+                    INSERT INTO {settings.mimir_schema}.mimir_latest_prices
+                    (ticker, latest_price, prev_close_24h, change_percent, timestamp, updated_at)
+                    VALUES (%s, %s, %s, 0.0, %s, NOW())
+                    ON CONFLICT (ticker) DO NOTHING
+                """, (t_sym, lp, lp, fr["timestamp"]))
+                conn.commit()
+            except Exception:
+                pass
+
+        # For any completely unknown tickers, trigger async background fetch (NEVER block HTTP request)
+        unseen_tickers = [t for t in missing_tickers if t not in price_map]
+        if unseen_tickers:
+            import threading
+            threading.Thread(target=fetch_and_cache_tickers_concurrently, args=(unseen_tickers,), daemon=True).start()
+
     cur.close()
     conn.close()
-    
-    # Map rows to the expected API schema preserving requested ticker list order
-    price_map = {r["ticker"]: r for r in price_rows}
+
+    # Map rows preserving requested ticker list order
     results = []
     for ticker in ticker_list:
         r = price_map.get(ticker)
         if r:
             latest_price = float(r["latest_price"])
-            prev_price = float(r["prev_price"]) if r["prev_price"] is not None else latest_price
-            change_percent = 0.0
-            if prev_price > 0:
-                change_percent = ((latest_price - prev_price) / prev_price) * 100
+            prev_price = float(r["prev_close_24h"]) if r.get("prev_close_24h") is not None else latest_price
+            chg = float(r["change_percent"]) if r.get("change_percent") is not None else 0.0
+            if chg == 0.0 and prev_price > 0 and latest_price != prev_price:
+                chg = round(((latest_price - prev_price) / prev_price) * 100, 2)
             results.append({
                 "ticker": ticker,
                 "current_price": latest_price,
                 "price_24h_ago": prev_price,
-                "change_percent": round(change_percent, 2)
+                "change_percent": round(chg, 2)
             })
             
     response_data = {"tickers": results}
@@ -1298,71 +1432,49 @@ def get_heatmap(index: str = Query("sp500"), refresh: bool = Query(False)):
     except Exception as db_err:
         print(f"[HEATMAP] Database sentiment fetch error: {db_err}")
 
-    # Fetch prices from DB first, yfinance only for stale/missing tickers
+    # Fetch prices from mimir_latest_prices (<4ms lookup)
     results = []
     try:
         conn = get_db_connection_dict()
         cur = conn.cursor()
 
-        # 1. Check which tickers need a yfinance fetch
         cur.execute(f"""
-            SELECT ticker, MAX(scraped_at) as last_scraped
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            SELECT ticker, latest_price, prev_close_24h, change_percent, volume
+            FROM {settings.mimir_schema}.mimir_latest_prices
             WHERE ticker = ANY(%s)
-            GROUP BY ticker
-        """, (tickers,))
-        rows = cur.fetchall()
-        last_scraped_map = {r["ticker"]: r["last_scraped"] for r in rows}
-
-        stale_tickers = []
-        for t in tickers:
-            ls = last_scraped_map.get(t)
-            if not ls or (now - ls > timedelta(minutes=2)):
-                stale_tickers.append(t)
-
-        if stale_tickers:
-            print(f"[HEATMAP] Fetching {len(stale_tickers)} stale tickers from yfinance...")
-            fetch_and_cache_tickers_concurrently(stale_tickers)
-
-        # 2. Bulk query DB for latest price + 24h-ago price (same pattern as ticker-changes)
-        cur.execute(f"""
-            WITH latest_prices AS (
-                SELECT DISTINCT ON (ticker)
-                    ticker,
-                    close AS latest_price,
-                    timestamp AS latest_ts,
-                    volume AS latest_volume
-                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
-                WHERE ticker = ANY(%s)
-                ORDER BY ticker, timestamp DESC
-            ),
-            prev_prices AS (
-                SELECT DISTINCT ON (l.ticker)
-                    l.ticker,
-                    h.close AS prev_price
-                FROM latest_prices l
-                JOIN {settings.mimir_schema}.mimir_hourly_ohlcv h ON l.ticker = h.ticker
-                WHERE h.timestamp <= l.latest_ts - INTERVAL '24 hours'
-                ORDER BY l.ticker, h.timestamp DESC
-            )
-            SELECT
-                l.ticker,
-                l.latest_price,
-                l.latest_volume,
-                COALESCE(p.prev_price, (
-                    SELECT close FROM {settings.mimir_schema}.mimir_hourly_ohlcv h2
-                    WHERE h2.ticker = l.ticker
-                    ORDER BY timestamp ASC LIMIT 1
-                )) as prev_price
-            FROM latest_prices l
-            LEFT JOIN prev_prices p ON l.ticker = p.ticker
         """, (tickers,))
         price_rows = cur.fetchall()
         price_map = {r["ticker"]: r for r in price_rows}
+
+        # Check for any constituents missing from mimir_latest_prices
+        missing_heat = [t for t in tickers if t not in price_map]
+        if missing_heat:
+            cur.execute(f"""
+                SELECT DISTINCT ON (ticker) ticker, close AS latest_price, volume
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = ANY(%s)
+                ORDER BY ticker, timestamp DESC
+            """, (missing_heat,))
+            for fr in cur.fetchall():
+                t_sym = fr["ticker"]
+                lp = float(fr["latest_price"])
+                vol = int(fr["volume"]) if fr.get("volume") else 0
+                price_map[t_sym] = {
+                    "ticker": t_sym,
+                    "latest_price": lp,
+                    "prev_close_24h": lp,
+                    "change_percent": 0.0,
+                    "volume": vol
+                }
+            unseen = [t for t in missing_heat if t not in price_map]
+            if unseen:
+                import threading
+                threading.Thread(target=fetch_and_cache_tickers_concurrently, args=(unseen,), daemon=True).start()
+
         cur.close()
         conn.close()
 
-        # 3. Build results from DB data
+        # Build results from DB data
         for ticker_symbol in tickers:
             meta = ticker_meta[ticker_symbol]
             pr = price_map.get(ticker_symbol)
@@ -1370,11 +1482,11 @@ def get_heatmap(index: str = Query("sp500"), refresh: bool = Query(False)):
                 continue
 
             current_price = float(pr["latest_price"])
-            prev_price = float(pr["prev_price"]) if pr["prev_price"] is not None else current_price
-            volume = int(pr["latest_volume"]) if pr["latest_volume"] else 0
+            prev_price = float(pr["prev_close_24h"]) if pr.get("prev_close_24h") is not None else current_price
+            volume = int(pr["volume"]) if pr.get("volume") else 0
 
-            change_percent = 0.0
-            if prev_price > 0:
+            change_percent = float(pr["change_percent"]) if pr.get("change_percent") is not None else 0.0
+            if change_percent == 0.0 and prev_price > 0 and current_price != prev_price:
                 change_percent = round(((current_price - prev_price) / prev_price) * 100, 2)
 
             weight = float(meta.get("weight") or meta.get("market_cap") or 50.0)
@@ -1513,32 +1625,27 @@ def get_ticker_details(ticker: str, nocache: bool = False):
     volume = 0
     market_cap = info.get("marketCap") or 0  # yfinance metadata, no DB alternative
 
-    # 1. Try DB cache first
+    # 1. Try mimir_latest_prices (<1ms)
     try:
         conn = get_db_connection_dict()
         cur = conn.cursor()
         cur.execute(f"""
-            SELECT close, open, high, low, volume
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            SELECT latest_price, open, high, low, volume, prev_close_24h
+            FROM {settings.mimir_schema}.mimir_latest_prices
             WHERE ticker = %s
-            ORDER BY timestamp DESC
-            LIMIT 2
         """, (ticker_symbol,))
-        db_rows = cur.fetchall()
+        row = cur.fetchone()
         cur.close()
         conn.close()
 
-        if db_rows:
-            price = float(db_rows[0]['close'])
-            open_val = float(db_rows[0]['open'])
-            high_val = float(db_rows[0]['high'])
-            low_val = float(db_rows[0]['low'])
-            volume = int(db_rows[0]['volume'])
-            if len(db_rows) > 1:
-                prev_close = float(db_rows[1]['close'])
-            else:
-                prev_close = price
-            print(f"[DETAILS] Using DB price for {ticker_symbol}: {price}")
+        if row and row.get('latest_price'):
+            price = float(row['latest_price'])
+            open_val = float(row['open']) if row.get('open') is not None else price
+            high_val = float(row['high']) if row.get('high') is not None else price
+            low_val = float(row['low']) if row.get('low') is not None else price
+            volume = int(row['volume']) if row.get('volume') is not None else 0
+            prev_close = float(row['prev_close_24h']) if row.get('prev_close_24h') is not None else price
+            print(f"[DETAILS] Using mimir_latest_prices for {ticker_symbol}: {price}")
     except Exception as db_err:
         print(f"[DETAILS] DB price fetch error for {ticker_symbol}: {db_err}")
 

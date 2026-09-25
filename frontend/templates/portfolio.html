@@ -478,8 +478,13 @@
         <div id="contentAI" class="hidden space-y-6">
             <div class="card p-0 overflow-hidden flex flex-col min-h-[500px]">
                 <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
-                    <h2 class="text-sm font-mono text-[#ffd700] uppercase tracking-wider"><i class="fas fa-lightbulb mr-1"></i> AI Sentinel Insights</h2>
-                    <button id="refreshAdviceBtn" class="text-xs text-[#ffd700] hover:text-[#cca300] border border-[#ffd700]/20 hover:border-[#ffd700]/60 px-2.5 py-1 rounded transition-all font-mono">
+                    <div class="flex items-center gap-2.5">
+                        <h2 class="text-sm font-mono text-[#ffd700] uppercase tracking-wider"><i class="fas fa-lightbulb mr-1"></i> AI Sentinel Insights</h2>
+                        <span id="adviceFreshnessBadge" class="hidden text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+                            <i class="fas fa-bolt mr-1"></i> Live
+                        </span>
+                    </div>
+                    <button id="refreshAdviceBtn" class="text-xs text-[#ffd700] hover:text-[#cca300] border border-[#ffd700]/20 hover:border-[#ffd700]/60 px-2.5 py-1 rounded transition-all font-mono flex items-center gap-1.5">
                         <i class="fas fa-sync-alt mr-1"></i> Re-generate
                     </button>
                 </div>
@@ -489,13 +494,13 @@
                     <div id="aiLoading" class="hidden flex-grow flex flex-col items-center justify-center py-12 text-center">
                         <div class="w-8 h-8 border-3 border-[#ffd700] border-t-transparent rounded-full animate-spin mb-4"></div>
                         <div class="text-xs font-mono text-[#ffd700] animate-pulse">MIMIR is consulting the well...</div>
-                        <div class="text-[10px] font-mono text-[#4A6A70] mt-2 max-w-[200px]">Correlating portfolio allocations with market sentiment database...</div>
+                        <div class="text-[10px] font-mono text-[#4A6A70] mt-2 max-w-[280px]">Synthesizing War Rig 3-cylinder convergence, technical microstructure, and catalyst provenance...</div>
                     </div>
 
                     <!-- Empty State -->
                     <div id="aiEmpty" class="flex-grow flex flex-col items-center justify-center py-12 text-center text-[#4A6A70] font-mono">
                         <span class="text-2xl mb-2 text-[#4A6A70]"><i class="fas fa-eye"></i></span>
-                        <p class="text-xs">Trigger AI Advisor sequence via the header button or tab activation.</p>
+                        <p class="text-xs">Trigger War Rig AI Sentinel diagnostic via the Re-generate button or tab activation.</p>
                     </div>
 
                     <!-- Content Render -->
@@ -1096,13 +1101,38 @@
         }
     }
 
+    function updateAdviceFreshnessBadge() {
+        const badge = document.getElementById("adviceFreshnessBadge");
+        if (!badge) return;
+        const cacheTs = parseInt(localStorage.getItem("mimir_portfolio_advice_ts") || "0", 10);
+        if (!cacheTs) {
+            badge.classList.add("hidden");
+            return;
+        }
+        const diffMins = Math.floor((Date.now() - cacheTs) / 60000);
+        badge.classList.remove("hidden");
+        if (diffMins < 2) {
+            badge.innerHTML = `<i class="fas fa-bolt mr-1"></i> Live (Just now)`;
+            badge.className = "text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+        } else if (diffMins < 20) {
+            badge.innerHTML = `<i class="fas fa-check-circle mr-1"></i> Fresh (${diffMins}m ago)`;
+            badge.className = "text-[10px] font-mono px-2 py-0.5 rounded border border-cyan-500/30 bg-cyan-500/10 text-cyan-400";
+        } else {
+            badge.innerHTML = `<i class="fas fa-clock mr-1"></i> Cached (${diffMins}m ago)`;
+            badge.className = "text-[10px] font-mono px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-400";
+        }
+    }
+
     function invalidateAdviceCache() {
         localStorage.removeItem("mimir_portfolio_advice");
+        localStorage.removeItem("mimir_portfolio_advice_ts");
         cachedAdvice = null;
         const content = document.getElementById("aiContent");
         const empty = document.getElementById("aiEmpty");
+        const badge = document.getElementById("adviceFreshnessBadge");
         if (content) content.classList.add("hidden");
         if (empty) empty.classList.remove("hidden");
+        if (badge) badge.classList.add("hidden");
     }
 
     async function generateAdvice(force = false) {
@@ -1116,11 +1146,16 @@
         const empty = document.getElementById("aiEmpty");
         const content = document.getElementById("aiContent");
         
-        if (!force && cachedAdvice) {
+        // Freshness verification: If cached advice is older than 20 minutes, force fresh generation
+        const cacheTs = parseInt(localStorage.getItem("mimir_portfolio_advice_ts") || "0", 10);
+        const isStale = (Date.now() - cacheTs) > 20 * 60 * 1000;
+
+        if (!force && cachedAdvice && !isStale) {
             content.innerHTML = sanitizeAdvice(cachedAdvice);
             loading.classList.add("hidden");
             empty.classList.add("hidden");
             content.classList.remove("hidden");
+            updateAdviceFreshnessBadge();
             return;
         }
         
@@ -1136,9 +1171,11 @@
             const cleanAdvice = sanitizeAdvice(data.advice);
             cachedAdvice = cleanAdvice;
             localStorage.setItem("mimir_portfolio_advice", cleanAdvice);
+            localStorage.setItem("mimir_portfolio_advice_ts", Date.now().toString());
             content.innerHTML = cleanAdvice;
             loading.classList.add("hidden");
             content.classList.remove("hidden");
+            updateAdviceFreshnessBadge();
         } catch (err) {
             content.innerHTML = `<p class="text-[#FF5252]">Error: ${err.message}</p>`;
             loading.classList.add("hidden");
