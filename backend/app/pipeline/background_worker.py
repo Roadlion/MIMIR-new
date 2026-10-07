@@ -56,44 +56,94 @@ TUNE_TICKERS_PATH = os.path.join(PROJECT_ROOT, "scripts", "tune_ticker_parameter
 
 PRICE_FETCH_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_price_fetch.py")
 
+_shutdown_event = threading.Event()
+_active_subprocesses = set()
+
+def stop_background_worker():
+    """Signals all background worker threads to exit and kills any active child subprocesses."""
+    print("[BG_WORKER] Stopping all background workers and halting active subprocesses...")
+    _shutdown_event.set()
+    for proc in list(_active_subprocesses):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    _active_subprocesses.clear()
+
+async def _interruptible_sleep(seconds: int):
+    """Sleeps in 1-second intervals so shutdown signals can be acted on immediately."""
+    for _ in range(seconds):
+        if _shutdown_event.is_set():
+            break
+        await asyncio.sleep(1)
+
+def run_managed_subprocess(cmd, env=None, cwd=None):
+    """Spawns a subprocess tracked in _active_subprocesses so it can be terminated on shutdown."""
+    if _shutdown_event.is_set():
+        return None
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace"
+        )
+        _active_subprocesses.add(proc)
+        stdout, stderr = proc.communicate()
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    except Exception as e:
+        print(f"[BG_WORKER] Subprocess execution error: {e}")
+        return None
+    finally:
+        if proc:
+            _active_subprocesses.discard(proc)
+
 def run_price_fetch_cycle():
     """Runs the price fetcher as a separate subprocess to avoid GIL contention."""
+    if _shutdown_event.is_set():
+        return
     print(f"[BG_WORKER] Spawning price fetch subprocess at {datetime.now()}")
     env = _subprocess_env()
     try:
-        res = subprocess.run([sys.executable, PRICE_FETCH_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, PRICE_FETCH_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] Price fetch subprocess failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] Price fetch subprocess completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error spawning price fetch subprocess: {e}")
 
 def run_fundamentals_cycle():
     """Runs the fundamentals fetcher as a separate subprocess to avoid GIL contention."""
+    if _shutdown_event.is_set():
+        return
     print(f"[BG_WORKER] Spawning fundamentals fetcher subprocess at {datetime.now()}")
     env = _subprocess_env()
     try:
-        res = subprocess.run([sys.executable, FETCH_FUNDAMENTALS_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, FETCH_FUNDAMENTALS_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] Fundamentals fetcher failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] Fundamentals fetcher completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error spawning fundamentals fetcher: {e}")
 
 def run_ticker_tuning_cycle():
     """Runs the ticker parameter tuning script as a separate subprocess to avoid GIL contention."""
+    if _shutdown_event.is_set():
+        return
     print(f"[BG_WORKER] Spawning ticker parameter tuning subprocess at {datetime.now()}")
     env = _subprocess_env()
     try:
-        res = subprocess.run([sys.executable, TUNE_TICKERS_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, TUNE_TICKERS_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] Ticker tuning failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] Ticker tuning completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error spawning ticker tuning subprocess: {e}")
@@ -121,11 +171,10 @@ def run_scrape_cycle():
 
     try:
         print("[BG_WORKER] Executing news scraper (push_to_db.py)...")
-        res = subprocess.run([sys.executable, PUSH_TO_DB_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, PUSH_TO_DB_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] News scraper failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] News scraping completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running news scraper: {e}")
@@ -133,11 +182,10 @@ def run_scrape_cycle():
     # 2. Social sentiment scraper (Reddit RSS + DeepSeek)
     try:
         print("[BG_WORKER] Executing social sentiment scraper (scrape_social.py)...")
-        res = subprocess.run([sys.executable, SCRAPE_SOCIAL_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, SCRAPE_SOCIAL_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] Social scraper failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] Social scraping completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running social scraper: {e}")
@@ -145,11 +193,10 @@ def run_scrape_cycle():
     # 3. Twitter sentiment scraper (FinTwit syndication + DeepSeek)
     try:
         print("[BG_WORKER] Executing Twitter sentiment scraper (scrape_twitter.py)...")
-        res = subprocess.run([sys.executable, SCRAPE_TWITTER_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, SCRAPE_TWITTER_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] Twitter scraper failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] Twitter scraping completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running Twitter scraper: {e}")
@@ -169,17 +216,18 @@ def run_scrape_cycle():
 
 def run_sentiment_cycle():
     """Heavy: LLM sentiment pipeline, niche scan, relationship graph. Runs less often."""
+    if _shutdown_event.is_set():
+        return
     print(f"[BG_WORKER] Starting sentiment pipeline at {datetime.now()}")
     env = _subprocess_env()
 
     # 1. Score pending articles via DeepSeek (the expensive part)
     try:
         print("[BG_WORKER] Executing sentiment pipeline (run_full_pipeline copy.py)...")
-        res = subprocess.run([sys.executable, PIPELINE_PATH], env=env, cwd=PROJECT_ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0:
+        res = run_managed_subprocess([sys.executable, PIPELINE_PATH], env=env, cwd=PROJECT_ROOT)
+        if res and res.returncode != 0:
             print(f"[BG_WORKER] Sentiment pipeline failed: {res.stderr}")
-        else:
+        elif res:
             print("[BG_WORKER] Sentiment pipeline completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error running sentiment pipeline: {e}")

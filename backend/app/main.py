@@ -9,7 +9,8 @@ import os
 from .routers import (
     articles, sentiment, prices, refresh, taxonomy, niche, 
     portfolio, backtest, trade_alerts, research, casino, 
-    paper_trading, voice, earnings, auth_router, sitrep
+    paper_trading, voice, earnings, auth_router, sitrep, system,
+    mt5_trading
 )
 from .config import get_settings
 from .auth import get_optional_current_user
@@ -34,9 +35,24 @@ app.add_middleware(
 async def startup_event():
     from .pipeline.background_worker import start_background_worker
     from .utils.logo_downloader import preseed_portfolio_logos
+    from .services.process_manager import record_pid
+    from .services.db_integrity import ensure_database_integrity
     import threading
+    record_pid("server", os.getpid())
+    # Run DB integrity preflight check in background to auto-heal any disk page corruption
+    threading.Thread(target=ensure_database_integrity, daemon=True).start()
     start_background_worker()
     threading.Thread(target=preseed_portfolio_logos, daemon=True).start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    from .services.process_manager import stop_all_processes
+    from .services.db_integrity import sync_database_buffers
+    try:
+        sync_database_buffers()
+    except Exception:
+        pass
+    stop_all_processes(skip_current=True)
 
 # --- API Routes ---
 app.include_router(auth_router.router, prefix="/api/v1", tags=["auth"])
@@ -55,6 +71,8 @@ app.include_router(casino.router, prefix="/api/v1/casino", tags=["casino"])
 app.include_router(voice.router)
 app.include_router(earnings.router)
 app.include_router(sitrep.router, prefix="/api/v1/sitrep", tags=["sitrep"])
+app.include_router(system.router, prefix="/api/v1", tags=["system"])
+app.include_router(mt5_trading.router)
 
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -1,16 +1,44 @@
-import MetaTrader5 as mt5
-from datetime import datetime
-import csv
-import os
-import time
-
 import sys
 import os
+import signal
+import time
+import csv
+import math
+from datetime import datetime
+import MetaTrader5 as mt5
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.app.database import get_db_connection
 from backend.app.config import get_settings
+from backend.app.services.process_manager import record_pid
 from psycopg2.extras import execute_values
+
+# Record PID for clean shutdown management
+record_pid("mt5_fetcher", os.getpid())
+
+_running = True
+
+def handle_signal(sig, frame):
+    global _running
+    _running = False
+    print("\n[STOPPING] MT5 Price Fetcher received exit signal. Closing terminal connection...")
+    try:
+        mt5.shutdown()
+    except Exception:
+        pass
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, handle_signal)
 
 settings = get_settings()
 
@@ -98,6 +126,8 @@ def parse_bar_time(raw_time) -> str:
         if raw_time is None:
             return None
         ts = float(raw_time)
+        if not math.isfinite(ts):
+            return None
         # Handle milliseconds/microseconds if returned
         if ts > 1e14:
             ts /= 1e6
@@ -117,6 +147,9 @@ def fetch_and_log():
     log_time = datetime.now().strftime('%H:%M:%S')
     batch_rows = []
     
+    # Maximum signed 64-bit integer supported by PostgreSQL BIGINT
+    MAX_BIGINT = 9223372036854775807
+    
     for b_symbol in active_symbols:
         try:
             rates = mt5.copy_rates_from_pos(b_symbol, mt5.TIMEFRAME_M1, 0, 1)
@@ -125,23 +158,57 @@ def fetch_and_log():
                 bar = rates[0]
                 bar_time = parse_bar_time(bar['time'])
                 if not bar_time:
-                    # Fallback to current system time if broker bar time is corrupt or uninitialized
-                    bar_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    # Skip corrupt or uninitialized bar timestamps (do not fabricate fake current time)
+                    continue
 
+                open_val = float(bar['open'])
+                high_val = float(bar['high'])
+                low_val = float(bar['low'])
                 close_val = float(bar['close'])
-                if close_val <= 0.0:
-                    continue  # Skip zero-price or invalid candles
+
+                # Validate price finiteness and sanity
+                if not (math.isfinite(open_val) and math.isfinite(high_val) and math.isfinite(low_val) and math.isfinite(close_val)):
+                    continue
+                if open_val <= 0.0 or high_val <= 0.0 or low_val <= 0.0 or close_val <= 0.0:
+                    continue
+                if high_val < low_val:
+                    continue
+                if open_val > 1e12 or high_val > 1e12 or low_val > 1e12 or close_val > 1e12:
+                    continue
+
+                # Guard against PostgreSQL BIGINT overflow (signed 64-bit max: 9,223,372,036,854,775,807)
+                # MT5 returns np.uint64 which can be (ulong)-1 (18446744073709551615) or exceed 2^63 - 1
+                vol = 0
+                try:
+                    raw_tv = int(bar['tick_volume'])
+                    if raw_tv == 18446744073709551615 or raw_tv < 0:
+                        vol = 0
+                    elif raw_tv > MAX_BIGINT:
+                        vol = MAX_BIGINT
+                    else:
+                        vol = raw_tv
+                except (ValueError, TypeError, OverflowError):
+                    vol = 0
+
+                # If tick_volume is 0, check real_volume if available
+                if vol == 0 and hasattr(bar, 'dtype') and 'real_volume' in bar.dtype.names:
+                    try:
+                        raw_rv = int(bar['real_volume'])
+                        if 0 < raw_rv <= MAX_BIGINT and raw_rv != 18446744073709551615:
+                            vol = raw_rv
+                    except (ValueError, TypeError, OverflowError):
+                        pass
 
                 display_symbol = symbol_map.get(b_symbol, b_symbol)
                 
                 batch_rows.append([
                     display_symbol,
                     bar_time,
-                    float(bar['open']),
-                    float(bar['high']),
-                    float(bar['low']),
+                    open_val,
+                    high_val,
+                    low_val,
                     close_val,
-                    int(bar['tick_volume'])
+                    vol
                 ])
             else:
                 pass
@@ -196,14 +263,15 @@ def fetch_and_log():
                 """
                 execute_values(cur, min_sql, sorted_rows)
 
-                # Upsert into mimir_latest_prices for instant sub-millisecond retrieval
-                latest_rows = [
-                    (r[0], r[5], r[5], 0.0, r[6], r[2], r[3], r[4], r[1])
-                    for r in sorted_rows
-                ]
+                # Upsert into mimir_latest_prices for instant sub-millisecond retrieval (deduped by ticker)
+                latest_by_ticker = {}
+                for r in sorted_rows:
+                    latest_by_ticker[r[0]] = (r[0], r[5], r[5], 0.0, r[6], r[2], r[3], r[4], r[1])
+                latest_rows = list(latest_by_ticker.values())
+
                 latest_sql = f"""
                 INSERT INTO {settings.mimir_schema}.mimir_latest_prices
-                (ticker, latest_price, prev_close_24h, change_percent, volume, open, high, low, timestamp, updated_at)
+                (ticker, latest_price, prev_close_24h, change_percent, volume, open, high, low, timestamp)
                 VALUES %s
                 ON CONFLICT (ticker) DO UPDATE SET
                     latest_price = EXCLUDED.latest_price,
@@ -281,21 +349,27 @@ def main():
     print("\n[RUNNING] Initial pull done. Now entering 1-minute clock sync loop...")
 
     try:
-        while True:
-            # Perfect 1-minute clock alignment loop
+        while _running:
+            # Perfect 1-minute clock alignment loop with 0.5s check intervals
             current_time = time.time()
             sleep_time = 60 - (current_time % 60)
-            time.sleep(sleep_time)
-            
+            target_time = current_time + sleep_time
+            while time.time() < target_time and _running:
+                time.sleep(0.5)
+
+            if not _running:
+                break
+
             # Trigger every turnaround minute
             try:
                 fetch_and_log()
             except Exception as loop_err:
                 print(f"[LOOP FETCH ERROR] {loop_err}")
 
-    except KeyboardInterrupt:
-        print("\n[STOPPING] Script terminated by user.")
+    except (KeyboardInterrupt, SystemExit):
+        print("\n[STOPPING] Script terminated.")
     finally:
+        print("[MT5] Closing MetaTrader 5 session...")
         mt5.shutdown()
 
 if __name__ == "__main__":

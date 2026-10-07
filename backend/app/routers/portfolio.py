@@ -21,6 +21,7 @@ from ..auth import get_optional_current_user, get_current_user
 from ..sentiment.llm_client import send_chat_completion
 from ..analytics.technical_analysis import find_support_resistance
 from ..services.sector_rotation_service import get_ticker_sector_tailwinds
+from ..analytics.war_rig_nitrous import get_nitrous_bridge
 
 router = APIRouter()
 settings = get_settings()
@@ -1257,6 +1258,26 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
             sl = float(s_row["stop_loss"]) if s_row["stop_loss"] is not None else 0.0
             rr = round((targ - trig) / max(0.01, (trig - sl)), 2) if (trig - sl) > 0 else 2.5
             conv = float(s_row["conviction_score"]) if s_row["conviction_score"] is not None else 0.75
+
+            # Solve exact Nitrous Pod options deployment
+            nitrous_deployment = None
+            nitrous_directive = None
+            try:
+                deployment = get_nitrous_bridge().generate_nitrous_deployment({
+                    "ticker": s_row["ticker"],
+                    "trigger_price": trig,
+                    "target_price": targ,
+                    "stop_loss": sl,
+                    "conviction_score": conv,
+                    "catalyst_type": s_row["catalyst_type"],
+                    "holding_period": s_row["holding_period"],
+                    "investment_thesis": s_row["investment_thesis"]
+                })
+                nitrous_deployment = deployment
+                nitrous_directive = deployment.get("nitrous_options_directive")
+            except Exception as n_err:
+                print(f"[PORTFOLIO WAR RIG NITROUS ERROR] {s_row['ticker']}: {n_err}")
+
             war_rig_signals.append({
                 "ticker": s_row["ticker"],
                 "signal_type": s_row["signal_type"],
@@ -1268,7 +1289,9 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
                 "conviction_pct": round(conv * 100 if conv <= 1.0 else conv, 0),
                 "headline": s_row["headline"],
                 "holding_period": s_row["holding_period"],
-                "investment_thesis": s_row["investment_thesis"]
+                "investment_thesis": s_row["investment_thesis"],
+                "nitrous_options_directive": nitrous_directive,
+                "nitrous_deployment": nitrous_deployment
             })
     except Exception as wr_err:
         print(f"[PORTFOLIO WAR RIG SIGNALS ERROR] {wr_err}")
@@ -1358,7 +1381,36 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
         current_val = qty * current_price
         unrealized_pl = current_val - cost_basis
         unrealized_pl_pct = (unrealized_pl / cost_basis * 100) if cost_basis > 0 else 0.0
-        
+
+        # Calculate exact Nitrous Options Directive for this holding
+        ta_bounds = trend.get("technical_analysis", {}).get("execution_bounds", {})
+        ta_info = trend.get("technical_analysis", {})
+        sl_val = float(ta_bounds.get("stop_loss", 0.0))
+        tp_val = float(ta_bounds.get("target_price", 0.0))
+        atr_val = float(ta_info.get("atr_14", 0.0))
+        regime_val = str(ta_info.get("volatility_regime", "STABLE"))
+        rsi_val = float(ta_info.get("rsi_14", 50.0))
+        sec_ctx = sector_tailwinds.get(ticker, {})
+        sec_phase = str(sec_ctx.get("sector_phase", "CONSOLIDATION"))
+        earn_info = earnings_calendar_map.get(ticker, None)
+
+        holding_nitrous = None
+        try:
+            holding_nitrous = get_nitrous_bridge().generate_holding_nitrous_directive(
+                ticker=ticker,
+                spot_price=current_price,
+                stop_loss=sl_val,
+                target_price=tp_val,
+                atr_14=atr_val,
+                volatility_regime=regime_val,
+                sector_phase=sec_phase,
+                rsi_14=rsi_val,
+                earnings_calendar=earn_info,
+                unrealized_pl_pct=unrealized_pl_pct
+            )
+        except Exception as hn_err:
+            print(f"[NITROUS HOLDING DIRECTIVE ERROR] {ticker}: {hn_err}")
+
         enriched_portfolio.append({
             "ticker": ticker,
             "quantity": qty,
@@ -1378,8 +1430,10 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
             "fundamental_analysis": trend.get("fundamental_analysis", {}),
             "sector_context": sector_tailwinds.get(ticker, {}),
             "earnings_calendar": earnings_calendar_map.get(ticker, None),
-            "asymmetric_execution_bounds": trend.get("technical_analysis", {}).get("execution_bounds", {})
+            "asymmetric_execution_bounds": trend.get("technical_analysis", {}).get("execution_bounds", {}),
+            "nitrous_options_directive": holding_nitrous
         })
+
         
     # Format top sentiment picks with catalyst headlines
     formatted_picks = []
@@ -1437,6 +1491,9 @@ def get_portfolio_advice(current_user: Optional[dict] = Depends(get_optional_cur
         "You synthesize quantitative microstructure (Cylinder 3), high-impact catalyst provenance & NLP news reasoning (Cylinder 2), "
         "and SPDR macro sector flow transmission (Cylinder 1) into sharp, actionable strategic advice. "
         "Write in an authoritative, hedge-fund partner tone. Avoid introductory remarks, generic disclaimers, or conversational fluff. "
+        "NITROUS OPTIONS DIRECTIVE: Your strategic briefing must tell the user EXACTLY how to execute Nitrous Pod options. "
+        "Specify whether to BUY or SELL PUTS (or calls), the SPECIFIC NUMERICAL STRIKE PRICES, expiration dates, and net debit/credit from the `nitrous_options_directive` payload. "
+        "Never output vague advice like 'consider buying puts'; you must state the explicit strike price (e.g. 'SELL $145.00 PUT & BUY $140.00 PUT' or 'BUY $145.00 PUT'). "
         "STRICT GROUNDING DIRECTIVE: Rely EXCLUSIVELY on the explicit metrics, execution bounds, news reasonings, and indicators "
         "provided in the CONTEXT DATA JSON. Do NOT invent, hallucinate, or assume metrics. If an indicator is missing, mark it 'N/A'."
     )
@@ -1461,6 +1518,7 @@ STRICT DATA INTEGRITY & FRESHNESS DIRECTIVES:
 - Ground your tactical directives in the freshest market data provided (note `pipeline_snapshot_timestamp`, article `age_hours`, and online headline `recency`). Prioritize breaking news developments and active intraday price momentum over stale narrative trends.
 - You MUST cite specific news headlines and catalyst reasoning from `portfolio_sentiment_and_catalysts` instead of vague sentiment scores.
 - You MUST utilize the exact War Rig execution bounds (`stop_loss`, `target_price`, `risk_reward_ratio`), technical metrics (`rsi_14`, `volume_ratio`, `volatility_regime`, `ou_zscore`), and sector context (`sector_name`, `sector_phase`, `rs_5d_vs_spy`) provided in each position.
+- You MUST provide exact Nitrous Pod options execution directives: specify whether to BUY or SELL PUTS (or calls), the exact numerical strike price ($K), expiration horizon, and net debit/credit per share and per contract.
 - Do NOT include any section titled "Alternative MIMIR Profit Strategies". That legacy section is permanently decommissioned.
 
 Ensure the HTML includes EXACTLY the following 4 sections, designed beautifully:
@@ -1484,6 +1542,7 @@ Ensure the HTML includes EXACTLY the following 4 sections, designed beautifully:
              <th class="py-2.5 px-3">Cylinder 2: Catalyst / News</th>
              <th class="py-2.5 px-3">Cylinder 3: Microstructure</th>
              <th class="py-2.5 px-3">War Rig Bounds</th>
+             <th class="py-2.5 px-3">Nitrous Options Execution</th>
              <th class="py-2.5 px-3">Action</th>
              <th class="py-2.5 px-3">Institutional Rationale</th>
            </tr>
@@ -1501,6 +1560,10 @@ For each position's table row:
 - Cylinder 2: Cite specific headline or NLP reasoning from `portfolio_sentiment_and_catalysts`. If upcoming earnings exists in `earnings_calendar`, display an amber badge: `Earnings in Xd (BMO/AMC)`.
 - Cylinder 3: Display RSI momentum, Volume ratio, Volatility Regime badge (SQUEEZE, EXPANDING, EXHAUSTION, STABLE), and OU Z-score.
 - War Rig Bounds: Display Invalidation Stop Loss, Target Price, and Risk/Reward ratio (e.g., `Stop: $X | Target: $Y (R/R: Z:1)`).
+- Nitrous Options Execution: From `nitrous_options_directive`, explicitly display whether to BUY or SELL PUTS (or calls), the specific numerical strike prices ($K), expiration label, and net cash flow:
+  * If `primary_action == "SELL PUT"` (Credit Spread): Display `<div class="font-mono text-xs"><span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded text-[10px] font-bold">SELL PUT</span> <span class="font-bold text-[#D6E5E3]">$K_short</span> / <span class="bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-1.5 py-0.5 rounded text-[10px] font-bold">BUY PUT</span> <span class="font-bold text-[#D6E5E3]">$K_long</span><div class="text-[10px] text-[#8BA4A8] mt-0.5">Exp [Date] • Net Credit $[X]/sh</div></div>`.
+  * If `primary_action == "BUY PUT"` (Protective Downside Put): Display `<div class="font-mono text-xs"><span class="bg-red-500/10 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded text-[10px] font-bold">BUY PUT</span> <span class="font-bold text-[#D6E5E3]">$K_hedge</span><div class="text-[10px] text-[#8BA4A8] mt-0.5">Exp [Date] • Downside Floor @ $K_hedge</div></div>`.
+  * If `primary_action == "BUY CALL"` (Mode A Vertical): Display `<div class="font-mono text-xs"><span class="bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-1.5 py-0.5 rounded text-[10px] font-bold">BUY CALL</span> <span class="font-bold text-[#D6E5E3]">$K1</span> / <span class="bg-blue-500/10 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded text-[10px] font-bold">SELL CALL</span> <span class="font-bold text-[#D6E5E3]">$K2</span><div class="text-[10px] text-[#8BA4A8] mt-0.5">Exp [Date] • Net Debit $[X]/sh</div></div>`.
 - Action Column Badge: Choose strictly one of:
   * <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">CONVICTION BUY</span>
   * <span class="bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded text-[11px] font-bold font-mono">ACCUMULATE</span>
@@ -1526,7 +1589,10 @@ For each position's table row:
    Format each opportunity card with:
    - Header with Ticker, Conviction Score badge (e.g. 85% Conviction), and R/R ratio.
    - 3-Cylinder Convergence breakdown: Sector Flow, Catalyst Trigger with headline/reasoning, and Technical Execution Bounds.
-   - Nitrous Express Options Pod recommendation (e.g., Mode A Vertical Bull Call Spread or Mode B Credit Bull Put Spread if IV is elevated).
+   - Nitrous Express Options Pod: State the EXACT options execution directive from `nitrous_options_directive`:
+     * Strategy title (e.g., Mode B2 Bull Put Credit Spread or Mode A Skew-Optimized Bull Call Vertical).
+     * EXACT Trade Execution: Specify whether to BUY or SELL PUTS (or CALLS) and the SPECIFIC NUMERICAL STRIKE PRICES (e.g., `SELL $170.00 PUT & BUY $165.00 PUT Exp Oct 30 @ $1.70 Net Credit` or `BUY $180.00 CALL & SELL $200.00 CALL Exp Oct 30 @ $3.20 Net Debit`).
+     * Asymmetric Metrics: Net Credit/Debit per contract, Max Profit, Max Loss, and Breakeven price.
 
 3. <div class="mb-8">
      <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2 mb-4">
@@ -1574,10 +1640,12 @@ For each position's table row:
        </div>
        <div class="p-4 rounded border border-[#1A2A30] bg-[#0A0E12]/60">
          <h4 class="text-xs font-bold font-mono uppercase text-[#00E676] mb-2 flex items-center gap-1.5">
-           <i class="fas fa-layer-group"></i> Nitrous Convexity & Options Hedging
+           <i class="fas fa-layer-group"></i> Nitrous Options Execution Directives
          </h4>
          <p class="text-xs text-[#D6E5E3] leading-relaxed">
-           Tactical options guidance to hedge downside exposure or capture asymmetric upside on core positions with strictly capped capital risk.
+           Prescribe explicit, ready-to-execute options orders for portfolio holdings and alpha setups:
+           - State exact holdings to SELL PUT CREDIT SPREADS on to harvest premium at stop-loss support (giving specific ticker, short strike, long strike, expiration, and net credit).
+           - State exact holdings to BUY PROTECTIVE PUTS on to hedge impending earnings or distribution breakdown (giving specific ticker, strike price, expiration, and downside floor).
          </p>
        </div>
      </div>
@@ -1714,25 +1782,29 @@ def get_portfolio_history(
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     })
-    
-    def fetch_ticker_history(ticker):
-        ticker_prices = {}
-        try:
-            cur_p = conn.cursor()
-            cur_p.execute(f"""
-                SELECT DISTINCT ON (DATE(timestamp)) DATE(timestamp) as date, close
+    # Pre-fetch historical hourly prices from database in a single query for all tickers
+    db_prices_by_ticker = {t: {} for t in all_tickers_to_fetch}
+    try:
+        cur.execute(f"""
+            SELECT ticker, DATE(timestamp) as date, close
+            FROM (
+                SELECT DISTINCT ON (ticker, DATE(timestamp)) ticker, DATE(timestamp) as date, close, timestamp
                 FROM {settings.mimir_schema}.mimir_hourly_ohlcv
-                WHERE ticker = %s AND timestamp >= %s - INTERVAL '15 days'
-                ORDER BY DATE(timestamp), timestamp DESC
-            """, (ticker, calc_start_date))
-            rows = cur_p.fetchall()
-            cur_p.close()
-            
-            for row in rows:
-                date_str = row["date"].strftime("%Y-%m-%d")
-                ticker_prices[date_str] = float(row["close"])
-        except Exception as e:
-            print(f"[PORTFOLIO HISTORY] DB error for {ticker}: {e}")
+                WHERE ticker = ANY(%s) AND timestamp >= %s - INTERVAL '15 days'
+                ORDER BY ticker, DATE(timestamp), timestamp DESC
+            ) sub
+        """, (all_tickers_to_fetch, calc_start_date))
+        for row in cur.fetchall():
+            date_str = row["date"].strftime("%Y-%m-%d")
+            db_prices_by_ticker[row["ticker"]][date_str] = float(row["close"])
+    except Exception as e:
+        print(f"[PORTFOLIO HISTORY] Batch DB error: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+    def fetch_ticker_history(ticker):
+        ticker_prices = db_prices_by_ticker.get(ticker, {}).copy()
             
         # yfinance fallback
         yf_period = "1mo"
@@ -1761,9 +1833,6 @@ def get_portfolio_history(
         results = executor.map(fetch_ticker_history, all_tickers_to_fetch)
         for ticker, t_prices in results:
             prices_map[ticker] = t_prices
-            
-    cur.close()
-    conn.close()
     
     # Generate list of dates from calc_start_date to calc_end_date
     date_list = []

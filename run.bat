@@ -15,18 +15,30 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
+:: --- Pre-Startup Cleanup: Purge any lingering zombie processes from previous crashes ---
+".venv\Scripts\python.exe" scripts\clean_shutdown.py --quiet >nul 2>&1
+
+:: --- Pre-Startup DB Integrity Check: Auto-repair any damaged blocks before launch ---
+".venv\Scripts\python.exe" scripts\ensure_db_integrity.py
+
 :: --- 3. Resolve Local Network IP for LAN / Mobile Devices ---
 for /f "tokens=*" %%i in ('.venv\Scripts\python.exe -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8',80)); print(s.getsockname()[0]); s.close()" 2^>nul') do set LOCAL_IP=%%i
 
 echo ===================================================
-echo 🌳 MIMIR: Market Intelligence Reactor
+echo  [MIMIR] Market Intelligence Reactor
 echo ===================================================
-echo 💻 Local Access:          http://127.0.0.1:8000
+echo  Local Access:          http://127.0.0.1:8000
 if defined LOCAL_IP (
-    echo 📱 LAN / Network Access:   http://%LOCAL_IP%:8000
+    echo  LAN / Network Access:   http://%LOCAL_IP%:8000
 ) else (
-    echo 📱 LAN / Network Access:   http://^<YOUR_LOCAL_IP^>:8000
+    echo  LAN / Network Access:   http://^<YOUR_LOCAL_IP^>:8000
 )
+echo ===================================================
+echo  HOW TO TURN OFF MIMIR SAFELY:
+echo   1. Click the red [OFF] button in the Web UI, OR
+echo   2. Double-click 'stop.bat' or Desktop 'Turn Off MIMIR', OR
+echo   3. Press Ctrl+C in this console window.
+echo  * Avoid manually closing windows with 'X' to prevent PC lag *
 echo ===================================================
 echo.
 
@@ -42,15 +54,14 @@ if %ERRORLEVEL% NEQ 0 (
 
 where cloudflared >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo [Cloudflare] Starting Cloudflare HTTPS Tunnel in a dedicated terminal window...
-    start "MIMIR Cloudflare HTTPS Tunnel" cmd /k "echo ================================================== & echo  MIMIR PUBLIC REMOTE HTTPS TUNNEL & echo ================================================== & echo Copy the https://xxxx.trycloudflare.com URL below to share with friends! & echo. & cloudflared tunnel --url http://localhost:8000"
+    echo [Cloudflare] Starting Cloudflare HTTPS Tunnel...
+    start "MIMIR Cloudflare HTTPS Tunnel" cmd /c "echo ================================================== & echo  MIMIR PUBLIC REMOTE HTTPS TUNNEL & echo ================================================== & echo Copy the https://xxxx.trycloudflare.com URL below to share with friends! & echo. & cloudflared tunnel --url http://localhost:8000"
 ) else (
     echo [Cloudflare WARNING] Unable to launch cloudflared automatically. You can install it via 'winget install Cloudflare.cloudflared'.
 )
 
 echo.
 :: --- 5. Start Background Daemons in Dedicated Minimized Windows ---
-:: (Prevents log pollution and avoids orphaned background zombie processes)
 echo [1/3] Starting MT5 Live Price Fetcher (minimized)...
 start "MIMIR - MT5 Price Fetcher" /min .venv\Scripts\python.exe scripts\mt5_price_fetcher.py
 
@@ -65,10 +76,7 @@ echo.
 echo Starting backend uvicorn server (Listening on 0.0.0.0:8000)...
 .venv\Scripts\uvicorn backend.app.main:app --reload --reload-dir backend --host 0.0.0.0 --port 8000
 
-:: --- 7. Cleanup Daemons on Server Exit ---
+:: --- 7. Full Safe Cleanup on Server Exit ---
 echo.
-echo [MIMIR] Uvicorn stopped. Terminating background fetchers...
-taskkill /FI "WINDOWTITLE eq MIMIR - MT5 Price Fetcher" /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq MIMIR - Live Price Daemon" /F >nul 2>&1
-echo [MIMIR] All services cleanly stopped.
-pause
+echo [MIMIR] Server stopped. Executing full safe shutdown of all background daemons...
+call "%~dp0stop.bat"

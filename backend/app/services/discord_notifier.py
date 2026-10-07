@@ -523,3 +523,186 @@ def send_global_breaking_alert(
         logger.error(f"[DISCORD] Failed to post global breaking alert: {e}")
         return False
 
+
+# In-memory alert cache to prevent duplicate Discord spam for the same pair within 2 hours
+_RECENT_STAT_ARB_ALERTS: Dict[str, datetime] = {}
+
+
+def _zscore_visual_gauge(z: float) -> str:
+    """Generates a visual gauge bar showing spread dislocation relative to entry & stop bands."""
+    # Scale Z from -3.5 to +3.5 across 13 segments
+    clamped_z = max(-3.5, min(3.5, z))
+    norm_idx = int(round((clamped_z + 3.5) / 7.0 * 12))
+    norm_idx = max(0, min(12, norm_idx))
+    bar = ["="] * 13
+    bar[6] = "|"  # Mean
+    bar[2] = "["  # -2 sigma Long Entry
+    bar[10] = "]" # +2 sigma Short Entry
+    bar[norm_idx] = "o"
+    gauge_str = "".join(bar)
+    direction = "OVERSOLD (Long Spread)" if z < 0 else "OVERBOUGHT (Short Spread)"
+    return f"`-3.5s [{gauge_str}] +3.5s`\n**Z-Score:** `{z:+.2f}s` ({direction})"
+
+
+
+def send_stat_arb_alert(
+    ticker1: str,
+    ticker2: str,
+    pair_name: str,
+    cluster: str,
+    action: str,                # e.g. "LONG NVDA, SHORT AMD"
+    z_score: float,
+    hedge_ratio: float,
+    half_life_bars: float,
+    adf_t_stat: float,
+    correlation: float,
+    sentiment_t1: float,
+    sentiment_t2: float,
+    sentiment_delta: float,
+    conviction: str,
+    rationale: str,
+    price_t1: Optional[float] = None,
+    price_t2: Optional[float] = None,
+    historical_win_rate: Optional[float] = None,
+    historical_profit_factor: Optional[float] = None,
+) -> bool:
+    """
+    Sends a dedicated, market-neutral Stat-Arb APU Discord embed alert.
+    Distinct from directional War Rig breakout alerts:
+      - Formatted specifically for dual-leg pairs execution.
+      - Displays dynamic Kalman beta hedge ratio, spread Z-score gauge, ADF stationarity,
+        Ornstein-Uhlenbeck half-life, and DeepSeek sentiment circuit-breaker verdict.
+      - Deduplicates alerts per pair to prevent notification spam.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    webhook_url = getattr(settings, "discord_webhook_url", "")
+    if not webhook_url:
+        return False
+
+    pair_key = f"{ticker1}:{ticker2}"
+    now_utc = datetime.now(timezone.utc)
+
+    # 1. Anti-Spam Check: don't alert the same pair more than once every 2 hours
+    last_sent = _RECENT_STAT_ARB_ALERTS.get(pair_key)
+    if last_sent and (now_utc - last_sent) < timedelta(hours=2):
+        logger.info(f"[DISCORD] Stat-Arb alert for {pair_key} suppressed (sent {fmtTime(last_sent)} ago).")
+        return False
+
+    # Color: Gold for High Conviction, Cyan for Confirmed, Purple for Medium
+    if "HIGH" in conviction:
+        embed_color = 0xFFD700  # Gold
+    elif "CONFIRMED" in conviction:
+        embed_color = 0x00A6B2  # Cyan/Teal
+    elif "VETOED" in conviction:
+        embed_color = 0xFF4C5B  # Red
+    else:
+        embed_color = 0x8B5CF6  # Violet
+
+    # Parse primary and hedge leg actions
+    is_long_t1 = "LONG " + ticker1 in action
+    leg1_act = "🟢 BUY" if is_long_t1 else "🔴 SELL"
+    leg2_act = "🔴 SELL" if is_long_t1 else "🟢 BUY"
+
+    p1_str = f" @ `${price_t1:.2f}`" if price_t1 else ""
+    p2_str = f" @ `${price_t2:.2f}`" if price_t2 else ""
+
+    fields = [
+        # 1. Action & Pair Cluster
+        {
+            "name": "⚖️ Dual-Leg Pair Orders (MT5 Magic #202608)",
+            "value": (
+                f"• **Leg 1 (Primary):** {leg1_act} `1.00 Lot` **{ticker1}**{p1_str}\n"
+                f"• **Leg 2 (Hedge):** {leg2_act} `{hedge_ratio:.2f} Lots` **{ticker2}**{p2_str} *(β = {hedge_ratio:.3f})*\n"
+                f"• **Cluster:** `{cluster}` | `{pair_name}`"
+            ),
+            "inline": False
+        },
+        # 2. Spread Z-Score & Statistical Geometry
+        {
+            "name": "📊 Spread Deviation & Mean Reversion",
+            "value": _zscore_visual_gauge(z_score),
+            "inline": True
+        },
+        {
+            "name": "📐 Cointegration Quality",
+            "value": (
+                f"• **Stationarity:** `ADF t = {adf_t_stat:.2f}` *(p < 0.05)*\n"
+                f"• **Correlation:** `r = {correlation:+.3f}`\n"
+                f"• **Half-Life (&tau;):** `~{half_life_bars:.1f} bars`"
+            ),
+            "inline": True
+        },
+        # 3. Sentiment Circuit-Breaker Verdict
+        {
+            "name": "🤖 DeepSeek Sentiment Circuit-Breaker",
+            "value": (
+                f"• **{ticker1} Sentiment:** `{sentiment_t1:+.2f}`\n"
+                f"• **{ticker2} Sentiment:** `{sentiment_t2:+.2f}`\n"
+                f"• **Sentiment &Delta; (T1 - T2):** `{sentiment_delta:+.2f}`\n"
+                f"• **Verdict:** **{conviction}**\n"
+                f"• **Rationale:** *{rationale}*"
+            ),
+            "inline": False
+        },
+        # 4. Trade Management & Exit Plan
+        {
+            "name": "🎯 Target & Exit Parameters",
+            "value": (
+                f"• **Profit Target:** Reversion to `Z = 0.0σ` *(Partial TP at 0.5σ)*\n"
+                f"• **Disaster Stop:** Spread divergence at `|Z| >= 3.50σ`\n"
+                f"• **Time-Out Exit:** `2.5 × Half-Life` *(approx. {round(half_life_bars * 2.5)} bars)*"
+            ),
+            "inline": True
+        },
+    ]
+
+    # 5. Historical Track Record
+    if historical_win_rate:
+        pf_str = f" | PF: `{historical_profit_factor:.2f}x`" if historical_profit_factor else ""
+        fields.append({
+            "name": "🏆 Cluster Track Record",
+            "value": (
+                f"• **Backtested Win Rate:** `{historical_win_rate * 100:.1f}%`{pf_str}\n"
+                f"• **Market Exposure:** `Zero-Beta Market Neutral`"
+            ),
+            "inline": True
+        })
+
+    title = f"⚖️ **STAT-ARB APU PAIR ALERT** &mdash; `{ticker1}` vs `{ticker2}`"
+
+    embed = {
+        "title": title,
+        "color": embed_color,
+        "fields": fields,
+        "footer": {
+            "text": "MIMIR Stat-Arb APU — Market-Neutral Quantitative Arbitrage",
+        },
+    }
+
+    # Role mention for high conviction pair trades
+    content = ""
+    mention_role_id = getattr(settings, "discord_mention_role_id", "")
+    if mention_role_id and "HIGH" in conviction:
+        content = f"<@&{mention_role_id}> 🚨 High-Conviction Stat-Arb Pair Opportunity!"
+
+    payload = {
+        "content": content,
+        "embeds": [embed],
+        "username": "MIMIR Stat-Arb APU",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        if resp.status_code in (200, 204):
+            _RECENT_STAT_ARB_ALERTS[pair_key] = now_utc
+            logger.info(f"[DISCORD] Sent Stat-Arb APU alert for {pair_key} to Discord.")
+            return True
+        else:
+            logger.warning(f"[DISCORD] Stat-Arb webhook returned {resp.status_code}: {resp.text[:200]}")
+            return False
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Stat-Arb alert for {pair_key}: {e}")
+        return False
+
+

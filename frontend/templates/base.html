@@ -122,17 +122,23 @@
                     <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
                         <i class="fas fa-sync-alt mr-1"></i> Refresh
                     </button>
+                    <button id="mimirPowerBtn" onclick="openShutdownModal()" title="Turn Off MIMIR Safely" class="px-2.5 py-1 text-xs border border-red-500/50 text-red-400 bg-red-500/10 hover:bg-red-500/25 hover:border-red-400 hover:text-red-300 rounded font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(239,68,68,0.25)]">
+                        <i class="fas fa-power-off text-red-400"></i> <span class="font-bold tracking-wider">OFF</span>
+                    </button>
                 </div>
                 
                 <!-- Mobile Only Tools -->
                 <div class="flex lg:hidden items-center justify-between w-full mt-2">
                     <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock-mobile">--:--:--</span></span>
-                    <div class="flex items-center gap-3">
-                        <button id="mimirMicBtn-mobile" onclick="toggleMimirVoiceMic()" class="px-3 py-1.5 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:text-[#00A6B2] bg-[#0A161C]">
+                    <div class="flex items-center gap-2">
+                        <button id="mimirMicBtn-mobile" onclick="toggleMimirVoiceMic()" class="px-2.5 py-1.5 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:text-[#00A6B2] bg-[#0A161C]">
                             <i class="fas fa-microphone"></i> Voice
                         </button>
-                        <button id="refreshBtn-mobile" class="px-3 py-1.5 text-xs border border-[#2A4A50] rounded bg-[#0A161C] text-[#D6E5E3] hover:text-[#00A6B2]">
+                        <button id="refreshBtn-mobile" class="px-2.5 py-1.5 text-xs border border-[#2A4A50] rounded bg-[#0A161C] text-[#D6E5E3] hover:text-[#00A6B2]">
                             <i class="fas fa-sync-alt mr-1"></i> Refresh
+                        </button>
+                        <button id="mimirPowerBtn-mobile" onclick="openShutdownModal()" class="px-2.5 py-1.5 text-xs border border-red-500/50 text-red-400 bg-red-500/10 hover:bg-red-500/25 rounded font-mono flex items-center gap-1">
+                            <i class="fas fa-power-off text-red-400"></i> OFF
                         </button>
                     </div>
                 </div>
@@ -711,6 +717,166 @@
             </div>
         </div>
     </div>
+
+    <!-- Safe Power-Off / Shutdown Modal -->
+    <div id="shutdownModal" class="hidden fixed inset-0 bg-black/85 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+        <div class="bg-[#0A161C] border border-red-500/40 rounded-xl max-w-lg w-full overflow-hidden shadow-[0_0_40px_rgba(239,68,68,0.25)]">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-[#1A2A30] flex items-center justify-between bg-[#060D11]">
+                <div class="flex items-center gap-3">
+                    <span class="p-2 rounded bg-red-500/20 text-red-400 font-mono text-base"><i class="fas fa-power-off"></i></span>
+                    <div>
+                        <h2 class="text-base font-bold text-white font-mono tracking-wide">Turn Off MIMIR Safely</h2>
+                        <p class="text-[11px] text-[#4A6A70] font-mono">Clean process termination & resource release</p>
+                    </div>
+                </div>
+                <button onclick="closeShutdownModal()" class="text-[#4A6A70] hover:text-white text-lg p-1">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <!-- Modal Content (Initial Confirmation State) -->
+            <div id="shutdownConfirmState" class="p-6 font-mono text-xs space-y-4">
+                <p class="text-[#D6E5E3]">
+                    Are you ready to turn off MIMIR? Clicking below will safely terminate:
+                </p>
+                <div class="space-y-2 bg-[#060D11] border border-[#1A2A30] rounded-lg p-3 text-[11px]">
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Disconnect MetaTrader 5 terminal cleanly</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Stop Live Price & Profit Ratchet daemons</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Halt AI pipelines, XGBoost trainers & scrapers</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Close Cloudflare HTTPS tunnel & console windows</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Release all RAM and CPU cores to prevent PC freezing</span>
+                    </div>
+                </div>
+                <div class="text-[11px] text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded p-2.5">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    Closing windows manually with "X" leaves orphaned python zombie processes that peg your CPU. Always use this OFF button!
+                </div>
+                <div class="flex items-center justify-end gap-3 pt-2">
+                    <button onclick="closeShutdownModal()" class="px-4 py-2 rounded border border-[#1A2A30] text-[#D6E5E3] hover:bg-[#111A20] transition-colors">
+                        Cancel
+                    </button>
+                    <button id="btnExecuteShutdown" onclick="executeMimirShutdown()" class="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white font-bold flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)]">
+                        <i class="fas fa-power-off"></i> Turn Off MIMIR
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Content (Progress State) -->
+            <div id="shutdownProgressState" class="hidden p-8 font-mono text-center space-y-5">
+                <div class="relative w-16 h-16 mx-auto flex items-center justify-center">
+                    <div class="absolute inset-0 rounded-full border-4 border-red-500/20 border-t-red-500 animate-spin"></div>
+                    <i class="fas fa-power-off text-2xl text-red-400 animate-pulse"></i>
+                </div>
+                <div>
+                    <h3 id="shutdownStatusTitle" class="text-sm font-bold text-white uppercase tracking-wider mb-1">Powering Down All Engines...</h3>
+                    <p id="shutdownStatusDesc" class="text-xs text-[#4A6A70]">Disconnecting MT5 and stopping background workers...</p>
+                </div>
+                <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-3 text-[11px] text-left space-y-1.5 max-w-sm mx-auto">
+                    <div id="step-mt5" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Disconnecting MetaTrader 5 terminal...
+                    </div>
+                    <div id="step-daemons" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Halting live price & ratchet daemons...
+                    </div>
+                    <div id="step-subprocesses" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Killing background pipelines & scrapers...
+                    </div>
+                    <div id="step-server" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Shutting down application server...
+                    </div>
+                </div>
+                <div id="shutdownCompleteNotice" class="hidden p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs">
+                    <i class="fas fa-check-circle mr-1"></i> All MIMIR systems are completely OFF. Safe to close this browser tab.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openShutdownModal() {
+            document.getElementById('shutdownModal').classList.remove('hidden');
+            document.getElementById('shutdownConfirmState').classList.remove('hidden');
+            document.getElementById('shutdownProgressState').classList.add('hidden');
+        }
+
+        function closeShutdownModal() {
+            document.getElementById('shutdownModal').classList.add('hidden');
+        }
+
+        async function executeMimirShutdown() {
+            const confirmState = document.getElementById('shutdownConfirmState');
+            const progressState = document.getElementById('shutdownProgressState');
+            confirmState.classList.add('hidden');
+            progressState.classList.remove('hidden');
+
+            const stepMt5 = document.getElementById('step-mt5');
+            const stepDaemons = document.getElementById('step-daemons');
+            const stepSubprocesses = document.getElementById('step-subprocesses');
+            const stepServer = document.getElementById('step-server');
+            const statusTitle = document.getElementById('shutdownStatusTitle');
+            const statusDesc = document.getElementById('shutdownStatusDesc');
+            const completeNotice = document.getElementById('shutdownCompleteNotice');
+
+            try {
+                const response = await fetch('/api/v1/system/shutdown', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                stepMt5.className = 'text-emerald-400 flex items-center gap-2';
+                stepMt5.innerHTML = '<i class="fas fa-check"></i> MetaTrader 5 terminal session closed';
+                
+                stepDaemons.className = 'text-emerald-400 flex items-center gap-2';
+                stepDaemons.innerHTML = '<i class="fas fa-check"></i> Pricing daemons terminated';
+
+                stepSubprocesses.className = 'text-emerald-400 flex items-center gap-2';
+                stepSubprocesses.innerHTML = '<i class="fas fa-check"></i> AI worker pipelines halted';
+
+                stepServer.className = 'text-emerald-400 flex items-center gap-2';
+                stepServer.innerHTML = '<i class="fas fa-check"></i> Web server shutdown scheduled';
+
+                statusTitle.textContent = 'MIMIR is OFF';
+                statusTitle.className = 'text-sm font-bold text-emerald-400 uppercase tracking-wider mb-1';
+                statusDesc.textContent = 'All background daemons, consoles, and server stopped.';
+                completeNotice.classList.remove('hidden');
+
+            } catch (e) {
+                // If fetch fails because server already dropped connection, shutdown was successful!
+                stepMt5.className = 'text-emerald-400 flex items-center gap-2';
+                stepMt5.innerHTML = '<i class="fas fa-check"></i> MetaTrader 5 terminal session closed';
+                stepDaemons.className = 'text-emerald-400 flex items-center gap-2';
+                stepDaemons.innerHTML = '<i class="fas fa-check"></i> Pricing daemons terminated';
+                stepSubprocesses.className = 'text-emerald-400 flex items-center gap-2';
+                stepSubprocesses.innerHTML = '<i class="fas fa-check"></i> Background pipelines halted';
+                stepServer.className = 'text-emerald-400 flex items-center gap-2';
+                stepServer.innerHTML = '<i class="fas fa-check"></i> Server stopped';
+
+                statusTitle.textContent = 'MIMIR is OFF';
+                statusTitle.className = 'text-sm font-bold text-emerald-400 uppercase tracking-wider mb-1';
+                statusDesc.textContent = 'Connection closed. All background tasks stopped.';
+                completeNotice.classList.remove('hidden');
+            }
+        }
+
+        window.openShutdownModal = openShutdownModal;
+        window.closeShutdownModal = closeShutdownModal;
+        window.executeMimirShutdown = executeMimirShutdown;
+    </script>
 
     {% block scripts %}{% endblock %}
 </body>

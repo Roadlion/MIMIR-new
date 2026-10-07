@@ -83,8 +83,67 @@ class TestPortfolioWarRigAdvice(unittest.TestCase):
         self.assertIn("portfolio_sentiment_and_catalysts", user_msg)
         self.assertIn("live_war_rig_convergence_signals", user_msg)
         self.assertIn("asymmetric_execution_bounds", user_msg)
+        self.assertIn("nitrous_options_directive", user_msg)
+        self.assertIn("BUY or SELL PUTS", user_msg)
+        self.assertIn("SPECIFIC NUMERICAL STRIKE PRICES", user_msg)
+        self.assertIn("Nitrous Options Execution", user_msg)
         self.assertIn("Tactical Execution Deck & Asymmetric Rebalancing", user_msg)
         self.assertNotIn("Alternative MIMIR Profit Strategies</h3>", user_msg)
 
+    def test_nitrous_options_directives(self):
+        """Verify Nitrous Pod generates exact buy/sell put directives with explicit strike prices."""
+        from backend.app.analytics.war_rig_nitrous import get_nitrous_bridge
+        bridge = get_nitrous_bridge()
+
+        # Test portfolio holding directive (Normal runner -> Mode B2 Bull Put Credit Spread)
+        directive = bridge.generate_holding_nitrous_directive(
+            ticker="AAPL",
+            spot_price=225.0,
+            stop_loss=215.0,
+            target_price=245.0,
+            atr_14=4.5
+        )
+        self.assertEqual(directive["primary_action"], "SELL PUT")
+        self.assertIn("SELL", directive["action_summary"])
+        self.assertIn("PUT", directive["action_summary"])
+        self.assertIn("put_credit_spread_strikes", directive)
+        pcs = directive["put_credit_spread_strikes"]
+        self.assertLessEqual(pcs["short_put_strike"], 225.0)
+        self.assertLess(pcs["long_put_strike"], pcs["short_put_strike"])
+        self.assertGreater(pcs["net_credit"], 0.0)
+
+        # Test portfolio holding facing earnings danger -> Protective Put (BUY PUT)
+        earnings_directive = bridge.generate_holding_nitrous_directive(
+            ticker="NVDA",
+            spot_price=120.0,
+            stop_loss=112.0,
+            target_price=138.0,
+            atr_14=3.5,
+            earnings_calendar={"days_until": 7, "earnings_time": "AMC"}
+        )
+        self.assertEqual(earnings_directive["primary_action"], "BUY PUT")
+        self.assertIn("BUY", earnings_directive["action_summary"])
+        self.assertIn("PUT", earnings_directive["action_summary"])
+        self.assertIn("protective_put_strike", earnings_directive)
+        self.assertGreater(earnings_directive["protective_put_strike"]["strike"], 0.0)
+
+        # Test War Rig convergence pick deployment
+        deployment = bridge.generate_nitrous_deployment({
+            "ticker": "TSLA",
+            "trigger_price": 250.0,
+            "stop_loss": 235.0,
+            "target_price": 280.0,
+            "conviction_score": 0.85
+        })
+        self.assertIn("nitrous_options_directive", deployment)
+        opt_dir = deployment["nitrous_options_directive"]
+        self.assertIsNotNone(opt_dir)
+        self.assertIn(opt_dir["primary_action"], ["SELL PUT", "BUY CALL", "BUY PUT"])
+        self.assertIn("action_summary", opt_dir)
+        self.assertIn("execution_order", opt_dir)
+        self.assertGreater(len(opt_dir["legs"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,2 +1,7 @@
-# backend/app/integration/__init__.py
-from app.integration.plugin import MIMIRPlugin
+try:
+    from .plugin import MIMIRPlugin
+except Exception:
+    try:
+        from app.integration.plugin import MIMIRPlugin
+    except Exception:
+        MIMIRPlugin = None

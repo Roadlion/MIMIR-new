@@ -58,7 +58,11 @@ def fetch_and_cache_minute_ticker(ticker_symbol: str, conn=None):
             high_val = float(row["High"])
             low_val = float(row["Low"])
             close_val = float(row["Close"])
-            volume_val = int(row["Volume"]) if "Volume" in row else 0
+            try:
+                raw_vol = int(row["Volume"]) if "Volume" in row and not pd.isna(row["Volume"]) else 0
+                volume_val = max(0, min(raw_vol, 9223372036854775807))
+            except Exception:
+                volume_val = 0
             records.append((ticker_symbol, ts, open_val, high_val, low_val, close_val, volume_val))
             
         if not records:

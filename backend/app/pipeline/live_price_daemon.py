@@ -1,7 +1,14 @@
 import os
 import sys
+import signal
 import collections
 from datetime import datetime, timedelta
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Fix path to load backend module
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -13,7 +20,28 @@ import psycopg2.extensions
 import select
 from backend.app.database import get_db_connection
 from backend.app.config import get_settings
+from backend.app.services.process_manager import record_pid
+try:
+    from backend.app.analytics.stat_arb_apu import StatArbAPU
+except ImportError:
+    StatArbAPU = None
 from backend.app.analytics.guerilla_hybrid import get_hybrid_signals
+
+# Record PID for clean shutdown management
+record_pid("live_daemon", os.getpid())
+
+_running = True
+
+def handle_signal(sig, frame):
+    global _running
+    _running = False
+    print("\n[STOPPING] Live Price Daemon received exit signal. Cleaning up...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, handle_signal)
 
 settings = get_settings()
 
@@ -50,13 +78,18 @@ def process_new_ticks():
         print(f"[LIVE DAEMON] Updated sliding window cache for {len(updated_tickers)} tickers.")
         print(f"[LIVE DAEMON] Triggering event-driven analytics pipelines...")
         
-        # 1. Trigger Event-Driven Statistical Arbitrage (Guerilla Quant)
+        # 1. Trigger Event-Driven Statistical Arbitrage APU (Guerilla Quant)
         try:
-            signals = get_hybrid_signals()
-            if signals:
-                print(f"[LIVE DAEMON] Evaluated {len(signals)} Stat-Arb pairs.")
+            if StatArbAPU:
+                signals = StatArbAPU.run_master_scan()
+                if signals:
+                    print(f"[LIVE DAEMON] Stat-Arb APU Evaluated {len(signals)} Cointegrated Pairs.")
+            else:
+                signals = get_hybrid_signals()
+                if signals:
+                    print(f"[LIVE DAEMON] Evaluated {len(signals)} Stat-Arb pairs.")
         except Exception as e:
-            print(f"[LIVE DAEMON] Error triggering Guerilla Hybrid: {e}")
+            print(f"[LIVE DAEMON] Error triggering Stat-Arb APU: {e}")
             
         # 2. Event-Driven Technical Alerts: DEPRECATED
         # Standalone 1-min technical breakouts have been eliminated to prevent knife-catching.
@@ -76,6 +109,13 @@ def process_new_ticks():
             evaluate_tick_stoploss(price_cache)
         except Exception as e:
             print(f"[LIVE DAEMON] Error triggering Portfolio Stop-Losses: {e}")
+
+        # 5. Trigger User Custom Strategies (Dual Hedge, Mean Reversion, Bollinger Bands)
+        try:
+            from backend.app.analytics.user_strategies import run_user_strategies
+            run_user_strategies(price_cache)
+        except Exception as e:
+            print(f"[LIVE DAEMON] Error triggering User Strategies: {e}")
         
     finally:
         conn.close()
@@ -90,20 +130,27 @@ def listen_to_price_updates():
     print("[LIVE DAEMON] Listening for MT5 price_updates...")
 
     try:
-        while True:
-            # 5-second timeout polling
-            if select.select([conn], [], [], 5) == ([], [], []):
-                pass
-            else:
+        while _running:
+            # 1-second timeout polling so exit signals are processed promptly
+            r, _, _ = select.select([conn], [], [], 1)
+            if not _running:
+                break
+            if r:
                 conn.poll()
-                while conn.notifies:
+                while conn.notifies and _running:
                     conn.notifies.pop(0)
                     process_new_ticks()
+    except (KeyboardInterrupt, SystemExit):
+        pass
     except Exception as e:
         print(f"[LIVE DAEMON ERROR] {e}")
     finally:
-        cur.close()
-        conn.close()
+        print("[LIVE DAEMON] Closing database listener connection...")
+        try:
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     listen_to_price_updates()

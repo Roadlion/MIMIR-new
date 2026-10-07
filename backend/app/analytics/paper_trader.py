@@ -152,9 +152,11 @@ def get_ticker_atr_bounds(ticker: str, current_price: float, cur=None) -> tuple[
         if len(rows) >= 5:
             trs = []
             for i in range(len(rows) - 1):
-                h = float(rows[i][0])
-                l = float(rows[i][1])
-                prev_c = float(rows[i+1][2])
+                r_curr = rows[i]
+                r_next = rows[i+1]
+                h = float(r_curr["high"] if isinstance(r_curr, dict) else r_curr[0])
+                l = float(r_curr["low"] if isinstance(r_curr, dict) else r_curr[1])
+                prev_c = float(r_next["close"] if isinstance(r_next, dict) else r_next[2])
                 tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
                 trs.append(tr)
             if trs:
@@ -593,9 +595,15 @@ def execute_single_paper_trade(
         logger.error(f"[PAPER_TRADER ERROR] execute_single_paper_trade for {ticker}: {e}")
         return {"success": False, "status": "ERROR", "message": str(e)}
     finally:
-        cur.close()
-        if close_conn:
-            conn.close()
+        try:
+            cur.close()
+        except Exception:
+            pass
+        if close_conn and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def auto_execute_pending_alerts() -> Dict[str, Any]:

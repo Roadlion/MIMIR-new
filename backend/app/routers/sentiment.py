@@ -8,9 +8,11 @@ from psycopg2.extras import RealDictCursor
 from ..database import get_db_connection_dict
 from ..config import get_settings
 from ..sentiment.llm_client import send_chat_completion
+import logging
 import time
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # In-memory cache for /summary endpoint: (days, region, country) -> (timestamp, response_data)
 _summary_cache = {}
@@ -378,109 +380,130 @@ def get_ticker_sentiments(
     conn = get_db_connection_dict()
     cur = conn.cursor()
 
-    if weighted:
-        # Use the weighted sentiment function (includes social and spillover)
-        results = []
-        for t in ticker_list:
-            cur.execute(
-                "SELECT * FROM yggdrasil.mimir_weighted_sentiment("
-                "p_ticker := %s::TEXT, p_hours_window := %s::INTEGER, p_half_life_hours := 12::NUMERIC, "
-                "p_include_spillover := TRUE::BOOLEAN, p_social_half_life_hours := %s::NUMERIC, "
-                "p_social_weight_multiplier := %s::NUMERIC)",
-                (t, hours, social_half_life, social_weight)
+    try:
+        if weighted:
+            # Use the weighted sentiment function (includes social and spillover)
+            results = []
+            for t in ticker_list:
+                cur.execute(
+                    "SELECT * FROM yggdrasil.mimir_weighted_sentiment("
+                    "p_ticker := %s::TEXT, p_hours_window := %s::INTEGER, p_half_life_hours := 12::NUMERIC, "
+                    "p_include_spillover := TRUE::BOOLEAN, p_social_half_life_hours := %s::NUMERIC, "
+                    "p_social_weight_multiplier := %s::NUMERIC)",
+                    (t, hours, social_half_life, social_weight)
+                )
+                row = cur.fetchone()
+                if row:
+                    results.append({
+                        "ticker": row.get("ticker"),
+                        "current_sentiment": float(row.get("weighted_score", 0) or 0),
+                        "raw_score": float(row.get("direct_score", 0) or 0),
+                        "article_count": row.get("article_count", 0),
+                        "spillover_count": row.get("spillover_count", 0),
+                        "avg_confidence": float(row.get("avg_confidence", 0) or 0),
+                        "effective_age_hours": float(row.get("effective_age_hours", 0) or 0),
+                    })
+                else:
+                    results.append({
+                        "ticker": t,
+                        "current_sentiment": 0.0,
+                        "raw_score": 0.0,
+                        "article_count": 0,
+                        "spillover_count": 0,
+                        "avg_confidence": 0.0,
+                        "effective_age_hours": 0.0,
+                    })
+            return {"tickers": results, "weighted": True}
+
+        # --- Original AVG() logic (unchanged) ---
+        cur.execute(f"""
+            WITH current_sentiment AS (
+                SELECT
+                    si.ticker,
+                    AVG(si.sentiment_score) AS current_sentiment
+                FROM (
+                    SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
+                    
+                    UNION ALL
+                    
+                    SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
+                    FROM {settings.mimir_schema}.mimir_social_chatter sc
+                ) si
+                WHERE si.ticker = ANY(%s)
+                  AND si.published_ts > NOW() - INTERVAL '24 hours'
+                GROUP BY si.ticker
+            ),
+            prev_sentiment AS (
+                SELECT
+                    si.ticker,
+                    AVG(si.sentiment_score) AS prev_sentiment
+                FROM (
+                    SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
+                    
+                    UNION ALL
+                    
+                    SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
+                    FROM {settings.mimir_schema}.mimir_social_chatter sc
+                ) si
+                WHERE si.ticker = ANY(%s)
+                  AND si.published_ts > NOW() - INTERVAL '48 hours'
+                  AND si.published_ts <= NOW() - INTERVAL '24 hours'
+                GROUP BY si.ticker
             )
-            row = cur.fetchone()
-            if row:
-                results.append({
-                    "ticker": row.get("ticker"),
-                    "current_sentiment": float(row.get("weighted_score", 0) or 0),
-                    "raw_score": float(row.get("direct_score", 0) or 0),
-                    "article_count": row.get("article_count", 0),
-                    "spillover_count": row.get("spillover_count", 0),
-                    "avg_confidence": float(row.get("avg_confidence", 0) or 0),
-                    "effective_age_hours": float(row.get("effective_age_hours", 0) or 0),
-                })
-            else:
-                results.append({
+            SELECT
+                cs.ticker,
+                cs.current_sentiment,
+                ps.prev_sentiment,
+                CASE
+                    WHEN ps.prev_sentiment IS NULL OR ABS(ps.prev_sentiment) < 0.0001
+                        THEN (cs.current_sentiment - COALESCE(ps.prev_sentiment, 0)) * 100
+                    ELSE ((cs.current_sentiment - ps.prev_sentiment) / ABS(ps.prev_sentiment)) * 100
+                END AS sentiment_change_percent
+            FROM current_sentiment cs
+            LEFT JOIN prev_sentiment ps ON cs.ticker = ps.ticker
+        """, (ticker_list, ticker_list))
+
+        results = cur.fetchall()
+
+        return {
+            "tickers": [
+                {
+                    "ticker": r.get("ticker"),
+                    "current_sentiment": float(r.get("current_sentiment", 0)) if r.get("current_sentiment") is not None else 0.0,
+                    "prev_sentiment": float(r.get("prev_sentiment", 0)) if r.get("prev_sentiment") is not None else None,
+                    "sentiment_change_percent": round(float(r.get("sentiment_change_percent", 0)), 2) if r.get("sentiment_change_percent") is not None else 0.0
+                }
+                for r in results
+            ]
+        }
+    except Exception as e:
+        logger.error(f"[SENTIMENT] Error fetching ticker sentiments: {e}", exc_info=True)
+        return {
+            "tickers": [
+                {
                     "ticker": t,
                     "current_sentiment": 0.0,
-                    "raw_score": 0.0,
-                    "article_count": 0,
-                    "spillover_count": 0,
-                    "avg_confidence": 0.0,
-                    "effective_age_hours": 0.0,
-                })
-        cur.close()
-        conn.close()
-        return {"tickers": results, "weighted": True}
-
-    # --- Original AVG() logic (unchanged) ---
-    cur.execute(f"""
-        WITH current_sentiment AS (
-            SELECT
-                si.ticker,
-                AVG(si.sentiment_score) AS current_sentiment
-            FROM (
-                SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
-                FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
-                JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
-                
-                UNION ALL
-                
-                SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
-                FROM {settings.mimir_schema}.mimir_social_chatter sc
-            ) si
-            WHERE si.ticker = ANY(%s)
-              AND si.published_ts > NOW() - INTERVAL '24 hours'
-            GROUP BY si.ticker
-        ),
-        prev_sentiment AS (
-            SELECT
-                si.ticker,
-                AVG(si.sentiment_score) AS prev_sentiment
-            FROM (
-                SELECT si_sub.ticker, si_sub.sentiment_score, a_sub.published_ts
-                FROM {settings.mimir_schema}.mimir_sentiment_impacts si_sub
-                JOIN {settings.mimir_schema}.mimir_raw_articles a_sub ON a_sub.id = si_sub.article_id
-                
-                UNION ALL
-                
-                SELECT sc.ticker, sc.sentiment_score, sc.bucket_ts AS published_ts
-                FROM {settings.mimir_schema}.mimir_social_chatter sc
-            ) si
-            WHERE si.ticker = ANY(%s)
-              AND si.published_ts > NOW() - INTERVAL '48 hours'
-              AND si.published_ts <= NOW() - INTERVAL '24 hours'
-            GROUP BY si.ticker
-        )
-        SELECT
-            cs.ticker,
-            cs.current_sentiment,
-            ps.prev_sentiment,
-            CASE
-                WHEN ps.prev_sentiment IS NULL OR ABS(ps.prev_sentiment) < 0.0001
-                    THEN (cs.current_sentiment - COALESCE(ps.prev_sentiment, 0)) * 100
-                ELSE ((cs.current_sentiment - ps.prev_sentiment) / ABS(ps.prev_sentiment)) * 100
-            END AS sentiment_change_percent
-        FROM current_sentiment cs
-        LEFT JOIN prev_sentiment ps ON cs.ticker = ps.ticker
-    """, (ticker_list, ticker_list))
-
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return {
-        "tickers": [
-            {
-                "ticker": r.get("ticker"),
-                "current_sentiment": float(r.get("current_sentiment", 0)) if r.get("current_sentiment") is not None else 0.0,
-                "prev_sentiment": float(r.get("prev_sentiment", 0)) if r.get("prev_sentiment") is not None else None,
-                "sentiment_change_percent": round(float(r.get("sentiment_change_percent", 0)), 2) if r.get("sentiment_change_percent") is not None else 0.0
-            }
-            for r in results
-        ]
-    }
+                    "prev_sentiment": None,
+                    "sentiment_change_percent": 0.0,
+                }
+                for t in ticker_list
+            ],
+            "weighted": weighted,
+            "fallback": True
+        }
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 _regional_cache = {}

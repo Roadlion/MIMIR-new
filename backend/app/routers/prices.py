@@ -125,7 +125,11 @@ def fetch_and_cache_ticker(ticker_symbol: str, conn=None):
             high_val = float(row["High"])
             low_val = float(row["Low"])
             close_val = float(row["Close"])
-            volume_val = int(row["Volume"]) if "Volume" in row else 0
+            try:
+                raw_vol = int(row["Volume"]) if "Volume" in row and not pd.isna(row["Volume"]) else 0
+                volume_val = max(0, min(raw_vol, 9223372036854775807))
+            except Exception:
+                volume_val = 0
             records.append((ticker_symbol, ts, open_val, high_val, low_val, close_val, volume_val))
             
         if not records:
@@ -234,11 +238,16 @@ def fetch_and_cache_daily_ticker(ticker_symbol: str, conn=None):
         records = []
         for index, row in df.iterrows():
             ts = index.to_pydatetime()
+            try:
+                raw_vol = int(row["Volume"]) if "Volume" in row and not pd.isna(row["Volume"]) else 0
+                volume_val = max(0, min(raw_vol, 9223372036854775807))
+            except Exception:
+                volume_val = 0
             records.append((
                 ticker_symbol, ts,
                 float(row["Open"]), float(row["High"]),
                 float(row["Low"]), float(row["Close"]),
-                int(row["Volume"]) if "Volume" in row else 0
+                volume_val
             ))
 
         if not records:
@@ -568,56 +577,56 @@ def get_ticker_changes(tickers: Optional[str] = Query(None)):
 
     conn = get_db_connection_dict()
     cur = conn.cursor()
-    
-    # 1. Ultra-fast lookup from mimir_latest_prices (<4ms)
-    cur.execute(f"""
-        SELECT ticker, latest_price, prev_close_24h, change_percent, updated_at
-        FROM {settings.mimir_schema}.mimir_latest_prices
-        WHERE ticker = ANY(%s)
-    """, (ticker_list,))
-    price_rows = cur.fetchall()
-    price_map = {r["ticker"]: r for r in price_rows}
-    
-    # 2. Check if any tickers are missing from mimir_latest_prices
-    missing_tickers = [t for t in ticker_list if t not in price_map]
-    if missing_tickers:
-        # Fast fallback check in mimir_hourly_ohlcv for missing tickers only
+    try:
+        # 1. Ultra-fast lookup from mimir_latest_prices (<4ms)
         cur.execute(f"""
-            SELECT DISTINCT ON (ticker) ticker, close AS latest_price, timestamp
-            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            SELECT ticker, latest_price, prev_close_24h, change_percent, updated_at
+            FROM {settings.mimir_schema}.mimir_latest_prices
             WHERE ticker = ANY(%s)
-            ORDER BY ticker, timestamp DESC
-        """, (missing_tickers,))
-        fallback_rows = cur.fetchall()
-        for fr in fallback_rows:
-            t_sym = fr["ticker"]
-            lp = float(fr["latest_price"])
-            price_map[t_sym] = {
-                "ticker": t_sym,
-                "latest_price": lp,
-                "prev_close_24h": lp,
-                "change_percent": 0.0,
-                "updated_at": fr["timestamp"]
-            }
-            try:
-                cur.execute(f"""
-                    INSERT INTO {settings.mimir_schema}.mimir_latest_prices
-                    (ticker, latest_price, prev_close_24h, change_percent, timestamp, updated_at)
-                    VALUES (%s, %s, %s, 0.0, %s, NOW())
-                    ON CONFLICT (ticker) DO NOTHING
-                """, (t_sym, lp, lp, fr["timestamp"]))
-                conn.commit()
-            except Exception:
-                pass
+        """, (ticker_list,))
+        price_rows = cur.fetchall()
+        price_map = {r["ticker"]: r for r in price_rows}
+        
+        # 2. Check if any tickers are missing from mimir_latest_prices
+        missing_tickers = [t for t in ticker_list if t not in price_map]
+        if missing_tickers:
+            # Fast fallback check in mimir_hourly_ohlcv for missing tickers only
+            cur.execute(f"""
+                SELECT DISTINCT ON (ticker) ticker, close AS latest_price, timestamp
+                FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                WHERE ticker = ANY(%s)
+                ORDER BY ticker, timestamp DESC
+            """, (missing_tickers,))
+            fallback_rows = cur.fetchall()
+            for fr in fallback_rows:
+                t_sym = fr["ticker"]
+                lp = float(fr["latest_price"])
+                price_map[t_sym] = {
+                    "ticker": t_sym,
+                    "latest_price": lp,
+                    "prev_close_24h": lp,
+                    "change_percent": 0.0,
+                    "updated_at": fr["timestamp"]
+                }
+                try:
+                    cur.execute(f"""
+                        INSERT INTO {settings.mimir_schema}.mimir_latest_prices
+                        (ticker, latest_price, prev_close_24h, change_percent, timestamp, updated_at)
+                        VALUES (%s, %s, %s, 0.0, %s, NOW())
+                        ON CONFLICT (ticker) DO NOTHING
+                    """, (t_sym, lp, lp, fr["timestamp"]))
+                    conn.commit()
+                except Exception:
+                    pass
 
-        # For any completely unknown tickers, trigger async background fetch (NEVER block HTTP request)
-        unseen_tickers = [t for t in missing_tickers if t not in price_map]
-        if unseen_tickers:
-            import threading
-            threading.Thread(target=fetch_and_cache_tickers_concurrently, args=(unseen_tickers,), daemon=True).start()
-
-    cur.close()
-    conn.close()
+            # For any completely unknown tickers, trigger async background fetch (NEVER block HTTP request)
+            unseen_tickers = [t for t in missing_tickers if t not in price_map]
+            if unseen_tickers:
+                import threading
+                threading.Thread(target=fetch_and_cache_tickers_concurrently, args=(unseen_tickers,), daemon=True).start()
+    finally:
+        cur.close()
+        conn.close()
 
     # Map rows preserving requested ticker list order
     results = []
