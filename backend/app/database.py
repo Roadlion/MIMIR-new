@@ -63,8 +63,8 @@ def _get_pool():
     global _pool
     if _pool is None:
         _pool = ThreadedConnectionPool(
-            minconn=4,
-            maxconn=60,
+            minconn=2,
+            maxconn=10,
             host=settings.db_host,
             port=settings.db_port,
             dbname=settings.db_name,
@@ -79,8 +79,8 @@ def _get_dict_pool():
     global _dict_pool
     if _dict_pool is None:
         _dict_pool = ThreadedConnectionPool(
-            minconn=4,
-            maxconn=60,
+            minconn=2,
+            maxconn=10,
             host=settings.db_host,
             port=settings.db_port,
             dbname=settings.db_name,

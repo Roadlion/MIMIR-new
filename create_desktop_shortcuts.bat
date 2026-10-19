@@ -14,6 +14,7 @@ set "ROOT_DIR=%~dp0"
 if "%ROOT_DIR:~-1%"=="\" set "ROOT_DIR=%ROOT_DIR:~0,-1%"
 
 set "RUN_BAT=%ROOT_DIR%\run.bat"
+set "RUN_HEADLESS_BAT=%ROOT_DIR%\run_headless.bat"
 set "STOP_BAT=%ROOT_DIR%\stop.bat"
 set "ICON_PATH=%ROOT_DIR%\MIMIR LOGO.ico"
 
@@ -26,6 +27,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "if (Test-Path '%ICON_PATH%') { $s1.IconLocation = '%ICON_PATH%'; } " ^
     "$s1.Description = 'Start MIMIR Server & Daemons'; " ^
     "$s1.Save(); " ^
+    "$s_game = $ws.CreateShortcut(\"$desk\MIMIR Gamer Mode.lnk\"); " ^
+    "$s_game.TargetPath = '%RUN_HEADLESS_BAT%'; " ^
+    "$s_game.WorkingDirectory = '%ROOT_DIR%'; " ^
+    "if (Test-Path '%ICON_PATH%') { $s_game.IconLocation = '%ICON_PATH%'; } " ^
+    "$s_game.Description = 'Start MIMIR Headless Gamer Mode (0%% GPU, Low RAM, Discord Alerts)'; " ^
+    "$s_game.Save(); " ^
     "$s2 = $ws.CreateShortcut(\"$desk\Stop MIMIR (OFF Button).lnk\"); " ^
     "$s2.TargetPath = '%STOP_BAT%'; " ^
     "$s2.WorkingDirectory = '%ROOT_DIR%'; " ^
@@ -37,8 +44,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 echo.
 echo ===================================================
 echo  [SUCCESS] Created on Desktop:
-echo  1. "Start MIMIR"
-echo  2. "Stop MIMIR (OFF Button)"
+echo  1. "Start MIMIR" (Standard with Web UI)
+echo  2. "MIMIR Gamer Mode" (Headless background, 0%% GPU, Discord alerts)
+echo  3. "Stop MIMIR (OFF Button)"
 echo ===================================================
 echo.
 pause

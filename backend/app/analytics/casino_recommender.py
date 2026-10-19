@@ -66,6 +66,7 @@ class StrategyRecommendation:
     signal_summary: Dict[str, Any]
     risk_grade: str
     expected_value: float
+    execution_payload: Optional[Dict[str, Any]] = None
 
 CASINO_DEFAULT_TICKERS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'QQQ', 'IWM', 'AMD', 'NFLX']
 
@@ -78,7 +79,7 @@ def gather_signals(ticker: str) -> SignalBundle:
     sentiment_5d = get_recent_sentiment(ticker, days=5)
     sentiment_score = sentiment_1d if sentiment_1d is not None else sentiment_5d
     
-    # 2. XGBoost Params
+    # 2. Quantitative Baseline Params
     params = get_ticker_parameters(ticker) or {}
     prob_buy = params.get('prob_buy', 0.5)
     prob_sell = params.get('prob_sell', 0.5)
@@ -370,6 +371,81 @@ def select_strategies(signals: SignalBundle, chain: OptionsChain, top_k: int = 5
 
     return strategies[:top_k]
 
+
+def generate_options_order_payload(
+    strategy: Strategy,
+    ticker: str,
+    current_price: float,
+    contracts: int = 1
+) -> Dict[str, Any]:
+    """
+    Generates a standardized institutional multi-leg options execution payload
+    (compatible with OCC standards and institutional execution APIs such as Interactive Brokers / Tastytrade).
+    Includes OCC standard symbology, leg direction, debit/credit classification, and limit pricing.
+    """
+    t_clean = ticker.strip().upper()
+    net_prem = getattr(strategy, "net_premium", 0.0)
+    is_credit = net_prem > 0
+    limit_price = round(abs(net_prem), 2)
+    multiplier = CONTRACTS_MULTIPLIER  # 100 shares per contract
+
+    legs_payload = []
+    for idx, leg in enumerate(strategy.legs, start=1):
+        direction_action = "BUY_TO_OPEN" if leg.direction == "long" else "SELL_TO_OPEN"
+        c_type = (leg.contract_type or "CALL").upper()
+        strike_val = float(leg.strike or current_price)
+        exp_date = leg.expiration if hasattr(leg.expiration, "strftime") else None
+
+        # Build standard OCC Option Symbol: Root + YYMMDD + C/P + 8-digit strike (scaled by 1000)
+        occ_symbol = ""
+        if exp_date:
+            yymmdd = exp_date.strftime("%y%m%d")
+            strike_int = int(round(strike_val * 1000))
+            occ_symbol = f"{t_clean}{yymmdd}{c_type[0]}{strike_int:08d}"
+
+        legs_payload.append({
+            "leg_id": idx,
+            "action": direction_action,
+            "instrument": getattr(leg, "instrument", "option"),
+            "contract_type": c_type,
+            "strike": strike_val,
+            "expiration": exp_date.isoformat() if exp_date else str(leg.expiration),
+            "quantity": int(leg.quantity * contracts),
+            "premium": round(float(leg.premium), 2),
+            "iv": round(float(leg.iv), 4) if getattr(leg, "iv", None) else None,
+            "occ_symbol": occ_symbol
+        })
+
+    est_cost = round(limit_price * contracts * multiplier, 2)
+    max_profit_usd = round(strategy.max_profit * contracts * multiplier, 2) if strategy.max_profit and strategy.max_profit != float("inf") else None
+    max_loss_usd = round(strategy.max_loss * contracts * multiplier, 2) if strategy.max_loss and strategy.max_loss != float("inf") and strategy.max_loss != -float("inf") else None
+
+    order_type = "MULTI_LEG_SPREAD" if len(strategy.legs) > 1 else "SINGLE_LEG"
+    category_val = strategy.category.value if hasattr(strategy.category, "value") else str(strategy.category)
+
+    return {
+        "ticker": t_clean,
+        "strategy_name": strategy.name,
+        "strategy_category": category_val,
+        "order_structure": order_type,
+        "underlying_price": round(float(current_price), 2),
+        "contracts": int(contracts),
+        "pricing_type": "CREDIT" if is_credit else "DEBIT",
+        "net_premium_per_share": round(net_prem, 4),
+        "limit_price": limit_price,
+        "estimated_total_usd": est_cost,
+        "max_profit_usd": max_profit_usd,
+        "max_loss_usd": max_loss_usd,
+        "breakevens": [round(b, 2) for b in getattr(strategy, "breakeven_points", [])],
+        "probability_of_profit": round(getattr(strategy, "probability_of_profit", 0.0), 4),
+        "risk_reward_ratio": round(getattr(strategy, "risk_reward_ratio", 0.0), 2),
+        "aggregate_greeks": strategy.aggregate_greeks.to_dict() if hasattr(strategy.aggregate_greeks, "to_dict") else {},
+        "legs": legs_payload,
+        "time_in_force": "DAY",
+        "routing_instruction": "SMART"
+    }
+
+
 def rank_strategies(candidates: List[Strategy], signals: SignalBundle) -> List[StrategyRecommendation]:
     recs = []
     base_conviction = _compute_conviction(signals)
@@ -401,7 +477,8 @@ def rank_strategies(candidates: List[Strategy], signals: SignalBundle) -> List[S
                     "iv_rank": signals.iv_rank_value
                 },
                 risk_grade=_compute_risk_grade(strat),
-                expected_value=ev
+                expected_value=ev,
+                execution_payload=generate_options_order_payload(strat, signals.ticker, signals.current_price)
             )
         )
         
@@ -422,8 +499,8 @@ def generate_explanation(strategy: Strategy, signals: SignalBundle) -> str:
 Explain why the '{strategy.name}' options strategy is recommended for {signals.ticker}.
 Current Signals:
 - Price: ${signals.current_price:.2f}
-- Buy Probability (XGBoost): {buy_str}
-- Sell Probability (XGBoost): {sell_str}
+- Buy Probability (Baseline): {buy_str}
+- Sell Probability (Baseline): {sell_str}
 - Sentiment: {sent_str}
 - IV Rank: {iv_str}
 

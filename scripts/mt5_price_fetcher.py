@@ -17,11 +17,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.app.database import get_db_connection
 from backend.app.config import get_settings
-from backend.app.services.process_manager import record_pid
+from backend.app.services.process_manager import record_pid, apply_low_process_priority
 from psycopg2.extras import execute_values
 
-# Record PID for clean shutdown management
+# Record PID and set below-normal CPU priority for gaming friendliness
 record_pid("mt5_fetcher", os.getpid())
+apply_low_process_priority()
 
 _running = True
 

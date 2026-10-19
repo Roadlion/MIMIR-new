@@ -11,8 +11,10 @@ except ImportError:
 # Reentrant lock to serialize MT5 order and state requests
 _mt5_lock = threading.RLock()
 
-# Default magic number for MIMIR trades
-MIMIR_MAGIC = 202409
+# Default magic numbers for MIMIR subsystems
+MIMIR_MAGIC = 202409       # War Rig Single-Shaft Transmission
+STAT_ARB_MAGIC = 202608    # Stat-Arb Auxiliary Power Unit (APU)
+AUTHORIZED_MAGICS = {MIMIR_MAGIC, STAT_ARB_MAGIC}
 
 # Human-readable translations for MT5 trade return codes
 MT5_RETCODE_DESCRIPTIONS = {

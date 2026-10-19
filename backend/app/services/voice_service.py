@@ -55,7 +55,15 @@ async def generate_mimir_speech(text: str, voice_name: str = "en-GB-RyanNeural")
     text_hash = hashlib.md5(text.encode("utf-8")).hexdigest()
     custom_sample = get_custom_voice_sample_path()
     
-    if custom_sample:
+    # Check Zero-GPU / Gaming Mode flag (prevents VRAM starvation and game crashes)
+    disable_gpu = os.environ.get("MIMIR_DISABLE_GPU", "1").lower() in ("1", "true", "yes")
+    try:
+        from ..config import get_settings
+        disable_gpu = disable_gpu or get_settings().mimir_disable_gpu
+    except Exception:
+        pass
+
+    if custom_sample and not disable_gpu:
         filename = f"mimir_clone_{text_hash[:12]}.mp3"
         filepath = os.path.join(CACHE_DIR, filename)
         relative_url = f"/static/audio/cache/{filename}"

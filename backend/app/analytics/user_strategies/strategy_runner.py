@@ -50,67 +50,12 @@ def emit_user_strategy_signal(
     reason_detail: str,
 ):
     """
-    Inserts an emitted signal from a user custom strategy into mimir_trade_signals (status PENDING),
-    making it instantly available for paper_trader.py auto-execution.
+    [DECOMMISSIONED FOR DIRECT EXECUTION & DB EMISSION]
+    Standalone user strategy signals are deactivated to prevent uncontrolled market execution and queue spam.
+    Only the unified War Rig Transmission Engine is authorized for trading.
     """
-    if not HAS_DB or get_db_connection is None:
-        print(f"[USER_STRATEGY] Emitted {action} signal for {ticker} @ {price:.2f} ({strategy_name}) [No DB Mode]")
-        return
-
-    if action not in ["OPEN_LONG", "OPEN_SHORT", "CLOSE_LONG", "CLOSE_SHORT"]:
-        return
-
-    signal_type = "BUY" if action in ["OPEN_LONG", "CLOSE_SHORT"] else "SELL"
-    reason = f"[USER_STRATEGY:{strategy_name.upper()}] Action: {action} | {reason_detail}"
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        schema = settings.mimir_schema
-        gmt_plus_7 = timezone(timedelta(hours=7))
-        now_local = datetime.now(gmt_plus_7)
-
-        # 1. Log to mimir_trade_signals DB (for paper trader and signal logs)
-        cur.execute(
-            f"""
-            INSERT INTO {schema}.mimir_trade_signals
-            (ticker, signal_type, trigger_price, sentiment_score, conviction_score, reason, status, created_at)
-            VALUES (%s, %s, %s, 0.0, 0.70, %s, 'PENDING', %s)
-        """,
-            (
-                ticker.upper().strip(),
-                signal_type,
-                price,
-                reason,
-                now_local,
-            ),
-        )
-
-        conn.commit()
-        print(
-            f"[USER_STRATEGY] Emitted {signal_type} signal for {ticker} @ {price:.2f} ({strategy_name})"
-        )
-
-        # 2. Trigger Direct Real MT5 Execution
-        try:
-            from backend.app.integration.mt5_executor import send_mt5_order
-            mt5_res = send_mt5_order(
-                ticker=ticker,
-                action=action,
-                comment=f"MIMIR:{strategy_name[:15]}"
-            )
-            if mt5_res.get("success"):
-                print(f"[DIRECT MT5 SUCCESS] Executed {action} on MT5 for {ticker}: {mt5_res.get('message')}")
-            else:
-                print(f"[DIRECT MT5 INFO] MT5 order status: {mt5_res.get('message')}")
-        except Exception as e:
-            print(f"[DIRECT MT5 ERROR] Failed to send direct MT5 order: {e}")
-    except Exception as e:
-        conn.rollback()
-        print(f"[USER_STRATEGY ERROR] Failed to emit signal for {ticker}: {e}")
-    finally:
-        cur.close()
-        conn.close()
+    print(f"[USER_STRATEGY DECOMMISSIONED] Blocked {action} for {ticker} ({strategy_name}). Only War Rig is authorized.")
+    return
 
 
 def run_user_strategies(price_cache: Dict[str, Any]):

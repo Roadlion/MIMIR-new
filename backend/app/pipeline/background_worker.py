@@ -23,10 +23,24 @@ from ..database import get_db_connection
 from ..config import get_settings
 from ..routers.prices import DEFAULT_TICKERS
 from ..scrapers.niche_sources import scrape_niche_articles
-from ..analytics.guerilla_hybrid import get_hybrid_signals
+from ..analytics.stat_arb_apu import StatArbAPU
 from ..sentiment.deepseek_client import DeepSeekSentiment
+from ..services.process_manager import apply_low_process_priority, trim_process_memory
 
 settings = get_settings()
+
+
+def is_us_market_active() -> bool:
+    """Returns True if US equity markets are in pre-market, regular, or post-market hours (07:00 - 20:00 ET, Mon-Fri)."""
+    try:
+        from zoneinfo import ZoneInfo
+        now_et = datetime.now(ZoneInfo('America/New_York'))
+        if now_et.weekday() >= 5:  # Saturday or Sunday
+            return False
+        time_str = now_et.strftime('%H:%M')
+        return "07:00" <= time_str <= "20:00"
+    except Exception:
+        return True
 
 # Thread-local curl_cffi sessions — one per thread, reused across ticker fetches
 _tls = threading.local()
@@ -52,7 +66,6 @@ PIPELINE_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_full_pipeline.py")
 SCRAPE_SOCIAL_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_social.py")
 SCRAPE_TWITTER_PATH = os.path.join(PROJECT_ROOT, "scripts", "scrape_twitter.py")
 FETCH_FUNDAMENTALS_PATH = os.path.join(PROJECT_ROOT, "scripts", "fetch_fundamentals.py")
-TUNE_TICKERS_PATH = os.path.join(PROJECT_ROOT, "scripts", "tune_ticker_parameters.py")
 
 PRICE_FETCH_PATH = os.path.join(PROJECT_ROOT, "scripts", "run_price_fetch.py")
 
@@ -132,21 +145,6 @@ def run_fundamentals_cycle():
             print("[BG_WORKER] Fundamentals fetcher completed successfully.")
     except Exception as e:
         print(f"[BG_WORKER] Error spawning fundamentals fetcher: {e}")
-
-def run_ticker_tuning_cycle():
-    """Runs the ticker parameter tuning script as a separate subprocess to avoid GIL contention."""
-    if _shutdown_event.is_set():
-        return
-    print(f"[BG_WORKER] Spawning ticker parameter tuning subprocess at {datetime.now()}")
-    env = _subprocess_env()
-    try:
-        res = run_managed_subprocess([sys.executable, TUNE_TICKERS_PATH], env=env, cwd=PROJECT_ROOT)
-        if res and res.returncode != 0:
-            print(f"[BG_WORKER] Ticker tuning failed: {res.stderr}")
-        elif res:
-            print("[BG_WORKER] Ticker tuning completed successfully.")
-    except Exception as e:
-        print(f"[BG_WORKER] Error spawning ticker tuning subprocess: {e}")
 
 def _subprocess_env():
     env = os.environ.copy()
@@ -232,7 +230,7 @@ def run_sentiment_cycle():
     except Exception as e:
         print(f"[BG_WORKER] Error running sentiment pipeline: {e}")
 
-    # 2. Guerilla Quant niche scan
+    # 2. Stat-Arb APU market-neutral scan
     try:
         run_niche_scan()
     except Exception as e:
@@ -259,9 +257,9 @@ def run_news_and_sentiment_cycle():
 def run_niche_scan():
     """
     Scrape niche market articles, insert into raw_articles, score via DeepSeek,
-    then compute and persist pair signals for Guerilla Quant.
+    then compute and persist pair signals via the Stat-Arb APU.
     """
-    print(f"[BG_WORKER] Starting Guerilla Quant niche scan at {datetime.now()}")
+    print(f"[BG_WORKER] Starting Stat-Arb APU market-neutral scan at {datetime.now()}")
     articles = scrape_niche_articles(sample_size=30)
     if not articles:
         print("[BG_WORKER] No niche articles scraped, skipping.")
@@ -284,12 +282,45 @@ def run_niche_scan():
 
     scored_items = []
     if new_articles:
+        from ..sentiment.pre_scoring_filter import is_noise_or_junk, get_headline_deduplicator
+        deduper = get_headline_deduplicator()
         analyzer = DeepSeekSentiment()
+
         for art in new_articles:
             title = (art.get("title") or "")[:500]
             summary = (art.get("summary") or "")[:2000]
             title_hash = hashlib.md5(title.lower().encode()).hexdigest()
             source_type = art.get("source_type", "niche")
+
+            # 1. Zero-cost noise & clickbait check
+            is_junk, junk_reason = is_noise_or_junk(title, summary)
+            if is_junk:
+                link = art.get("link") or f"niche://{source_type}/{title_hash}"
+                url_hash = hashlib.md5(link.encode()).hexdigest()
+                scored_items.append({
+                    "source_name": f"niche-{source_type}",
+                    "feed_url": "", "title": title, "link": link,
+                    "published_raw": "", "published_ts": datetime.now(timezone.utc),
+                    "summary": summary, "url_hash": url_hash, "title_hash": title_hash,
+                    "scoring_status": "noise", "assets": []
+                })
+                continue
+
+            # 2. Zero-cost deduplication check
+            is_dup, _, dup_reason = deduper.is_duplicate(title)
+            if is_dup:
+                link = art.get("link") or f"niche://{source_type}/{title_hash}"
+                url_hash = hashlib.md5(link.encode()).hexdigest()
+                scored_items.append({
+                    "source_name": f"niche-{source_type}",
+                    "feed_url": "", "title": title, "link": link,
+                    "published_raw": "", "published_ts": datetime.now(timezone.utc),
+                    "summary": summary, "url_hash": url_hash, "title_hash": title_hash,
+                    "scoring_status": "duplicate", "assets": []
+                })
+                continue
+
+            deduper.register(title, 0)
 
             # Generate unique link and url_hash to avoid constraint violations
             link = art.get("link") or f"niche://{source_type}/{title_hash}"
@@ -317,11 +348,11 @@ def run_niche_scan():
             else:
                 pub_ts = datetime.now(timezone.utc)
 
-            # Score immediately via DeepSeek in-memory (network call)
+            # Score only verified, clean, non-duplicate articles
             assets = []
             scoring_status = 'pending'
             try:
-                result = analyzer.score_article_with_assets(title, summary, force_relevance=True)
+                result = analyzer.score_article_with_assets(title, summary, force_relevance=False)
                 assets = result.get("assets", [])
                 scoring_status = 'scored' if assets else 'empty'
             except Exception as e:
@@ -404,20 +435,22 @@ def run_niche_scan():
 
     # Compute and persist pair signals
     try:
-        opportunities = get_hybrid_signals()
-        print(f"[BG_WORKER] Niche scan complete: {inserted} articles inserted, {len(opportunities)} pair signals generated.")
+        opportunities = StatArbAPU.run_master_scan()
+        print(f"[BG_WORKER] Stat-Arb APU scan complete: {inserted} articles inserted, {len(opportunities)} pair signals generated.")
     except Exception as e:
-        print(f"[BG_WORKER] Error computing niche pair signals: {e}")
+        print(f"[BG_WORKER] Error computing Stat-Arb APU pair signals: {e}")
 
 async def start_price_loop():
-    """5-minute async loop for fetching 1-minute prices."""
+    """5-minute async loop for fetching 1-minute prices (throttled to 20m off-market)."""
     await asyncio.sleep(5)  # Stagger startup
     while True:
         try:
             await asyncio.to_thread(run_price_fetch_cycle)
+            await asyncio.to_thread(trim_process_memory)
         except Exception as e:
             print(f"[BG_WORKER] Error in price loop: {e}")
-        await asyncio.sleep(300)  # every 5 minutes
+        sleep_sec = 300 if is_us_market_active() else 1200
+        await asyncio.sleep(sleep_sec)
 
 
 async def start_scrape_loop():
@@ -426,6 +459,7 @@ async def start_scrape_loop():
     while True:
         try:
             await asyncio.to_thread(run_scrape_cycle)
+            await asyncio.to_thread(trim_process_memory)
         except Exception as e:
             print(f"[BG_WORKER] Error in scrape loop: {e}")
         await asyncio.sleep(300)  # every 5 minutes
@@ -437,22 +471,25 @@ async def start_sentiment_loop():
     while True:
         try:
             await asyncio.to_thread(run_sentiment_cycle)
+            await asyncio.to_thread(trim_process_memory)
         except Exception as e:
             print(f"[BG_WORKER] Error in sentiment loop: {e}")
         await asyncio.sleep(300)  # accelerated to 5 minutes
 
 
 async def start_signal_fusion_loop():
-    """10-minute async loop scanning price and sentiment exclusively through the War Rig Transmission Engine."""
+    """10-minute async loop scanning price and sentiment exclusively through the War Rig Transmission Engine (throttled to 30m off-market)."""
     await asyncio.sleep(45)  # Stagger startup
     from ..analytics.signal_fusion import scan_all_tickers
     while True:
         try:
             print("[BG_WORKER] Starting War Rig Single-Shaft Transmission Scan...")
             await asyncio.to_thread(scan_all_tickers)
+            await asyncio.to_thread(trim_process_memory)
         except Exception as e:
             print(f"[BG_WORKER] Error in War Rig Transmission loop: {e}")
-        await asyncio.sleep(600)  # every 10 minutes
+        sleep_sec = 600 if is_us_market_active() else 1800
+        await asyncio.sleep(sleep_sec)
 
 
 async def start_fundamentals_loop():
@@ -506,14 +543,12 @@ async def start_performance_and_learning_loop():
     1-hour async loop that:
     1. Evaluates mature trade signals (every 1 hour).
     2. Runs nightly supply chain co-occurrence mining (every 24 hours).
-    3. Re-runs ticker-specific parameter tuning (every 24 hours).
-    4. Runs weekly chain validation self-learning loop (every 7 days).
+    3. Runs weekly chain validation self-learning loop (every 7 days).
     """
     await asyncio.sleep(90)  # Stagger startup
     from ..analytics.performance_evaluator import evaluate_past_signals
     from ..sentiment.supply_chain_mapper import mine_cooccurrence_chains
     
-    last_tuning_time = datetime.now()
     last_mining_time = datetime.now()
     
     while True:
@@ -527,12 +562,6 @@ async def start_performance_and_learning_loop():
                 print("[BG_WORKER] Running nightly supply chain co-occurrence mining...")
                 await asyncio.to_thread(mine_cooccurrence_chains, 3)
                 last_mining_time = datetime.now()
-            
-            # Run re-tuning if 24 hours have passed
-            if datetime.now() - last_tuning_time >= timedelta(hours=24):
-                print("[BG_WORKER] Running daily Trade Alerts Ticker Parameter Tuning...")
-                await asyncio.to_thread(run_ticker_tuning_cycle)
-                last_tuning_time = datetime.now()
                 
         except Exception as e:
             print(f"[BG_WORKER] Error in performance/learning loop: {e}")
@@ -541,16 +570,18 @@ async def start_performance_and_learning_loop():
 
 
 async def start_paper_trading_loop():
-    """3-minute async loop for alert-based auto paper trading and position exit monitoring."""
+    """3-minute async loop for alert-based auto paper trading and position exit monitoring (throttled to 10m off-market)."""
     await asyncio.sleep(20)  # Stagger startup
     from ..analytics.paper_trader import auto_execute_pending_alerts, process_paper_position_exits
     while True:
         try:
             await asyncio.to_thread(auto_execute_pending_alerts)
             await asyncio.to_thread(process_paper_position_exits)
+            await asyncio.to_thread(trim_process_memory)
         except Exception as e:
             print(f"[BG_WORKER] Error in paper trading loop: {e}")
-        await asyncio.sleep(180)  # every 3 minutes
+        sleep_sec = 180 if is_us_market_active() else 600
+        await asyncio.sleep(sleep_sec)
 
 
 # ponytail: kept for backward compat
@@ -566,22 +597,54 @@ async def start_news_loop():
 
 async def start_sitrep_and_macro_monitor_loop():
     """
-    30-minute async loop that:
+    Async surveillance loop that:
     1. Synthesizes and updates active multi-day market narratives.
-    2. Compiles automated Situation Reports (Sit Reps) and checks yield milestones (30Y Treasury yield lows/highs).
+    2. Evaluates real-time macro shocks (VIX surges, 10Y/30Y yield spikes, regime flips).
+    3. Schedules 09:00 ET Pre-Market Briefing and 16:30 ET Post-Market Wrap.
+    4. Compiles automated 12-hour periodic Sit Reps.
     """
-    await asyncio.sleep(30)  # Startup delay
+    await asyncio.sleep(20)  # Startup delay
+    from zoneinfo import ZoneInfo
     from ..analytics.narrative_tracker import update_active_narratives
-    from ..services.sitrep_service import compile_sitrep
+    from ..services.sitrep_service import compile_sitrep, evaluate_macro_shocks, compile_session_briefing
 
     last_sitrep_time = datetime.now() - timedelta(hours=12) # force immediate compile on boot
+    last_premarket_date = None
+    last_postmarket_date = None
 
     while True:
         try:
+            # 1. Real-time Macro Shock Evaluation (every 10m)
+            print("[BG_WORKER] Macro Shock Sentinel: evaluating volatility & yield benchmarks...")
+            shocks = await asyncio.to_thread(evaluate_macro_shocks)
+            if shocks:
+                print(f"[BG_WORKER] Macro Shock Sentinel triggered {len(shocks)} alerts: {[s['type'] for s in shocks]}")
+
+            # 2. Market Session Cadence Check (America/New_York)
+            now_et = datetime.now(ZoneInfo('America/New_York'))
+            current_date_et = now_et.date()
+            time_et_str = now_et.strftime('%H:%M')
+            weekday = now_et.weekday()  # Mon=0, Fri=4
+
+            # Pre-Market Briefing: 09:00 to 09:30 ET on weekdays
+            if weekday < 5 and '09:00' <= time_et_str <= '09:30' and last_premarket_date != current_date_et:
+                print("[BG_WORKER] Compiling 09:00 ET Pre-Market Battle Briefing...")
+                res = await asyncio.to_thread(compile_session_briefing, "PRE_MARKET")
+                last_premarket_date = current_date_et
+                print(f"[BG_WORKER] Pre-Market Briefing dispatched: {res.get('success')}")
+
+            # Post-Market Wrap: 16:30 to 17:00 ET on weekdays
+            if weekday < 5 and '16:30' <= time_et_str <= '17:00' and last_postmarket_date != current_date_et:
+                print("[BG_WORKER] Compiling 16:30 ET Post-Market Debrief...")
+                res = await asyncio.to_thread(compile_session_briefing, "POST_MARKET")
+                last_postmarket_date = current_date_et
+                print(f"[BG_WORKER] Post-Market Debrief dispatched: {res.get('success')}")
+
+            # 3. Multi-day Narrative Synthesis
             print("[BG_WORKER] Synthesizing multi-day active market narratives...")
             await asyncio.to_thread(update_active_narratives)
 
-            # Compile Sit Rep every 12 hours (or on startup)
+            # 4. Periodic Sit Rep (every 12 hours)
             if datetime.now() - last_sitrep_time >= timedelta(hours=12):
                 print("[BG_WORKER] Compiling automated MIMIR Situation Report (Sit Rep)...")
                 await asyncio.to_thread(compile_sitrep, "PERIODIC")
@@ -589,12 +652,13 @@ async def start_sitrep_and_macro_monitor_loop():
         except Exception as e:
             print(f"[BG_WORKER] Error in Sit Rep & Macro monitor loop: {e}")
 
-        await asyncio.sleep(1800)  # every 30 minutes
+        await asyncio.sleep(600)  # Check every 10 minutes
 
 
 def start_background_worker():
-    """Initializes and runs the background loops in daemon threads."""
-    print("[BG_WORKER] Initializing MIMIR background workers...")
+    """Initializes and runs the background loops in daemon threads at BELOW_NORMAL CPU priority."""
+    apply_low_process_priority()
+    print("[BG_WORKER] Initializing MIMIR background workers (Gaming/Eco Mode Active: Below-Normal CPU Priority)...")
 
     def _thread_target(loop_func):
         loop = asyncio.new_event_loop()

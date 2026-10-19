@@ -42,6 +42,10 @@ class PaperConfigUpdate(BaseModel):
     mt5_magic: Optional[int] = None
     mt5_enabled: Optional[bool] = None
     ignore_market_hours: Optional[bool] = None
+    max_open_positions: Optional[int] = None
+    max_positions_per_sector: Optional[int] = None
+    max_sector_exposure_pct: Optional[float] = None
+    min_conviction_score: Optional[float] = None
 
 class ClosePositionPayload(BaseModel):
     ticker: Optional[str] = None

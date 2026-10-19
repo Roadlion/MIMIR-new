@@ -3,8 +3,8 @@
 MIMIR Discord Notifier
 ======================
 Sends rich embed trade alert cards to a Discord webhook whenever a new
-signal is generated — from either the Catalyst Engine or the Signal
-Fusion (XGBoost) pipeline.
+signal is generated — from either the Catalyst Engine or the War Rig
+Convergence pipeline.
 
 Setup:
   1. Create a Discord server (or use an existing one).
@@ -38,6 +38,29 @@ _CATALYST_LABELS = {
     "MACRO_CATALYST":         "🌐 Macro Catalyst",
     "SENTIMENT_FUSION":       "🤖 Sentiment Fusion",
 }
+
+
+def get_webhook_url(channel_type: str = "general") -> str:
+    """
+    Resolves the appropriate Discord webhook URL based on channel_type:
+    - 'trades': settings.discord_webhook_trades or settings.discord_webhook_url
+    - 'macro': settings.discord_webhook_macro or settings.discord_webhook_url
+    - 'breaking': settings.discord_webhook_breaking or settings.discord_webhook_url
+    - 'general': settings.discord_webhook_url
+    Always strips whitespace to avoid invalid URL errors.
+    """
+    ch = (channel_type or "general").lower().strip()
+    url = ""
+    if ch in ("trades", "trade"):
+        url = getattr(settings, "discord_webhook_trades", "")
+    elif ch in ("macro", "sitrep"):
+        url = getattr(settings, "discord_webhook_macro", "")
+    elif ch in ("breaking", "intel"):
+        url = getattr(settings, "discord_webhook_breaking", "")
+
+    if not url:
+        url = getattr(settings, "discord_webhook_url", "")
+    return (url or "").strip()
 
 
 def _sentiment_bar(score: float) -> str:
@@ -88,9 +111,9 @@ def send_trade_alert(
     Posts a rich Discord embed for a new MIMIR trade alert.
     Displays detailed breakdown of points and elements across all 3 War Rig cylinders.
     Returns True if the message was sent successfully, False otherwise.
-    Silently skips if DISCORD_WEBHOOK_URL is not configured.
+    Silently skips if webhook is not configured.
     """
-    webhook_url = getattr(settings, "discord_webhook_url", "")
+    webhook_url = get_webhook_url("trades")
     if not webhook_url:
         return False  # Not configured — skip silently
 
@@ -352,7 +375,7 @@ def send_sitrep_notification(sitrep_data: dict) -> bool:
     Summarizes macro posture, bond yields (e.g. 30Y Treasury yield lows),
     multi-day market narratives, and breaking global events.
     """
-    webhook_url = getattr(settings, "discord_webhook_url", "")
+    webhook_url = get_webhook_url("macro")
     if not webhook_url:
         return False
 
@@ -465,7 +488,7 @@ def send_global_breaking_alert(
     Posts an instant Breaking Global Alert embed for major market-moving events
     (wars, emergency press releases, central bank decisions, macro yield shocks).
     """
-    webhook_url = getattr(settings, "discord_webhook_url", "")
+    webhook_url = get_webhook_url("breaking")
     if not webhook_url:
         return False
 
@@ -576,7 +599,7 @@ def send_stat_arb_alert(
     """
     from datetime import datetime, timezone, timedelta
 
-    webhook_url = getattr(settings, "discord_webhook_url", "")
+    webhook_url = get_webhook_url("trades")
     if not webhook_url:
         return False
 
@@ -704,5 +727,338 @@ def send_stat_arb_alert(
     except Exception as e:
         logger.error(f"[DISCORD] Failed to send Stat-Arb alert for {pair_key}: {e}")
         return False
+
+
+def send_ratchet_alert(
+    ticker: str,
+    ticket: int,
+    tier_label: str,
+    locked_pct: float,
+    old_sl: float,
+    new_sl: float,
+    entry_price: float,
+    current_price: float,
+    gain_pct: float,
+) -> bool:
+    """
+    Posts a rich Discord embed when a profit ratchet is triggered,
+    notifying that profit has been locked in by raising the stop loss.
+    """
+    webhook_url = get_webhook_url("trades")
+    if not webhook_url:
+        return False
+
+    title = f"🔒 **PROFIT RATCHET ACTIVATED — `${ticker.upper()}`**"
+    color = 0x00C896  # Emerald Green
+
+    fields = [
+        {
+            "name": "🪜 Ratchet Tier",
+            "value": f"**{tier_label}** *(Locked `+{locked_pct}%` minimum)*",
+            "inline": True,
+        },
+        {
+            "name": "📈 Current Gain",
+            "value": f"`{gain_pct:+.2f}%`",
+            "inline": True,
+        },
+        {
+            "name": "🎫 Position Ticket",
+            "value": f"`#{ticket}`",
+            "inline": True,
+        },
+        {
+            "name": "💵 Entry Price",
+            "value": f"`${entry_price:,.2f}`",
+            "inline": True,
+        },
+        {
+            "name": "💲 Current Price",
+            "value": f"`${current_price:,.2f}`",
+            "inline": True,
+        },
+        {
+            "name": "🛑 New Protected SL",
+            "value": f"`${new_sl:,.2f}` *(was `${old_sl:,.2f}`)*",
+            "inline": True,
+        },
+    ]
+
+    embed = {
+        "title": title,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "MIMIR — Active Risk Management & Profit Ratchet Ladder"},
+    }
+
+    payload = {
+        "content": f"🔒 **[PROFIT LOCKED]** Ratcheted SL for **${ticker.upper()}** to `${new_sl:,.2f}` (`+{locked_pct}%` guaranteed profit locked).",
+        "embeds": [embed],
+        "username": "MIMIR Risk Sentinel",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Ratchet alert for {ticker}: {e}")
+        return False
+
+
+def send_trade_closed_alert(
+    ticker: str,
+    ticket: Optional[int],
+    exit_reason: str,
+    entry_price: float,
+    exit_price: float,
+    volume: float,
+    realized_pnl: Optional[float] = None,
+    notes: Optional[str] = None
+) -> bool:
+    """
+    Posts a rich Discord embed when a trade is closed in MT5 (e.g. Trailing Stop, Ratchet Hit, Hold Days Expired).
+    """
+    webhook_url = get_webhook_url("trades")
+    if not webhook_url:
+        return False
+
+    is_profit = (realized_pnl is not None and realized_pnl > 0) or (exit_price > entry_price)
+    color = 0x00C896 if is_profit else 0xFF4C5B
+    emoji = "🛡️" if is_profit else "🛑"
+    title = f"{emoji} **POSITION CLOSED — `${ticker.upper()}`**"
+
+    pnl_pct = ((exit_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+
+    fields = [
+        {
+            "name": "🚪 Exit Reason",
+            "value": f"`{exit_reason}`",
+            "inline": True,
+        },
+        {
+            "name": "📊 Return %",
+            "value": f"`{pnl_pct:+.2f}%`",
+            "inline": True,
+        },
+        {
+            "name": "💰 Realized P&L",
+            "value": f"`${realized_pnl:+,.2f}`" if realized_pnl is not None else "N/A",
+            "inline": True,
+        },
+        {
+            "name": "💵 Entry Price",
+            "value": f"`${entry_price:,.2f}`",
+            "inline": True,
+        },
+        {
+            "name": "🏁 Exit Price",
+            "value": f"`${exit_price:,.2f}`",
+            "inline": True,
+        },
+        {
+            "name": "📦 Volume / Ticket",
+            "value": f"`{volume:g} shares` | `#{ticket or 'N/A'}`",
+            "inline": True,
+        },
+    ]
+
+    if notes:
+        fields.append({
+            "name": "📝 Notes",
+            "value": notes[:400],
+            "inline": False,
+        })
+
+    embed = {
+        "title": title,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "MIMIR — Portfolio Execution & Deal Settlement"},
+    }
+
+    payload = {
+        "content": f"{emoji} Position in **${ticker.upper()}** closed via `{exit_reason}` (`{pnl_pct:+.2f}%`).",
+        "embeds": [embed],
+        "username": "MIMIR Trade Execution",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Trade Closed alert for {ticker}: {e}")
+        return False
+
+
+def send_macro_shock_alert(
+    shock_type: str,           # e.g. "VIX_SURGE", "YIELD_SPIKE", "REGIME_FLIP", "FED_STANCE_SHIFT"
+    title: str,
+    headline: str,
+    metrics: Dict[str, Any],
+    severity: str = "HIGH"     # "CRITICAL", "HIGH", "MODERATE"
+) -> bool:
+    """
+    Posts an event-driven macro shock alert (VIX surge, bond yield breakout, SPY 50-SMA break, Fed stance flip).
+    """
+    webhook_url = get_webhook_url("macro")
+    if not webhook_url:
+        return False
+
+    color = 0xFF1744 if severity == "CRITICAL" else 0xFF9100 if severity == "HIGH" else 0x2979FF
+
+    fields = [
+        {
+            "name": "🚨 Shock Type",
+            "value": f"`{shock_type}` (Severity: **{severity}**)",
+            "inline": True
+        },
+        {
+            "name": "📋 Headline",
+            "value": f"**{headline}**",
+            "inline": False
+        }
+    ]
+
+    metric_lines = []
+    for k, v in metrics.items():
+        metric_lines.append(f"• **{k}**: `{v}`")
+    if metric_lines:
+        fields.append({
+            "name": "📊 Macro Snapshot",
+            "value": "\n".join(metric_lines),
+            "inline": False
+        })
+
+    embed = {
+        "title": f"🌐 **MACRO SHOCK SENTINEL: {title}**",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "MIMIR Macro Surveillance Sentinel"},
+    }
+
+    payload = {
+        "content": "🚨 @everyone **MACRO SHOCK DETECTED**" if severity == "CRITICAL" else "⚠️ **MACRO REGIME ALERT**",
+        "embeds": [embed],
+        "username": "MIMIR Macro Sentinel",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Macro Shock alert: {e}")
+        return False
+
+
+def send_market_session_briefing(
+    session_type: str,            # "PRE_MARKET" or "POST_MARKET"
+    title: str,
+    headline: str,
+    macro_snapshot: Dict[str, Any],
+    focus_tickers: Optional[List[Dict[str, Any]]] = None,
+    stat_arb_pairs: Optional[List[Dict[str, Any]]] = None,
+    portfolio_stats: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Posts a structured Pre-Market (09:00 ET) or Post-Market (16:30 ET) briefing to Discord.
+    """
+    webhook_url = get_webhook_url("macro")
+    if not webhook_url:
+        return False
+
+    is_pre = (session_type.upper() == "PRE_MARKET")
+    color = 0x1E88E5 if is_pre else 0x43A047
+    emoji = "🌅" if is_pre else "🌆"
+    header = f"{emoji} **MIMIR {'PRE-MARKET BRIEFING' if is_pre else 'POST-MARKET DEBRIEF'}**"
+
+    fields = [
+        {
+            "name": "📋 Session Summary",
+            "value": f"*{headline}*",
+            "inline": False
+        }
+    ]
+
+    # Benchmark snapshot table
+    if macro_snapshot:
+        snap_lines = []
+        for sym, d in macro_snapshot.items():
+            if sym in ("SPY", "QQQ", "^TYX", "^TNX", "^VIX", "GC=F", "CL=F", "DX-Y.NYB", "BTC-USD"):
+                val = d.get("current", 0.0)
+                chg1d = d.get("change_1d_pct", 0.0)
+                tag = " 🚨" if d.get("is_at_low") or d.get("is_at_high") else ""
+                snap_lines.append(f"• **{d.get('name', sym)}** (`{sym}`): `{val:,.2f}` (`{chg1d:+.2f}%`){tag}")
+        if snap_lines:
+            fields.append({
+                "name": "📊 Benchmark & Yield Snapshot",
+                "value": "\n".join(snap_lines[:6]),
+                "inline": False
+            })
+
+    # Portfolio stats (for post-market or pre-market active capital)
+    if portfolio_stats:
+        p_lines = [
+            f"• **Total Equity**: `${portfolio_stats.get('total_equity', 100000.0):,.2f}`",
+            f"• **Active Positions**: `{portfolio_stats.get('active_positions', 0)}`",
+            f"• **Realized P&L Today**: `${portfolio_stats.get('realized_pnl_today', 0.0):+,.2f}`",
+        ]
+        fields.append({
+            "name": "💼 MT5 Portfolio Posture",
+            "value": "\n".join(p_lines),
+            "inline": False
+        })
+
+    # War Rig candidates / Focus list
+    if focus_tickers:
+        f_lines = []
+        for t in focus_tickers[:4]:
+            tick = t.get("ticker", "")
+            sent = t.get("sentiment_score", 0.0)
+            conv = t.get("conviction_score", 0.0)
+            rsn = t.get("headline", t.get("reason", "Catalyst alert"))
+            f_lines.append(f"• **${tick}** *(Conv: `{conv:.2f}`, Sent: `{sent:+.2f}`)*: {rsn[:60]}...")
+        if f_lines:
+            fields.append({
+                "name": "🎯 War Rig Focus Radar",
+                "value": "\n".join(f_lines),
+                "inline": False
+            })
+
+    # Stat-Arb Stretched Pairs
+    if stat_arb_pairs:
+        p_lines = []
+        for p in stat_arb_pairs[:3]:
+            t1 = p.get("ticker1", "")
+            t2 = p.get("ticker2", "")
+            z = p.get("z_score", 0.0)
+            sig = p.get("signal", "")
+            p_lines.append(f"• **{t1}/{t2}**: `{sig}` (Z: `{z:+.2f}`)")
+        if p_lines:
+            fields.append({
+                "name": "⚖️ Stat-Arb Stretched Pairs",
+                "value": "\n".join(p_lines),
+                "inline": False
+            })
+
+    embed = {
+        "title": title or header,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"MIMIR Automated Intelligence — {session_type.upper()}"},
+    }
+
+    payload = {
+        "content": f"{emoji} **MIMIR {'PRE-MARKET BATTLE BRIEFING' if is_pre else 'POST-MARKET WRAP'}** is now live.",
+        "embeds": [embed],
+        "username": "MIMIR Market Dispatch",
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send {session_type} briefing: {e}")
+        return False
+
 
 

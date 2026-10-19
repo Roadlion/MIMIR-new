@@ -31,7 +31,6 @@ MIMIR_CONSOLE_TITLES = [
 MIMIR_SCRIPTS = [
     "mt5_price_fetcher.py",
     "live_price_daemon.py",
-    "tune_ticker_parameters.py",
     "run_full_pipeline",
     "push_to_db.py",
     "scrape_social.py",
@@ -352,3 +351,35 @@ def schedule_server_exit(delay: float = 1.0):
 
     t = threading.Thread(target=_do_exit, daemon=True)
     t.start()
+
+
+def apply_low_process_priority(pid: Optional[int] = None):
+    """
+    Sets the target process (or current process) to BELOW_NORMAL_PRIORITY_CLASS on Windows.
+    This ensures that games running in the foreground receive 100% of CPU time,
+    preventing micro-stutters and 1% low frame drops.
+    """
+    try:
+        proc = psutil.Process(pid or os.getpid())
+        if sys.platform == "win32":
+            proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            logger.info(f"[PROCESS_MGR] Process {proc.pid} priority set to BELOW_NORMAL (Gaming Mode Optimized).")
+        else:
+            proc.nice(10)
+    except Exception as e:
+        logger.warning(f"[PROCESS_MGR] Could not set below-normal process priority: {e}")
+
+
+def trim_process_memory():
+    """
+    Trims the active working set of the current process back to the Windows OS kernel.
+    Calls garbage collection and Windows EmptyWorkingSet API to immediately free unused RAM.
+    """
+    import gc
+    gc.collect()
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+        except Exception:
+            pass

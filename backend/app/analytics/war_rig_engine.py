@@ -248,9 +248,16 @@ class WarRigEngine:
                         details["sector_thesis"] += " (Catalyst Overdrive: Pre-Earnings Alpha Floor 15pts Applied)"
                     c_cur.close()
                 except Exception:
-                    pass
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
 
         except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
             logger.warning(f"[WAR_RIG] Cylinder 1 error for {ticker}: {e}")
             score = 10.0
             details["sector_thesis"] = "Sector data unavailable (defaulted to neutral 10pts)."
@@ -558,6 +565,10 @@ class WarRigEngine:
             return total_cylinder_2, details
 
         except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
             logger.error(f"[WAR_RIG] Cylinder 2 error for {ticker}: {e}")
             return 0.0, details
         finally:
@@ -915,6 +926,10 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
                 if r[0]:
                     candidate_tickers.add(r[0].strip().upper())
         except Exception as l_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             logger.warning(f"[WAR_RIG] Liquid universe fetch warning: {l_err}")
 
         # 2. Add dynamically tracked portfolio and alert tickers
@@ -928,7 +943,10 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
                 if r[0]:
                     candidate_tickers.add(r[0].strip().upper())
         except Exception:
-            pass
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
         # 3. Add upcoming earnings tickers in the next 14 days
         cur.execute(f"""
@@ -954,6 +972,30 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
         for r in cur.fetchall():
             if r[0]:
                 candidate_tickers.add(r[0].strip().upper())
+
+        # 5. Dynamic Catalyst Velocity Inflow: High news velocity in the last 2 hours (>= 3 articles, avg sentiment >= 0.35)
+        try:
+            cur.execute(f"""
+                SELECT si.ticker, COUNT(DISTINCT si.article_id) as article_count, AVG(si.sentiment_score) as avg_sent
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                WHERE a.published_ts >= NOW() - INTERVAL '2 hours'
+                  AND si.ticker IS NOT NULL
+                GROUP BY si.ticker
+                HAVING COUNT(DISTINCT si.article_id) >= 3 AND AVG(si.sentiment_score) >= 0.35
+            """)
+            velocity_rows = cur.fetchall()
+            for r in velocity_rows:
+                if r[0]:
+                    t_cand = r[0].strip().upper()
+                    candidate_tickers.add(t_cand)
+                    logger.info(f"[WAR_RIG] Dynamic Velocity Inflow: Injected {t_cand} ({r[1]} articles in 2h, avg sentiment {float(r[2]):.2f})")
+        except Exception as v_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"[WAR_RIG] Catalyst velocity candidate query error: {v_err}")
 
         logger.info(f"[WAR_RIG] Scanning universe of {len(candidate_tickers)} candidates through the unified crankshaft...")
 
@@ -1043,3 +1085,8 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
         cur.close()
         if close_conn:
             conn.close()
+        try:
+            from ..services.process_manager import trim_process_memory
+            trim_process_memory()
+        except Exception:
+            pass

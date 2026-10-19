@@ -20,15 +20,12 @@ import psycopg2.extensions
 import select
 from backend.app.database import get_db_connection
 from backend.app.config import get_settings
-from backend.app.services.process_manager import record_pid
-try:
-    from backend.app.analytics.stat_arb_apu import StatArbAPU
-except ImportError:
-    StatArbAPU = None
-from backend.app.analytics.guerilla_hybrid import get_hybrid_signals
+from backend.app.services.process_manager import record_pid, apply_low_process_priority, trim_process_memory
+from backend.app.analytics.stat_arb_apu import StatArbAPU
 
-# Record PID for clean shutdown management
+# Record PID and set below-normal CPU priority for gaming friendliness
 record_pid("live_daemon", os.getpid())
+apply_low_process_priority()
 
 _running = True
 
@@ -78,18 +75,10 @@ def process_new_ticks():
         print(f"[LIVE DAEMON] Updated sliding window cache for {len(updated_tickers)} tickers.")
         print(f"[LIVE DAEMON] Triggering event-driven analytics pipelines...")
         
-        # 1. Trigger Event-Driven Statistical Arbitrage APU (Guerilla Quant)
-        try:
-            if StatArbAPU:
-                signals = StatArbAPU.run_master_scan()
-                if signals:
-                    print(f"[LIVE DAEMON] Stat-Arb APU Evaluated {len(signals)} Cointegrated Pairs.")
-            else:
-                signals = get_hybrid_signals()
-                if signals:
-                    print(f"[LIVE DAEMON] Evaluated {len(signals)} Stat-Arb pairs.")
-        except Exception as e:
-            print(f"[LIVE DAEMON] Error triggering Stat-Arb APU: {e}")
+        # 1. Event-Driven Statistical Arbitrage APU:
+        # Scheduled on its proper M15/H1 cadence in background_worker.py (every 10m).
+        # Bypassed here on the 1-minute tick to eliminate recurring CPU matrix spikes during gaming.
+        pass
             
         # 2. Event-Driven Technical Alerts: DEPRECATED
         # Standalone 1-min technical breakouts have been eliminated to prevent knife-catching.
@@ -110,12 +99,10 @@ def process_new_ticks():
         except Exception as e:
             print(f"[LIVE DAEMON] Error triggering Portfolio Stop-Losses: {e}")
 
-        # 5. Trigger User Custom Strategies (Dual Hedge, Mean Reversion, Bollinger Bands)
-        try:
-            from backend.app.analytics.user_strategies import run_user_strategies
-            run_user_strategies(price_cache)
-        except Exception as e:
-            print(f"[LIVE DAEMON] Error triggering User Strategies: {e}")
+        # 5. User Custom Strategies (DEACTIVATED: prevent unvetted rogue market execution and signal spam)
+        # Standalone technical loops (Dual Hedge, Mean Reversion, Bollinger Bands) are disabled.
+        # Only the unified War Rig Transmission Engine is authorized for trading.
+        pass
         
     finally:
         conn.close()

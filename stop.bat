@@ -20,6 +20,7 @@ if exist ".venv\Scripts\python.exe" (
 
 echo [3/3] Purging remaining daemon console windows...
 taskkill /FI "IMAGENAME eq cmd.exe" /FI "WINDOWTITLE eq MIMIR Server Launcher*" /F >nul 2>&1
+taskkill /FI "IMAGENAME eq cmd.exe" /FI "WINDOWTITLE eq MIMIR Gamer Mode*" /F >nul 2>&1
 taskkill /FI "IMAGENAME eq cmd.exe" /FI "WINDOWTITLE eq MIMIR Cloudflare HTTPS Tunnel*" /F >nul 2>&1
 taskkill /FI "IMAGENAME eq cmd.exe" /FI "WINDOWTITLE eq MIMIR - MT5 Price Fetcher*" /F >nul 2>&1
 taskkill /FI "IMAGENAME eq cmd.exe" /FI "WINDOWTITLE eq MIMIR - Live Price Daemon*" /F >nul 2>&1

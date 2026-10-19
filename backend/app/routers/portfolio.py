@@ -2204,8 +2204,8 @@ def evaluate_tick_stoploss(price_cache):
                     
                     cur.execute(f"""
                         INSERT INTO {settings.mimir_schema}.mimir_trade_signals
-                        (ticker, signal_type, trigger_price, reason, status, created_at)
-                        VALUES (%s, 'SELL', %s, %s, 'PENDING', NOW())
+                        (ticker, signal_type, catalyst_type, trigger_price, reason, status, created_at)
+                        VALUES (%s, 'SELL', 'TRAILING_STOP', %s, %s, 'PENDING', NOW())
                     """, (ticker, current_price, reason))
                     alert_count += 1
                     

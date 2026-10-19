@@ -41,11 +41,16 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
 
     # Discord Notifications
-    discord_webhook_url: str = ""           # Set to your Discord channel webhook URL
+    discord_webhook_url: str = ""           # Universal / fallback Discord webhook URL
+    discord_webhook_trades: str = ""        # Dedicated webhook for #mimir-trades (entries, ratchets, exits)
+    discord_webhook_macro: str = ""         # Dedicated webhook for #mimir-macro (briefings, yield/vix shocks)
+    discord_webhook_breaking: str = ""      # Dedicated webhook for #mimir-intel (breaking geopolitical & macro events)
     discord_mention_role_id: str = ""       # Optional: role ID to @mention on Tier 1 alerts
     
     # Mode - map from MIMIR_MODE env var
     mode: str = Field(default="standalone", alias="MIMIR_MODE")
+    mimir_disable_gpu: bool = Field(default=True, alias="MIMIR_DISABLE_GPU")
+    mimir_gamer_mode: bool = Field(default=False, alias="MIMIR_GAMER_MODE")
     
     class Config:
         env_file = ".env"

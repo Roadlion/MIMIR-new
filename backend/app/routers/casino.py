@@ -19,6 +19,7 @@ from ..analytics.strategy_builder import (
 )
 from ..analytics.casino_recommender import (
     generate_recommendations, scan_universe, StrategyRecommendation,
+    generate_options_order_payload
 )
 
 router = APIRouter()
@@ -399,7 +400,8 @@ def recommend_strategies(ticker: str, top_k: int = Query(5, ge=1, le=20)):
                     "legs": legs_list,
                     "max_profit": strat.max_profit if strat.max_profit != float('inf') else None,
                     "max_loss": strat.max_loss if strat.max_loss != float('inf') else None
-                }
+                },
+                "execution_payload": getattr(rec, "execution_payload", None) or generate_options_order_payload(strat, ticker, strat.underlying_price)
             })
             
         conn.commit()

@@ -22,7 +22,9 @@ Rate-sensitive sectors blocked on Fed hawkish regime:
     REAL_ESTATE, UTILITIES, FINANCIAL_SERVICES
 """
 
+import math
 import logging
+from datetime import datetime, timezone
 from typing import Optional, List
 from ..database import get_db_connection
 from ..config import get_settings
@@ -126,12 +128,31 @@ def upsert_policy_signal(
             conn.close()
 
 
-def get_latest_fed_signal(conn=None) -> Optional[str]:
+def get_smoothed_central_bank_signal(
+    institution: str = "Federal Reserve",
+    lookback_hours: int = 48,
+    decay_rate_per_hour: float = 0.05,
+    threshold: float = 0.35,
+    conn=None
+) -> tuple[str, float]:
     """
-    Returns the most recent Federal Reserve policy_signal string,
-    or None if no data exists.
-    e.g. 'hawkish', 'dovish', 'neutral'
+    Computes an Exponential Moving Average (EMA) smoothed policy stance over the
+    specified lookback window (default 48h) across mimir_macro_signals.
+    
+    Decay weight: w_i = exp(-decay_rate_per_hour * age_hours)
+    Polarity mapping:
+        - 'dovish' / 'bullish' -> +1.0
+        - 'hawkish' / 'bearish' -> -1.0
+        - 'neutral' -> 0.0
+    
+    Regime shift bounds:
+        - Smoothed score >= +threshold -> 'dovish'
+        - Smoothed score <= -threshold -> 'hawkish'
+        - Otherwise -> 'neutral'
+        
+    Returns (stance: str, smoothed_score: float).
     """
+    canonical = _CANONICAL_BANK.get(institution.strip().lower(), institution.strip())
     close_conn = False
     if conn is None:
         conn = get_db_connection()
@@ -141,26 +162,93 @@ def get_latest_fed_signal(conn=None) -> Optional[str]:
     cur = conn.cursor()
     try:
         cur.execute(f"""
-            SELECT policy_signal
+            SELECT policy_signal, sentiment_score, recorded_at
             FROM {settings.mimir_schema}.mimir_macro_signals
-            WHERE institution = 'Federal Reserve'
+            WHERE institution = %s
+              AND recorded_at >= NOW() - INTERVAL '{int(lookback_hours)} hours'
             ORDER BY recorded_at DESC
-            LIMIT 1
-        """)
-        row = cur.fetchone()
-        return row[0] if row else None
+        """, (canonical,))
+        rows = cur.fetchall()
+
+        if not rows:
+            cur.execute(f"""
+                SELECT policy_signal, sentiment_score, recorded_at
+                FROM {settings.mimir_schema}.mimir_macro_signals
+                WHERE institution = %s
+                ORDER BY recorded_at DESC
+                LIMIT 1
+            """, (canonical,))
+            single = cur.fetchone()
+            if not single:
+                return "neutral", 0.0
+            rows = [single]
+
+        now_utc = datetime.now(timezone.utc)
+        total_weighted_score = 0.0
+        total_weight = 0.0
+
+        for row in rows:
+            sig = (row[0] or "").lower().strip()
+            sent_score = float(row[1]) if row[1] is not None else 0.0
+            rec_at = row[2]
+
+            # Polarity mapping
+            if sig in ("dovish", "bullish"):
+                pol = 1.0
+            elif sig in ("hawkish", "bearish"):
+                pol = -1.0
+            else:
+                if sent_score >= 0.20:
+                    pol = 0.5
+                elif sent_score <= -0.20:
+                    pol = -0.5
+                else:
+                    pol = 0.0
+
+            # Exponential decay weight by age in hours
+            if rec_at:
+                age_hours = max(0.0, (now_utc - rec_at).total_seconds() / 3600.0)
+            else:
+                age_hours = 0.0
+
+            w = math.exp(-decay_rate_per_hour * age_hours)
+            total_weighted_score += w * pol
+            total_weight += w
+
+        smoothed_score = total_weighted_score / total_weight if total_weight > 0 else 0.0
+        smoothed_score = max(-1.0, min(1.0, smoothed_score))
+
+        if smoothed_score >= threshold:
+            stance = "dovish"
+        elif smoothed_score <= -threshold:
+            stance = "hawkish"
+        else:
+            stance = "neutral"
+
+        return stance, round(smoothed_score, 4)
     except Exception as e:
-        logger.error(f"[MACRO_TRACKER] get_latest_fed_signal error: {e}")
-        return None
+        logger.error(f"[MACRO_TRACKER] get_smoothed_central_bank_signal error: {e}")
+        return "neutral", 0.0
     finally:
         cur.close()
         if close_conn:
             conn.close()
 
 
+def get_latest_fed_signal(conn=None) -> Optional[str]:
+    """
+    Returns the 48-hour EMA smoothed Federal Reserve policy stance,
+    preventing single volatile articles from flipping the macro stance.
+    e.g. 'hawkish', 'dovish', 'neutral'
+    """
+    stance, _ = get_smoothed_central_bank_signal("Federal Reserve", lookback_hours=48, conn=conn)
+    return stance
+
+
 def get_macro_regime_summary(conn=None) -> dict:
     """
-    Returns a dict of {institution: latest_policy_signal} for all tracked CBs.
+    Returns a dict of {institution: macro_details} for all tracked CBs,
+    incorporating 48-hour EMA smoothing on the policy stance.
     Used by the Oracle and the UI macro header.
     """
     close_conn = False
@@ -178,15 +266,25 @@ def get_macro_regime_summary(conn=None) -> dict:
             ORDER BY institution, recorded_at DESC
         """)
         rows = cur.fetchall()
-        return {
-            row[0]: {
-                "policy_signal": row[1],
-                "sentiment_score": float(row[2]) if row[2] else None,
-                "headline": row[3],
-                "recorded_at": row[4].isoformat() if row[4] else None,
+        summary = {}
+        for row in rows:
+            inst = row[0]
+            raw_sig = row[1]
+            sent_score = float(row[2]) if row[2] else None
+            headline = row[3]
+            rec_at = row[4].isoformat() if row[4] else None
+
+            smoothed_stance, smoothed_val = get_smoothed_central_bank_signal(institution=inst, lookback_hours=48, conn=conn)
+
+            summary[inst] = {
+                "policy_signal": smoothed_stance,
+                "raw_signal": raw_sig,
+                "smoothed_score": smoothed_val,
+                "sentiment_score": sent_score,
+                "headline": headline,
+                "recorded_at": rec_at,
             }
-            for row in rows
-        }
+        return summary
     except Exception as e:
         logger.error(f"[MACRO_TRACKER] get_macro_regime_summary error: {e}")
         return {}
@@ -199,16 +297,16 @@ def get_macro_regime_summary(conn=None) -> dict:
 def is_buy_blocked_by_macro(ticker_sector: Optional[str], conn=None) -> tuple[bool, str]:
     """
     Returns (blocked: bool, reason: str).
-    Blocks BUY signals for rate-sensitive sectors when Fed is hawkish.
+    Blocks BUY signals for rate-sensitive sectors when Fed smoothed regime is hawkish.
     Completely free — reads from mimir_macro_signals, no LLM call.
     """
     if not ticker_sector or ticker_sector not in RATE_SENSITIVE_SECTORS:
         return False, ""
 
-    fed_signal = get_latest_fed_signal(conn=conn)
-    if fed_signal and fed_signal.lower() in ("hawkish", "bearish"):
+    fed_stance, smoothed_score = get_smoothed_central_bank_signal("Federal Reserve", lookback_hours=48, conn=conn)
+    if fed_stance == "hawkish":
         reason = (
-            f"Fed macro regime is '{fed_signal}' — BUY blocked for "
+            f"Fed macro regime is smoothed 'hawkish' (score: {smoothed_score:+.2f} <= -0.35) — BUY blocked for "
             f"rate-sensitive sector ({ticker_sector}). "
             f"Rising rate environment compresses valuations in this sector."
         )

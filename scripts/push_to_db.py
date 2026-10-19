@@ -111,31 +111,41 @@ def insert_articles(records):
         return
 
     # --- Bulk insert with ON CONFLICT (url_hash) ---
+    from backend.app.sentiment.pre_scoring_filter import is_noise_or_junk
+
     sql = """
     INSERT INTO yggdrasil.mimir_raw_articles (
         source_name, feed_url, title, link, 
-        published_raw, published_ts, summary, url_hash, title_hash
+        published_raw, published_ts, summary, url_hash, title_hash, scoring_status
     ) VALUES %s
     ON CONFLICT (url_hash) DO NOTHING;
     """
 
-    data = [(
-        r['source_name'],
-        r['feed_url'],
-        r['title'],
-        r['link'],
-        r['published_raw'],
-        r['published_ts'],
-        r['summary'],
-        r['url_hash'],
-        r['title_hash']
-    ) for r in unique_records]
+    data = []
+    noise_count = 0
+    for r in unique_records:
+        is_junk, _ = is_noise_or_junk(r['title'], r.get('summary', ''))
+        status = 'noise' if is_junk else 'triage_pending'
+        if is_junk:
+            noise_count += 1
+        data.append((
+            r['source_name'],
+            r['feed_url'],
+            r['title'],
+            r['link'],
+            r['published_raw'],
+            r['published_ts'],
+            r['summary'],
+            r['url_hash'],
+            r['title_hash'],
+            status
+        ))
 
     try:
         execute_values(cur, sql, data)
         conn.commit()
         inserted = cur.rowcount
-        print(f"Inserted {inserted} new rows. Skipped {len(records) - inserted - skipped_count} duplicates (URL or title).")
+        print(f"Inserted {inserted} new rows ({noise_count} pre-flagged as noise/clickbait). Skipped {len(records) - inserted - skipped_count} duplicates (URL or title).")
     except Exception as e:
         print(f"❌ Insert failed: {e}")
         conn.rollback()

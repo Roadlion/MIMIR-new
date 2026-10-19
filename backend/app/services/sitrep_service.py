@@ -426,3 +426,297 @@ def get_latest_sitrep(conn=None) -> Optional[Dict[str, Any]]:
         cur.close()
         if close_conn:
             conn.close()
+
+
+_RECENT_MACRO_SHOCKS = {}
+
+
+def evaluate_macro_shocks(conn=None) -> List[Dict[str, Any]]:
+    """
+    Evaluates real-time macro shocks across benchmarks, VIX, bond yields, and Fed stance.
+    Dispatches instant high-priority Discord alert embeds when anomalies occur,
+    using an anti-spam cooldown cache (4 hours per shock type).
+    """
+    shocks_detected = []
+    now_utc = datetime.now(timezone.utc)
+
+    try:
+        snap = fetch_macro_snapshot()
+        if not snap:
+            return []
+
+        # 1. VIX Volatility Shock
+        if "^VIX" in snap:
+            vix = snap["^VIX"]
+            val = float(vix.get("current", 0.0))
+            chg1d = float(vix.get("change_1d_pct", 0.0))
+
+            vix_key = None
+            severity = "HIGH"
+            title = ""
+            desc = ""
+
+            if val >= 30.0:
+                vix_key = "VIX_EXTREME_PANIC"
+                severity = "CRITICAL"
+                title = f"VIX Extreme Volatility Spike ({val:.2f})"
+                desc = f"CBOE VIX has breached the extreme 30.0 panic threshold ({val:.2f}, {chg1d:+.1f}% today). High risk liquidation cascade possible."
+            elif val >= 25.0:
+                vix_key = "VIX_ELEVATED_RISK"
+                severity = "HIGH"
+                title = f"VIX Elevated Risk Threshold Breached ({val:.2f})"
+                desc = f"CBOE VIX is trading at {val:.2f} (> 25.0). Long swing positions are defensively restricted by macro risk gates."
+            elif chg1d >= 12.0:
+                vix_key = "VIX_RAPID_SPIKE"
+                severity = "HIGH"
+                title = f"VIX Rapid Intraday Surge ({chg1d:+.1f}%)"
+                desc = f"VIX jumped {chg1d:+.1f}% in today's session to {val:.2f}. Option hedging activity is spiking."
+
+            if vix_key:
+                last_time = _RECENT_MACRO_SHOCKS.get(vix_key)
+                if not last_time or (now_utc - last_time) >= timedelta(hours=4):
+                    try:
+                        from .discord_notifier import send_macro_shock_alert
+                        sent = send_macro_shock_alert(
+                            shock_type=vix_key,
+                            title=title,
+                            headline=desc,
+                            metrics={
+                                "CBOE VIX": f"{val:.2f}",
+                                "1-Day Change": f"{chg1d:+.2f}%",
+                                "52-Week Range": f"{vix.get('range_pct', 0.0):.1f}%"
+                            },
+                            severity=severity
+                        )
+                        if sent:
+                            _RECENT_MACRO_SHOCKS[vix_key] = now_utc
+                            shocks_detected.append({"type": vix_key, "title": title})
+                    except Exception as err:
+                        logger.warning(f"[SITREP] VIX shock alert error: {err}")
+
+        # 2. Treasury Yield Spikes / 52W Extremes
+        for y_sym in ("^TNX", "^TYX"):
+            if y_sym in snap:
+                yd = snap[y_sym]
+                y_val = float(yd.get("current", 0.0))
+                y_chg = float(yd.get("change_1d_pct", 0.0))
+                is_hi = yd.get("is_at_high", False)
+                is_lo = yd.get("is_at_low", False)
+
+                y_key = None
+                y_title = ""
+                y_desc = ""
+
+                if is_hi:
+                    y_key = f"{y_sym}_52W_HIGH"
+                    y_title = f"{yd['name']} at 52-Week High ({y_val:.3f}%)"
+                    y_desc = f"{yd['name']} ({y_sym}) reached 52-week high ({y_val:.3f}%). Multiple compression risk on high-multiple equities."
+                elif is_lo:
+                    y_key = f"{y_sym}_52W_LOW"
+                    y_title = f"{yd['name']} at 52-Week Low ({y_val:.3f}%)"
+                    y_desc = f"{yd['name']} ({y_sym}) reached 52-week low ({y_val:.3f}%). Flight-to-safety or disinflation trade dominant."
+                elif y_chg >= 4.0:
+                    y_key = f"{y_sym}_INTRA_SURGE"
+                    y_title = f"{yd['name']} Intraday Yield Surge ({y_chg:+.1f}%)"
+                    y_desc = f"Rapid rate repricing: {yd['name']} rose {y_chg:+.1f}% in a single session to {y_val:.3f}%."
+
+                if y_key:
+                    last_time = _RECENT_MACRO_SHOCKS.get(y_key)
+                    if not last_time or (now_utc - last_time) >= timedelta(hours=6):
+                        try:
+                            from .discord_notifier import send_macro_shock_alert
+                            sent = send_macro_shock_alert(
+                                shock_type=y_key,
+                                title=y_title,
+                                headline=y_desc,
+                                metrics={
+                                    "Benchmark": yd["name"],
+                                    "Current Yield": f"{y_val:.3f}%",
+                                    "1-Day Change": f"{y_chg:+.2f}%",
+                                    "52W High / Low": f"{yd.get('high_52w')}% / {yd.get('low_52w')}%"
+                                },
+                                severity="HIGH"
+                            )
+                            if sent:
+                                _RECENT_MACRO_SHOCKS[y_key] = now_utc
+                                shocks_detected.append({"type": y_key, "title": y_title})
+                        except Exception as err:
+                            logger.warning(f"[SITREP] Yield shock alert error: {err}")
+
+        # 3. Market Trend / Regime Flip Check (SPY vs 50-day SMA)
+        close_conn = False
+        if conn is None:
+            conn = get_db_connection()
+            close_conn = True
+
+        try:
+            from .macro_tracker import is_market_regime_bullish, get_smoothed_central_bank_signal
+            is_bull, regime_reason = is_market_regime_bullish(conn=conn)
+            if not is_bull:
+                r_key = "REGIME_DEFENSIVE_FLIP"
+                last_time = _RECENT_MACRO_SHOCKS.get(r_key)
+                if not last_time or (now_utc - last_time) >= timedelta(hours=6):
+                    from .discord_notifier import send_macro_shock_alert
+                    sent = send_macro_shock_alert(
+                        shock_type=r_key,
+                        title="Market Regime Flipped to DEFENSIVE",
+                        headline=regime_reason,
+                        metrics={"Regime Status": "DEFENSIVE", "Action": "Long Swing Entries Suppressed"},
+                        severity="HIGH"
+                    )
+                    if sent:
+                        _RECENT_MACRO_SHOCKS[r_key] = now_utc
+                        shocks_detected.append({"type": r_key, "title": "Regime Defensive"})
+
+            # 4. Central Bank Stance Flip Check
+            fed_stance, fed_score = get_smoothed_central_bank_signal("Federal Reserve", lookback_hours=48, conn=conn)
+            if fed_stance in ("hawkish", "dovish") and abs(fed_score) >= 0.35:
+                fed_key = f"FED_STANCE_{fed_stance.upper()}"
+                last_time = _RECENT_MACRO_SHOCKS.get(fed_key)
+                if not last_time or (now_utc - last_time) >= timedelta(hours=12):
+                    from .discord_notifier import send_macro_shock_alert
+                    sent = send_macro_shock_alert(
+                        shock_type=fed_key,
+                        title=f"Federal Reserve Macro Regime: {fed_stance.upper()}",
+                        headline=f"48-hour EMA smoothed Fed policy score reached {fed_score:+.2f} ({fed_stance.upper()} territory).",
+                        metrics={
+                            "Fed Smoothed Score": f"{fed_score:+.2f}",
+                            "Policy Stance": fed_stance.upper(),
+                            "Rate-Sensitive Sectors": "BLOCKED" if fed_stance == "hawkish" else "UNRESTRICTED"
+                        },
+                        severity="HIGH"
+                    )
+                    if sent:
+                        _RECENT_MACRO_SHOCKS[fed_key] = now_utc
+                        shocks_detected.append({"type": fed_key, "title": f"Fed {fed_stance}"})
+        finally:
+            if close_conn and conn:
+                conn.close()
+
+    except Exception as e:
+        logger.error(f"[SITREP] Error in evaluate_macro_shocks: {e}")
+
+    return shocks_detected
+
+
+def compile_session_briefing(session_type: str = "PRE_MARKET", conn=None) -> Dict[str, Any]:
+    """
+    Compiles and dispatches a scheduled Pre-Market Briefing (09:00 ET) or Post-Market Debrief (16:30 ET).
+    """
+    is_pre = (session_type.upper() == "PRE_MARKET")
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    try:
+        cur = conn.cursor()
+        macro_snap = fetch_macro_snapshot()
+
+        # 1. Fetch War Rig Focus Candidates (recently generated / pending)
+        cur.execute(f"""
+            SELECT ticker, signal_type, conviction_score, sentiment_score, headline, reason, trigger_price
+            FROM {_SCHEMA}.mimir_trade_signals
+            WHERE catalyst_type = 'WAR_RIG_CONVERGENCE'
+              AND (status = 'PENDING' OR created_at >= NOW() - INTERVAL '24 hours')
+            ORDER BY conviction_score DESC, created_at DESC
+            LIMIT 4
+        """)
+        focus_rows = cur.fetchall()
+        focus_tickers = [
+            {
+                "ticker": r[0],
+                "signal_type": r[1],
+                "conviction_score": float(r[2] or 0.5),
+                "sentiment_score": float(r[3] or 0.0),
+                "headline": r[4] or "",
+                "reason": r[5] or "",
+                "trigger_price": float(r[6] or 0.0)
+            }
+            for r in focus_rows
+        ]
+
+        # 2. Fetch Stretched Stat-Arb Pairs (Z-score >= 1.5)
+        stat_arb_pairs = []
+        try:
+            cur.execute(f"""
+                SELECT ticker1, ticker2, z_score, status, current_spread, mean_spread
+                FROM {_SCHEMA}.mimir_pair_signals
+                WHERE status = 'OPEN' OR ABS(z_score) >= 1.5
+                ORDER BY ABS(z_score) DESC
+                LIMIT 4
+            """)
+            arb_rows = cur.fetchall()
+            stat_arb_pairs = [
+                {
+                    "ticker1": r[0],
+                    "ticker2": r[1],
+                    "z_score": float(r[2] or 0.0),
+                    "signal": r[3] or "MONITOR",
+                    "current_spread": float(r[4] or 0.0),
+                    "mean_spread": float(r[5] or 0.0)
+                }
+                for r in arb_rows
+            ]
+        except Exception as arb_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"[SITREP] Stat-Arb pairs fetch warning: {arb_err}")
+
+        # 3. Portfolio Performance Stats
+        portfolio_stats = {}
+        try:
+            from ..analytics.paper_trader import get_active_portfolio_composition
+            comp = get_active_portfolio_composition(conn=conn)
+            cur.execute(f"""
+                SELECT COALESCE(SUM(realized_pnl), 0.0)
+                FROM {_SCHEMA}.mimir_paper_trade_log
+                WHERE exit_time >= CURRENT_DATE
+            """)
+            pnl_row = cur.fetchone()
+            realized_today = float(pnl_row[0]) if pnl_row else 0.0
+
+            portfolio_stats = {
+                "total_equity": comp.get("total_equity", 100000.0),
+                "active_positions": comp.get("total_open_positions", 0),
+                "realized_pnl_today": realized_today
+            }
+        except Exception as p_err:
+            logger.warning(f"[SITREP] Portfolio stats gathering error: {p_err}")
+
+        # Headline formulate
+        if is_pre:
+            vix_val = macro_snap.get("^VIX", {}).get("current", 18.0)
+            headline = f"Wall Street opening bell preparation | VIX at {vix_val:.1f} | {len(focus_tickers)} War Rig alpha setups queued."
+            title = "🌅 MIMIR PRE-MARKET BATTLE BRIEFING"
+        else:
+            pnl_val = portfolio_stats.get("realized_pnl_today", 0.0)
+            headline = f"Wall Street regular session closed | Realized P&L today: ${pnl_val:+,.2f} | {portfolio_stats.get('active_positions', 0)} active MT5 positions held."
+            title = "🌆 MIMIR POST-MARKET DEBRIEF & SETTLEMENT"
+
+        from .discord_notifier import send_market_session_briefing
+        sent = send_market_session_briefing(
+            session_type=session_type,
+            title=title,
+            headline=headline,
+            macro_snapshot=macro_snap,
+            focus_tickers=focus_tickers,
+            stat_arb_pairs=stat_arb_pairs,
+            portfolio_stats=portfolio_stats
+        )
+
+        return {
+            "session_type": session_type,
+            "success": sent,
+            "headline": headline,
+            "focus_count": len(focus_tickers),
+            "arb_count": len(stat_arb_pairs)
+        }
+    except Exception as e:
+        logger.error(f"[SITREP] Error compiling {session_type} briefing: {e}")
+        return {"session_type": session_type, "success": False, "error": str(e)}
+    finally:
+        if close_conn and conn:
+            conn.close()

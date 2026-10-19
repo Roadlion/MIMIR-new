@@ -35,10 +35,11 @@ app.add_middleware(
 async def startup_event():
     from .pipeline.background_worker import start_background_worker
     from .utils.logo_downloader import preseed_portfolio_logos
-    from .services.process_manager import record_pid
+    from .services.process_manager import record_pid, apply_low_process_priority
     from .services.db_integrity import ensure_database_integrity
     import threading
     record_pid("server", os.getpid())
+    apply_low_process_priority()
     # Run DB integrity preflight check in background to auto-heal any disk page corruption
     threading.Thread(target=ensure_database_integrity, daemon=True).start()
     start_background_worker()
@@ -130,8 +131,9 @@ async def alerts_page(request: Request):
 async def taxonomy_page(request: Request):
     return templates.TemplateResponse(request, "taxonomy.html")
 
+@app.get("/stat-arb", response_class=HTMLResponse)
 @app.get("/guerilla", response_class=HTMLResponse)
-async def guerilla_page(request: Request):
+async def stat_arb_page(request: Request):
     return templates.TemplateResponse(request, "guerilla.html")
 
 @app.get("/map", response_class=HTMLResponse)

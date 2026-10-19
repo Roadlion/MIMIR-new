@@ -57,6 +57,96 @@ SECTOR_ETFS = {
 
 SUB_CATEGORY_TO_ETF = {v["sub_category"]: k for k, v in SECTOR_ETFS.items()}
 
+YAHOO_SECTOR_TO_SUB_CATEGORY = {
+    "Technology": "TECHNOLOGY",
+    "Information Technology": "TECHNOLOGY",
+    "Financial Services": "FINANCIAL_SERVICES",
+    "Financials": "FINANCIAL_SERVICES",
+    "Healthcare": "HEALTHCARE",
+    "Energy": "ENERGY",
+    "Industrials": "INDUSTRIALS",
+    "Utilities": "UTILITIES",
+    "Consumer Defensive": "CONSUMER_DEFENSIVE",
+    "Consumer Staples": "CONSUMER_DEFENSIVE",
+    "Consumer Cyclical": "CONSUMER_CYCLICAL",
+    "Consumer Discretionary": "CONSUMER_CYCLICAL",
+    "Communication Services": "COMMUNICATION_SERVICES",
+    "Basic Materials": "BASIC_MATERIALS",
+    "Materials": "BASIC_MATERIALS",
+    "Real Estate": "REAL_ESTATE"
+}
+
+STATIC_TICKER_SECTORS = {
+    # Financials (XLF)
+    "WFC": "FINANCIAL_SERVICES", "JPM": "FINANCIAL_SERVICES", "BAC": "FINANCIAL_SERVICES", "C": "FINANCIAL_SERVICES",
+    "GS": "FINANCIAL_SERVICES", "MS": "FINANCIAL_SERVICES", "BLK": "FINANCIAL_SERVICES", "SCHW": "FINANCIAL_SERVICES",
+    "IBKR": "FINANCIAL_SERVICES", "FITB": "FINANCIAL_SERVICES", "USB": "FINANCIAL_SERVICES", "PNC": "FINANCIAL_SERVICES",
+    "TFC": "FINANCIAL_SERVICES", "COF": "FINANCIAL_SERVICES", "AXP": "FINANCIAL_SERVICES", "SPGI": "FINANCIAL_SERVICES",
+    "MCO": "FINANCIAL_SERVICES", "CME": "FINANCIAL_SERVICES", "ICE": "FINANCIAL_SERVICES", "CB": "FINANCIAL_SERVICES",
+    "MMC": "FINANCIAL_SERVICES", "PGR": "FINANCIAL_SERVICES", "TRV": "FINANCIAL_SERVICES", "ALL": "FINANCIAL_SERVICES",
+    "HOOD": "FINANCIAL_SERVICES", "SOFI": "FINANCIAL_SERVICES", "COIN": "FINANCIAL_SERVICES",
+
+    # Technology (XLK)
+    "AAPL": "TECHNOLOGY", "MSFT": "TECHNOLOGY", "NVDA": "TECHNOLOGY", "AVGO": "TECHNOLOGY",
+    "ORCL": "TECHNOLOGY", "CRM": "TECHNOLOGY", "AMD": "TECHNOLOGY", "ADBE": "TECHNOLOGY",
+    "QCOM": "TECHNOLOGY", "INTC": "TECHNOLOGY", "ASML": "TECHNOLOGY", "CSCO": "TECHNOLOGY",
+    "NOW": "TECHNOLOGY", "AMAT": "TECHNOLOGY", "TXN": "TECHNOLOGY", "LRCX": "TECHNOLOGY",
+    "PANW": "TECHNOLOGY", "MU": "TECHNOLOGY", "SNPS": "TECHNOLOGY", "CDNS": "TECHNOLOGY",
+    "KLAC": "TECHNOLOGY", "CRWD": "TECHNOLOGY", "FTNT": "TECHNOLOGY", "PLTR": "TECHNOLOGY",
+    "SMCI": "TECHNOLOGY", "ARM": "TECHNOLOGY", "DELL": "TECHNOLOGY", "HPE": "TECHNOLOGY",
+
+    # Industrials (XLI)
+    "RKLB": "INDUSTRIALS", "GE": "INDUSTRIALS", "CAT": "INDUSTRIALS", "UNP": "INDUSTRIALS",
+    "HON": "INDUSTRIALS", "RTX": "INDUSTRIALS", "BA": "INDUSTRIALS", "DE": "INDUSTRIALS",
+    "LMT": "INDUSTRIALS", "UPS": "INDUSTRIALS", "ETN": "INDUSTRIALS", "ADP": "INDUSTRIALS",
+    "WM": "INDUSTRIALS", "ITW": "INDUSTRIALS", "PH": "INDUSTRIALS", "CSX": "INDUSTRIALS",
+    "NSC": "INDUSTRIALS", "GD": "INDUSTRIALS", "TDG": "INDUSTRIALS", "NOC": "INDUSTRIALS",
+    "KTOS": "INDUSTRIALS", "AXON": "INDUSTRIALS", "FDX": "INDUSTRIALS", "EMR": "INDUSTRIALS",
+
+    # Healthcare (XLV)
+    "LLY": "HEALTHCARE", "UNH": "HEALTHCARE", "JNJ": "HEALTHCARE", "ABBV": "HEALTHCARE",
+    "MRK": "HEALTHCARE", "TMO": "HEALTHCARE", "ABT": "HEALTHCARE", "DHR": "HEALTHCARE",
+    "PFE": "HEALTHCARE", "AMGN": "HEALTHCARE", "ISRG": "HEALTHCARE", "ELV": "HEALTHCARE",
+    "BMY": "HEALTHCARE", "CVS": "HEALTHCARE", "GILD": "HEALTHCARE", "CI": "HEALTHCARE",
+    "VRTX": "HEALTHCARE", "SYK": "HEALTHCARE", "REGN": "HEALTHCARE", "BDX": "HEALTHCARE",
+
+    # Energy (XLE)
+    "XOM": "ENERGY", "CVX": "ENERGY", "COP": "ENERGY", "EOG": "ENERGY",
+    "SLB": "ENERGY", "MPC": "ENERGY", "PSX": "ENERGY", "VLO": "ENERGY",
+    "OXY": "ENERGY", "WMB": "ENERGY", "KMI": "ENERGY", "HES": "ENERGY",
+    "BKR": "ENERGY", "HAL": "ENERGY", "DVN": "ENERGY", "FANG": "ENERGY",
+
+    # Consumer Discretionary (XLY)
+    "AMZN": "CONSUMER_CYCLICAL", "TSLA": "CONSUMER_CYCLICAL", "HD": "CONSUMER_CYCLICAL",
+    "MCD": "CONSUMER_CYCLICAL", "NKE": "CONSUMER_CYCLICAL", "LOW": "CONSUMER_CYCLICAL",
+    "SBUX": "CONSUMER_CYCLICAL", "TJX": "CONSUMER_CYCLICAL", "BKNG": "CONSUMER_CYCLICAL",
+    "CMG": "CONSUMER_CYCLICAL", "MAR": "CONSUMER_CYCLICAL", "ABNB": "CONSUMER_CYCLICAL",
+
+    # Consumer Staples (XLP)
+    "PG": "CONSUMER_DEFENSIVE", "COST": "CONSUMER_DEFENSIVE", "WMT": "CONSUMER_DEFENSIVE",
+    "KO": "CONSUMER_DEFENSIVE", "PEP": "CONSUMER_DEFENSIVE", "PM": "CONSUMER_DEFENSIVE",
+    "MDLZ": "CONSUMER_DEFENSIVE", "MO": "CONSUMER_DEFENSIVE", "CL": "CONSUMER_DEFENSIVE",
+    "TGT": "CONSUMER_DEFENSIVE", "KMB": "CONSUMER_DEFENSIVE", "GIS": "CONSUMER_DEFENSIVE",
+
+    # Communication Services (XLC)
+    "GOOGL": "COMMUNICATION_SERVICES", "GOOG": "COMMUNICATION_SERVICES", "META": "COMMUNICATION_SERVICES",
+    "NFLX": "COMMUNICATION_SERVICES", "DIS": "COMMUNICATION_SERVICES", "CMCSA": "COMMUNICATION_SERVICES",
+    "TMUS": "COMMUNICATION_SERVICES", "VZ": "COMMUNICATION_SERVICES", "T": "COMMUNICATION_SERVICES",
+
+    # Utilities (XLU)
+    "NEE": "UTILITIES", "SO": "UTILITIES", "DUK": "UTILITIES", "CEG": "UTILITIES",
+    "SRE": "UTILITIES", "AEP": "UTILITIES", "D": "UTILITIES", "PEG": "UTILITIES",
+
+    # Real Estate (XLRE)
+    "PLD": "REAL_ESTATE", "AMT": "REAL_ESTATE", "EQIX": "REAL_ESTATE", "CCI": "REAL_ESTATE",
+    "PSA": "REAL_ESTATE", "SPG": "REAL_ESTATE", "O": "REAL_ESTATE", "WELL": "REAL_ESTATE",
+
+    # Basic Materials (XLB)
+    "LIN": "BASIC_MATERIALS", "SHW": "BASIC_MATERIALS", "APD": "BASIC_MATERIALS",
+    "FCX": "BASIC_MATERIALS", "ECL": "BASIC_MATERIALS", "NEM": "BASIC_MATERIALS",
+    "DOW": "BASIC_MATERIALS", "NUE": "BASIC_MATERIALS", "PPG": "BASIC_MATERIALS"
+}
+
 
 def _calculate_cmf(df_bars: pd.DataFrame, period: int = 14) -> float:
     """
@@ -266,20 +356,62 @@ def get_ticker_sector_tailwinds(ticker: str, conn=None) -> Dict[str, Any]:
         global _TICKER_SECTOR_MAP
         if ticker in _TICKER_SECTOR_MAP:
             sub_cat = _TICKER_SECTOR_MAP[ticker]
+        elif ticker in STATIC_TICKER_SECTORS:
+            sub_cat = STATIC_TICKER_SECTORS[ticker]
+            _TICKER_SECTOR_MAP[ticker] = sub_cat
         else:
-            cur.execute(f"""
-                SELECT asset_sub_category
-                FROM {_SCHEMA}.mimir_sentiment_impacts
-                WHERE ticker = %s AND asset_sub_category IS NOT NULL
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (ticker,))
-            row = cur.fetchone()
-            if row:
-                raw_val = row.get("asset_sub_category") if isinstance(row, dict) else row[0]
-                sub_cat = raw_val.strip().upper() if raw_val else None
-            else:
-                sub_cat = None
+            # 1. Try ground-truth mimir_asset_taxonomy table
+            sub_cat = None
+            try:
+                cur.execute(f"""
+                    SELECT sub_category
+                    FROM {_SCHEMA}.mimir_asset_taxonomy
+                    WHERE ticker = %s AND sub_category IS NOT NULL
+                    LIMIT 1
+                """, (ticker,))
+                tax_row = cur.fetchone()
+                if tax_row:
+                    raw_val = tax_row.get("sub_category") if isinstance(tax_row, dict) else tax_row[0]
+                    sub_cat = raw_val.strip().upper() if raw_val else None
+            except Exception:
+                pass
+
+            # 2. Try live lookup via yfinance with TLS session
+            if not sub_cat:
+                try:
+                    import yfinance as yf
+                    from backend.app.routers.prices import _get_tls_session
+                    session = _get_tls_session()
+                    tk = yf.Ticker(ticker, session=session)
+                    raw_sec = tk.info.get("sector")
+                    if raw_sec and raw_sec in YAHOO_SECTOR_TO_SUB_CATEGORY:
+                        sub_cat = YAHOO_SECTOR_TO_SUB_CATEGORY[raw_sec]
+                        try:
+                            cur.execute(f"""
+                                INSERT INTO {_SCHEMA}.mimir_asset_taxonomy (ticker, asset_name, path, level, category, sub_category, is_active)
+                                VALUES (%s, %s, %s, 2, 'EQUITY', %s, TRUE)
+                                ON CONFLICT DO NOTHING
+                            """, (ticker, ticker, f"EQUITY.{sub_cat}.{ticker}", sub_cat))
+                            conn.commit()
+                        except Exception:
+                            conn.rollback()
+                except Exception:
+                    pass
+
+            # 3. Fallback to mimir_sentiment_impacts (preferring non-default categories)
+            if not sub_cat:
+                cur.execute(f"""
+                    SELECT asset_sub_category
+                    FROM {_SCHEMA}.mimir_sentiment_impacts
+                    WHERE ticker = %s AND asset_sub_category IS NOT NULL
+                    ORDER BY (asset_sub_category != 'TECHNOLOGY') DESC, created_at DESC
+                    LIMIT 1
+                """, (ticker,))
+                row = cur.fetchone()
+                if row:
+                    raw_val = row.get("asset_sub_category") if isinstance(row, dict) else row[0]
+                    sub_cat = raw_val.strip().upper() if raw_val else None
+
             _TICKER_SECTOR_MAP[ticker] = sub_cat
 
         if not sub_cat or sub_cat not in SUB_CATEGORY_TO_ETF:
@@ -340,6 +472,10 @@ def get_ticker_sector_tailwinds(ticker: str, conn=None) -> Dict[str, Any]:
             "reason": reason
         }
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         logger.warning(f"[SECTOR_ROTATION] Error resolving tailwind for {ticker}: {e}")
         return {
             "has_tailwind": False,

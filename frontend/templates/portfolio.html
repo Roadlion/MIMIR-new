@@ -298,6 +298,46 @@
                 </div>
             </div>
 
+            <!-- Institutional Portfolio Composition & Sector Gating Card -->
+            <div class="card p-0 overflow-hidden border border-[#1A2A30]">
+                <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex flex-wrap justify-between items-center gap-2">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-sm font-mono text-[#00E5F2] uppercase tracking-wider flex items-center gap-1.5">
+                            <i class="fas fa-layer-group text-[#00E5F2]"></i> Institutional Portfolio Composition
+                        </h2>
+                        <span id="compCapacityBadge" class="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E5F2]/20 border border-[#00E5F2]/40 text-[#00E5F2]">0 / 15 SLOTS</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
+                        <span class="text-[#8BA4A8]">GICS Sector Cap: <span class="text-[#D6E5E3] font-bold">Max 3 Pos / 25% NAV</span></span>
+                        <span class="text-[#8BA4A8]">NAV Utilization: <span id="compUtilizationText" class="text-[#00E676] font-bold">0.0%</span></span>
+                    </div>
+                </div>
+
+                <div class="p-4 space-y-3.5 bg-[#0d161a]">
+                    <!-- Concurrency Capacity Bar -->
+                    <div>
+                        <div class="flex justify-between items-center text-xs font-mono mb-1.5">
+                            <span class="text-[#8BA4A8]">Total Active Capacity Allocation</span>
+                            <span id="compCapacityProgressLabel" class="text-[#D6E5E3] font-bold">0 of 15 Positions Active</span>
+                        </div>
+                        <div class="w-full h-2.5 bg-[#081115] border border-[#1A2A30] rounded-full overflow-hidden">
+                            <div id="compCapacityProgressBar" class="h-full bg-gradient-to-r from-[#00E5F2] to-[#00A6B2] transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Sector Concentration Breakdown -->
+                    <div>
+                        <div class="text-xs font-mono text-[#8BA4A8] mb-2 flex flex-wrap justify-between items-center">
+                            <span>Active Sector Concentration &amp; Exposure Limits:</span>
+                            <span class="text-[10px] text-[#4A6A70]">Saturated sectors automatically skip/defer new entries</span>
+                        </div>
+                        <div id="compSectorBadgesContainer" class="flex flex-wrap gap-2">
+                            <span class="text-xs font-mono text-[#4A6A70] italic">Loading portfolio composition...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Active MT5 Positions Table -->
             <div class="card p-0 overflow-hidden">
                 <div class="bg-[#111C21] px-5 py-3 border-b border-[#1A2A30] flex justify-between items-center">
@@ -316,6 +356,7 @@
                             <tr class="border-b border-[#1A2A30] text-xs font-mono text-[#4A6A70] bg-[#0c1417]">
                                 <th class="px-5 py-3">Ticket</th>
                                 <th class="px-5 py-3">Ticker</th>
+                                <th class="px-5 py-3">Sector</th>
                                 <th class="px-5 py-3">Type</th>
                                 <th class="px-5 py-3">Lots / Qty</th>
                                 <th class="px-5 py-3">Open Price</th>
@@ -327,7 +368,7 @@
                         </thead>
                         <tbody id="paperPositionsTableBody" class="text-sm font-mono text-[#D6E5E3]">
                             <tr>
-                                <td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No active positions in MT5 demo account. Alerts will trigger automated entries.</td>
+                                <td colspan="10" class="px-5 py-8 text-center text-[#4A6A70]">No active positions in MT5 demo account. Alerts will trigger automated entries.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1979,11 +2020,97 @@
 
             document.getElementById("paperWinRate").innerText = `${data.win_rate_pct.toFixed(1)}% (${data.total_closed_trades} closed)`;
 
-            // 3. Render Positions & Deals
+            // 3. Render Portfolio Composition Telemetry
+            renderPortfolioComposition(data.portfolio_composition);
+
+            // 4. Render Positions & Deals
             renderPaperPositions(data.active_positions_list || data.active_positions);
             renderPaperLogs(data.trade_logs);
         } catch (err) {
             console.error("Paper summary load error:", err);
+        }
+    }
+
+    function renderPortfolioComposition(comp) {
+        if (!comp) return;
+        const totalOpen = comp.total_open_positions || 0;
+        const maxOpen = comp.max_open_positions || 15;
+        const utilPct = comp.portfolio_utilization_pct || 0.0;
+        const maxPerSec = comp.max_positions_per_sector || 3;
+        const maxSecPct = comp.max_sector_exposure_pct || 25.0;
+
+        // Badge
+        const badge = document.getElementById("compCapacityBadge");
+        if (badge) {
+            badge.innerText = `${totalOpen} / ${maxOpen} SLOTS`;
+            if (totalOpen >= maxOpen) {
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF5252]/20 border border-[#FF5252]/40 text-[#FF5252]";
+                badge.innerText = `${totalOpen} / ${maxOpen} SLOTS [MAXED]`;
+            } else if (totalOpen >= maxOpen - 3) {
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#FF9100]/20 border border-[#FF9100]/40 text-[#FF9100]";
+            } else {
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00E5F2]/20 border border-[#00E5F2]/40 text-[#00E5F2]";
+            }
+        }
+
+        // Utilization text
+        const utilEl = document.getElementById("compUtilizationText");
+        if (utilEl) {
+            const valUsd = comp.total_open_value_usd || 0;
+            utilEl.innerText = `${utilPct.toFixed(1)}% ($${valUsd.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})})`;
+        }
+
+        // Progress label & bar
+        const labelEl = document.getElementById("compCapacityProgressLabel");
+        if (labelEl) {
+            labelEl.innerText = `${totalOpen} of ${maxOpen} Positions Active (${maxOpen - totalOpen} slots free)`;
+        }
+        const barEl = document.getElementById("compCapacityProgressBar");
+        if (barEl) {
+            const pct = Math.min(100, Math.round((totalOpen / maxOpen) * 100));
+            barEl.style.width = `${pct}%`;
+            if (totalOpen >= maxOpen) {
+                barEl.className = "h-full bg-gradient-to-r from-[#FF9100] to-[#FF5252] transition-all duration-500";
+            } else {
+                barEl.className = "h-full bg-gradient-to-r from-[#00E5F2] to-[#00A6B2] transition-all duration-500";
+            }
+        }
+
+        // Sector Badges
+        const container = document.getElementById("compSectorBadgesContainer");
+        if (container) {
+            container.innerHTML = "";
+            const details = comp.sector_details || [];
+            if (details.length === 0) {
+                container.innerHTML = `<span class="text-xs font-mono text-[#00E676]"><i class="fas fa-check-circle mr-1"></i>All 11 GICS Sectors Open (Max ${maxPerSec} positions / ${maxSecPct}% NAV each).</span>`;
+                return;
+            }
+
+            details.forEach(sec => {
+                const isCapped = sec.is_capped;
+                const isHigh = sec.count >= maxPerSec - 1;
+                let bgClass = "bg-[#081115] border-[#1A2A30] text-[#D6E5E3]";
+                let statusBadge = `<span class="px-1.5 py-0.2 rounded text-[9px] bg-[#00E676]/15 text-[#00E676] font-bold">${sec.count}/${maxPerSec}</span>`;
+                
+                if (isCapped) {
+                    bgClass = "bg-[#FF5252]/10 border-[#FF5252]/40 text-[#FF5252]";
+                    statusBadge = `<span class="px-1.5 py-0.2 rounded text-[9px] bg-[#FF5252]/25 text-[#FF5252] font-bold">CAPPED (${sec.count}/${maxPerSec})</span>`;
+                } else if (isHigh) {
+                    bgClass = "bg-[#FF9100]/10 border-[#FF9100]/40 text-[#FFD54F]";
+                    statusBadge = `<span class="px-1.5 py-0.2 rounded text-[9px] bg-[#FF9100]/25 text-[#FF9100] font-bold">${sec.count}/${maxPerSec} (1 left)</span>`;
+                }
+
+                const tickersStr = (sec.tickers || []).join(", ");
+                const pill = document.createElement("div");
+                pill.className = `px-3 py-1.5 rounded-lg border flex items-center gap-2 text-xs font-mono shadow-sm ${bgClass}`;
+                pill.innerHTML = `
+                    <span class="font-bold text-[#00E5F2]">${sec.sector}</span>
+                    ${statusBadge}
+                    <span class="text-[11px] text-[#8BA4A8]">${sec.exposure_pct}% NAV</span>
+                    <span class="text-[10px] text-[#4A6A70] border-l border-[#1A2A30] pl-1.5">[${tickersStr}]</span>
+                `;
+                container.appendChild(pill);
+            });
         }
     }
 
@@ -1993,7 +2120,7 @@
 
         const posList = Array.isArray(positions) ? positions : Object.values(positions || {});
         if (posList.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-8 text-center text-[#4A6A70]">No active positions in MT5 demo account. Alerts will trigger automated entries.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="10" class="px-5 py-8 text-center text-[#4A6A70]">No active positions in MT5 demo account. Alerts will trigger automated entries.</td></tr>`;
             return;
         }
 
@@ -2009,6 +2136,7 @@
             tr.innerHTML = `
                 <td class="px-5 py-3 font-mono text-xs text-[#8BA4A8]">#${pos.ticket}</td>
                 <td class="px-5 py-3 font-bold text-[#00E5F2]">${pos.ticker}</td>
+                <td class="px-5 py-3 font-mono text-xs"><span class="px-2 py-0.5 rounded bg-[#111C21] border border-[#1A2A30] text-[#D6E5E3] font-semibold">${pos.sector || 'Uncategorized'}</span></td>
                 <td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${actionBg}">${actionStr}</span></td>
                 <td class="px-5 py-3 font-mono">${pos.quantity}</td>
                 <td class="px-5 py-3 font-mono">$${parseFloat(pos.avg_entry_price).toFixed(2)}</td>

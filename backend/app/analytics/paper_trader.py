@@ -3,6 +3,7 @@ import sys
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
+from collections import defaultdict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ from backend.app.analytics.mt5_bridge import (
     modify_position_sltp,
     get_open_positions,
     get_closed_deals,
-    MIMIR_MAGIC
+    MIMIR_MAGIC,
+    STAT_ARB_MAGIC
 )
 
 settings = get_settings()
@@ -219,8 +221,10 @@ def init_paper_trading_db(force: bool = False):
             ADD COLUMN IF NOT EXISTS mt5_magic INTEGER DEFAULT 202409,
             ADD COLUMN IF NOT EXISTS mt5_enabled BOOLEAN DEFAULT TRUE,
             ADD COLUMN IF NOT EXISTS ignore_market_hours BOOLEAN DEFAULT FALSE,
-            ADD COLUMN IF NOT EXISTS max_open_positions INTEGER DEFAULT 5,
-            ADD COLUMN IF NOT EXISTS min_conviction_score FLOAT DEFAULT 0.65;
+            ADD COLUMN IF NOT EXISTS max_open_positions INTEGER DEFAULT 15,
+            ADD COLUMN IF NOT EXISTS max_positions_per_sector INTEGER DEFAULT 2,
+            ADD COLUMN IF NOT EXISTS max_sector_exposure_pct FLOAT DEFAULT 25.0,
+            ADD COLUMN IF NOT EXISTS min_conviction_score FLOAT DEFAULT 0.75;
         """)
 
         # Upgrade default 3.0/6.0 parameters to ATR-optimized 4.5/8.0
@@ -230,13 +234,23 @@ def init_paper_trading_db(force: bool = False):
             WHERE stop_loss_pct = 3.0 AND take_profit_pct = 6.0;
         """)
 
+        # Upgrade legacy 5-position limit to institutional 15-position portfolio, max 2 per sector
+        cur.execute(f"""
+            UPDATE {schema}.mimir_paper_trading_config
+            SET max_open_positions = 15,
+                max_positions_per_sector = 2,
+                max_sector_exposure_pct = COALESCE(max_sector_exposure_pct, 25.0),
+                min_conviction_score = 0.75
+            WHERE max_positions_per_sector IS NULL OR max_positions_per_sector > 2;
+        """)
+
         # Seed default row if empty
         cur.execute(f"SELECT COUNT(*) FROM {schema}.mimir_paper_trading_config")
         if cur.fetchone()[0] == 0:
             cur.execute(f"""
                 INSERT INTO {schema}.mimir_paper_trading_config 
-                (is_enabled, execution_mode, min_win_rate, min_sentiment_score, position_size_type, position_size_value, initial_capital, stop_loss_pct, take_profit_pct, auto_exit_on_hold_days, us_stocks_only, mt5_magic, mt5_enabled, ignore_market_hours, max_open_positions, min_conviction_score)
-                VALUES (TRUE, 'AUTO', 55.0, 0.0, 'FIXED_USD', 500.0, 100000.0, 4.5, 8.0, TRUE, TRUE, 202409, TRUE, FALSE, 5, 0.65)
+                (is_enabled, execution_mode, min_win_rate, min_sentiment_score, position_size_type, position_size_value, initial_capital, stop_loss_pct, take_profit_pct, auto_exit_on_hold_days, us_stocks_only, mt5_magic, mt5_enabled, ignore_market_hours, max_open_positions, max_positions_per_sector, max_sector_exposure_pct, min_conviction_score)
+                VALUES (TRUE, 'AUTO', 55.0, 0.0, 'FIXED_USD', 1000.0, 100000.0, 4.5, 8.0, TRUE, TRUE, 202409, TRUE, FALSE, 15, 2, 25.0, 0.75)
             """)
 
         # 2. Paper Trade Log Table (with MT5 references)
@@ -306,8 +320,10 @@ def get_paper_config() -> Dict[str, Any]:
                    position_size_type, position_size_value, initial_capital, 
                    stop_loss_pct, take_profit_pct, auto_exit_on_hold_days, us_stocks_only, 
                    mt5_magic, mt5_enabled, ignore_market_hours,
-                   COALESCE(max_open_positions, 5) as max_open_positions,
-                   COALESCE(min_conviction_score, 0.65) as min_conviction_score,
+                   COALESCE(max_open_positions, 15) as max_open_positions,
+                   COALESCE(max_positions_per_sector, 2) as max_positions_per_sector,
+                   COALESCE(max_sector_exposure_pct, 25.0) as max_sector_exposure_pct,
+                   COALESCE(min_conviction_score, 0.75) as min_conviction_score,
                    updated_at
             FROM {settings.mimir_schema}.mimir_paper_trading_config
             ORDER BY id ASC LIMIT 1
@@ -324,9 +340,13 @@ def get_paper_config() -> Dict[str, Any]:
             if res.get("ignore_market_hours") is None:
                 res["ignore_market_hours"] = False
             if res.get("max_open_positions") is None:
-                res["max_open_positions"] = 5
+                res["max_open_positions"] = 15
+            if res.get("max_positions_per_sector") is None:
+                res["max_positions_per_sector"] = 2
+            if res.get("max_sector_exposure_pct") is None:
+                res["max_sector_exposure_pct"] = 25.0
             if res.get("min_conviction_score") is None:
-                res["min_conviction_score"] = 0.65
+                res["min_conviction_score"] = 0.75
             return res
         return {
             "is_enabled": True,
@@ -334,15 +354,19 @@ def get_paper_config() -> Dict[str, Any]:
             "min_win_rate": 55.0,
             "min_sentiment_score": 0.0,
             "position_size_type": "FIXED_USD",
-            "position_size_value": 500.0,
+            "position_size_value": 1000.0,
             "initial_capital": 100000.0,
-            "stop_loss_pct": 3.0,
-            "take_profit_pct": 6.0,
+            "stop_loss_pct": 4.5,
+            "take_profit_pct": 8.0,
             "auto_exit_on_hold_days": True,
             "us_stocks_only": True,
             "mt5_magic": MIMIR_MAGIC,
             "mt5_enabled": True,
-            "ignore_market_hours": False
+            "ignore_market_hours": False,
+            "max_open_positions": 15,
+            "max_positions_per_sector": 2,
+            "max_sector_exposure_pct": 25.0,
+            "min_conviction_score": 0.75
         }
     finally:
         cur.close()
@@ -372,6 +396,10 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
                 mt5_magic = COALESCE(%s, mt5_magic),
                 mt5_enabled = COALESCE(%s, mt5_enabled),
                 ignore_market_hours = COALESCE(%s, ignore_market_hours),
+                max_open_positions = COALESCE(%s, max_open_positions),
+                max_positions_per_sector = COALESCE(%s, max_positions_per_sector),
+                max_sector_exposure_pct = COALESCE(%s, max_sector_exposure_pct),
+                min_conviction_score = COALESCE(%s, min_conviction_score),
                 updated_at = NOW()
             WHERE id = (SELECT id FROM {schema}.mimir_paper_trading_config ORDER BY id ASC LIMIT 1)
         """, (
@@ -388,7 +416,11 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
             updates.get("us_stocks_only"),
             updates.get("mt5_magic"),
             updates.get("mt5_enabled"),
-            updates.get("ignore_market_hours")
+            updates.get("ignore_market_hours"),
+            updates.get("max_open_positions"),
+            updates.get("max_positions_per_sector"),
+            updates.get("max_sector_exposure_pct"),
+            updates.get("min_conviction_score")
         ))
         conn.commit()
         return get_paper_config()
@@ -398,6 +430,88 @@ def update_paper_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     finally:
         cur.close()
         conn.close()
+
+
+def get_active_portfolio_composition(
+    open_positions: Optional[List[Dict[str, Any]]] = None,
+    config: Optional[Dict[str, Any]] = None,
+    conn = None
+) -> Dict[str, Any]:
+    """
+    Analyzes active MT5 positions and calculates portfolio-wide concentration metrics
+    including total capacity, position counts per sector, dollar exposures, and NAV weights.
+    """
+    if config is None:
+        config = get_paper_config()
+
+    if open_positions is None:
+        open_positions = get_open_positions(magic_only=int(config.get("mt5_magic", MIMIR_MAGIC)))
+
+    max_open_pos = int(config.get("max_open_positions", 15))
+    max_per_sector = int(config.get("max_positions_per_sector", 2))
+    max_sector_pct = float(config.get("max_sector_exposure_pct", 25.0))
+
+    account_status = get_terminal_and_account_status()
+    total_equity = float(account_status.get("equity") or config.get("initial_capital", 100000.0))
+    if total_equity <= 0:
+        total_equity = 100000.0
+
+    from backend.app.services.sector_rotation_service import get_ticker_sector_tailwinds
+
+    sector_counts = defaultdict(int)
+    sector_exposure_usd = defaultdict(float)
+    sector_tickers = defaultdict(list)
+    total_open_value = 0.0
+
+    for p in open_positions:
+        t = p.get("ticker", "").upper().strip()
+        if not t:
+            continue
+        val = float(p.get("current_value") or (float(p.get("price_current", 0.0)) * float(p.get("volume", 0.0))))
+        total_open_value += val
+
+        sec_info = get_ticker_sector_tailwinds(t, conn=conn)
+        sec_name = sec_info.get("sector_name", "Uncategorized")
+        
+        sector_counts[sec_name] += 1
+        sector_exposure_usd[sec_name] += val
+        sector_tickers[sec_name].append(t)
+
+    sector_exposure_pct = {}
+    sector_details = []
+
+    for sec_name, count in sector_counts.items():
+        exp_usd = sector_exposure_usd[sec_name]
+        pct = (exp_usd / total_equity) * 100.0 if total_equity > 0 else 0.0
+        sector_exposure_pct[sec_name] = round(pct, 2)
+        
+        is_capped = (count >= max_per_sector) or (pct >= max_sector_pct)
+        sector_details.append({
+            "sector": sec_name,
+            "count": count,
+            "max_count": max_per_sector,
+            "exposure_usd": round(exp_usd, 2),
+            "exposure_pct": round(pct, 1),
+            "is_capped": is_capped,
+            "status": "CAPPED" if is_capped else ("HIGH" if count >= max_per_sector - 1 else "BALANCED"),
+            "tickers": sector_tickers[sec_name]
+        })
+
+    sector_details.sort(key=lambda x: x["count"], reverse=True)
+
+    return {
+        "total_open_positions": len(open_positions),
+        "max_open_positions": max_open_pos,
+        "total_open_value_usd": round(total_open_value, 2),
+        "total_equity": round(total_equity, 2),
+        "portfolio_utilization_pct": round((total_open_value / total_equity) * 100.0, 1) if total_equity > 0 else 0.0,
+        "max_positions_per_sector": max_per_sector,
+        "max_sector_exposure_pct": max_sector_pct,
+        "sector_counts": dict(sector_counts),
+        "sector_exposure_usd": dict(sector_exposure_usd),
+        "sector_exposure_pct": sector_exposure_pct,
+        "sector_details": sector_details
+    }
 
 
 def execute_single_paper_trade(
@@ -431,6 +545,23 @@ def execute_single_paper_trade(
     if us_only and not is_us_stock(ticker):
         return {"success": False, "status": "NON_US", "message": f"{ticker} is not an eligible US stock."}
 
+    # Strict Alpha Architecture: Only authorized catalysts and protective exits are permitted to execute
+    ALLOWED_CATALYSTS = {
+        "WAR_RIG_CONVERGENCE",
+        "STAT_ARB_PAIR",
+        "TRAILING_STOP",
+        "STOP_LOSS",
+        "PROFIT_RATCHET",
+        "TIME_DECAY_EXIT"
+    }
+    is_exit = signal_type in ("SELL", "CLOSE", "EXIT")
+    if not force and not is_exit and catalyst_type not in ALLOWED_CATALYSTS:
+        return {
+            "success": False,
+            "status": "NON_WAR_RIG_REJECTED",
+            "message": f"Execution rejected: Catalyst '{catalyst_type}' is not authorized for MT5 execution (only War Rig convergence, Stat-Arb APU pairs, or protective exits permitted)."
+        }
+
     # Market hours check
     ignore_hours = config.get("ignore_market_hours", False)
     if not force and not is_execution_allowed(ignore_market_hours=ignore_hours):
@@ -457,16 +588,51 @@ def execute_single_paper_trade(
         }
 
     # Open positions check
-    open_positions = get_open_positions()
+    magic = STAT_ARB_MAGIC if catalyst_type == "STAT_ARB_PAIR" else int(config.get("mt5_magic", MIMIR_MAGIC))
+    open_positions = get_open_positions(magic_only=magic)
     open_tickers = {p["ticker"].upper() for p in open_positions}
-    max_open_pos = int(config.get("max_open_positions", 5))
+    max_open_pos = int(config.get("max_open_positions", 15))
+    max_positions_per_sector = int(config.get("max_positions_per_sector", 2))
+    max_sector_exposure_pct = float(config.get("max_sector_exposure_pct", 25.0))
 
     if signal_type == "BUY" and ticker in open_tickers:
         return {"success": False, "status": "ALREADY_HELD", "message": f"Position in {ticker} is already active in MT5."}
     if signal_type == "BUY" and len(open_tickers) >= max_open_pos and not force:
-        return {"success": False, "status": "MAX_POSITIONS_REACHED", "message": f"Portfolio concurrency limit ({max_open_pos}) reached."}
-    if signal_type == "SELL" and ticker not in open_tickers:
-        return {"success": False, "status": "NOT_HELD", "message": f"Cannot SELL {ticker}: not currently held in MT5."}
+        return {"success": False, "status": "MAX_POSITIONS_REACHED", "message": f"Portfolio concurrency limit ({max_open_pos} positions) reached."}
+    if is_exit and ticker not in open_tickers:
+        return {"success": False, "status": "NOT_HELD", "message": f"Cannot exit {ticker}: not currently held in MT5."}
+
+    # Institutional Portfolio Composition & Sector Concentration Gate
+    if signal_type == "BUY" and not force:
+        composition = get_active_portfolio_composition(open_positions=open_positions, config=config, conn=conn)
+        from backend.app.services.sector_rotation_service import get_ticker_sector_tailwinds
+        sec_info = get_ticker_sector_tailwinds(ticker, conn=conn)
+        incoming_sector = sec_info.get("sector_name", "Uncategorized")
+
+        current_sector_count = composition.get("sector_counts", {}).get(incoming_sector, 0)
+        current_sector_pct = composition.get("sector_exposure_pct", {}).get(incoming_sector, 0.0)
+
+        if current_sector_count >= max_positions_per_sector:
+            print(f"[PAPER_TRADER RISK GATE] Rejected {ticker}: Sector cap reached ({current_sector_count}/{max_positions_per_sector} in {incoming_sector}).")
+            return {
+                "success": False,
+                "status": "SECTOR_HEAT_LIMIT",
+                "sector": incoming_sector,
+                "sector_count": current_sector_count,
+                "max_sector_count": max_positions_per_sector,
+                "message": f"Sector heat limit reached: already holding {current_sector_count}/{max_positions_per_sector} positions in {incoming_sector}."
+            }
+
+        if current_sector_pct >= max_sector_exposure_pct:
+            print(f"[PAPER_TRADER RISK GATE] Rejected {ticker}: Sector exposure cap reached ({current_sector_pct:.1f}%/{max_sector_exposure_pct:.1f}% in {incoming_sector}).")
+            return {
+                "success": False,
+                "status": "SECTOR_EXPOSURE_CAPPED",
+                "sector": incoming_sector,
+                "sector_exposure_pct": current_sector_pct,
+                "max_sector_exposure_pct": max_sector_exposure_pct,
+                "message": f"Sector exposure cap reached: {current_sector_pct:.1f}% already allocated to {incoming_sector} (max {max_sector_exposure_pct:.1f}%)."
+            }
 
     close_conn = False
     if conn is None:
@@ -521,34 +687,39 @@ def execute_single_paper_trade(
         trade_tp_pct = max(trade_tp_pct, round(trade_sl_pct * 1.67, 2))
 
         # Order placement
-        order_comment = f"MIMIR:{signal_id}" if signal_id else f"MIMIR:{ticker}"
-        order_res = send_market_order(
-            ticker=ticker,
-            action=signal_type,
-            target_usd=trade_alloc,
-            fixed_quantity=fixed_quantity,
-            sl_pct=trade_sl_pct,
-            tp_pct=trade_tp_pct,
-            sl_price=stop_loss,
-            tp_price=target_price,
-            comment=order_comment,
-            magic=magic
-        )
+        if is_exit:
+            order_res = close_position(ticker=ticker)
+        else:
+            order_comment = f"MIMIR:{signal_id}" if signal_id else f"MIMIR:{ticker}"
+            order_res = send_market_order(
+                ticker=ticker,
+                action=signal_type,
+                target_usd=trade_alloc,
+                fixed_quantity=fixed_quantity,
+                sl_pct=trade_sl_pct,
+                tp_pct=trade_tp_pct,
+                sl_price=stop_loss,
+                tp_price=target_price,
+                comment=order_comment,
+                magic=magic
+            )
 
         if order_res.get("success"):
             mt5_ticket = order_res.get("ticket") or order_res.get("order_id")
-            exec_price = float(order_res.get("price", trigger_price))
+            exec_price = float(order_res.get("close_price") or order_res.get("price", trigger_price))
             exec_vol = float(order_res.get("volume", 1.0))
             gmt_plus_7 = timezone(timedelta(hours=7))
             now_local = datetime.now(gmt_plus_7)
             schema = settings.mimir_schema
+            exit_reason = (catalyst_type or 'ALERT_EXIT') if is_exit else 'ALERT_EXECUTION'
+            realized_pnl = float(order_res.get("profit", 0.0)) if is_exit else None
 
             # Insert into paper trade log
             cur.execute(f"""
                 INSERT INTO {schema}.mimir_paper_trade_log
-                (signal_id, ticker, action, entry_price, quantity, entry_time, exit_reason, notes, mt5_ticket)
-                VALUES (%s, %s, %s, %s, %s, %s, 'ALERT_EXECUTION', %s, %s)
-            """, (signal_id, ticker, signal_type, exec_price, exec_vol, now_local, reason, mt5_ticket))
+                (signal_id, ticker, action, entry_price, exit_price, quantity, entry_time, exit_time, exit_reason, realized_pnl, notes, mt5_ticket)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (signal_id, ticker, signal_type, exec_price, exec_price if is_exit else None, exec_vol, now_local, now_local if is_exit else None, exit_reason, realized_pnl, reason, mt5_ticket))
 
             # Insert into paper portfolio
             cur.execute(f"""
@@ -566,6 +737,23 @@ def execute_single_paper_trade(
                 """, (now_local, signal_id))
 
             conn.commit()
+
+            if is_exit:
+                try:
+                    from backend.app.services.discord_notifier import send_trade_closed_alert
+                    send_trade_closed_alert(
+                        ticker=ticker,
+                        ticket=mt5_ticket,
+                        exit_reason=exit_reason,
+                        entry_price=exec_price,
+                        exit_price=exec_price,
+                        volume=exec_vol,
+                        realized_pnl=realized_pnl,
+                        notes=reason
+                    )
+                except Exception as ce_err:
+                    logger.warning(f"[PAPER_TRADER] Discord exit dispatch error: {ce_err}")
+
             return {
                 "success": True,
                 "status": "EXECUTED",
@@ -642,11 +830,12 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
     us_only = config.get("us_stocks_only", True)
     min_win_rate = float(config.get("min_win_rate", 55.0))
     min_sentiment = float(config.get("min_sentiment_score", 0.0))
-    min_conviction = float(config.get("min_conviction_score", 0.65))
-    max_open_pos = int(config.get("max_open_positions", 5))
+    min_conviction = float(config.get("min_conviction_score", 0.75))
+    max_open_pos = int(config.get("max_open_positions", 15))
+    magic = int(config.get("mt5_magic", MIMIR_MAGIC))
 
-    # Get active open positions in MT5 to prevent duplicate positions and enforce concurrency
-    open_positions = get_open_positions()
+    # Get active open positions in MT5 for MIMIR War Rig to prevent duplicate positions and enforce concurrency
+    open_positions = get_open_positions(magic_only=magic)
     open_tickers = {p["ticker"].upper() for p in open_positions}
 
     conn = get_db_connection_dict()
@@ -656,7 +845,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
 
     try:
         schema = settings.mimir_schema
-        # Fetch pending alerts joined with ticker parameters (including target_price & stop_loss)
+        # Institutional Priority Queue: Rank pending alerts by conviction score DESC, upside potential DESC, then FIFO
         cur.execute(f"""
             SELECT s.id, s.ticker, s.signal_type, s.trigger_price, s.rsi_value, s.sentiment_score,
                    s.support_level, s.resistance_level, s.reason, s.created_at,
@@ -666,7 +855,14 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             FROM {schema}.mimir_trade_signals s
             LEFT JOIN {schema}.mimir_ticker_parameters p ON s.ticker = p.ticker
             WHERE s.status = 'PENDING'
-            ORDER BY s.created_at ASC
+            ORDER BY 
+                COALESCE(s.conviction_score, 0.5) DESC,
+                CASE 
+                    WHEN s.trigger_price > 0 AND s.target_price IS NOT NULL 
+                    THEN ((s.target_price - s.trigger_price) / s.trigger_price) 
+                    ELSE 0 
+                END DESC,
+                s.created_at ASC
         """)
         pending_alerts = cur.fetchall()
 
@@ -679,39 +875,37 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             signal_type = alert["signal_type"].upper()
             trigger_price = float(alert["trigger_price"])
             cat_type = alert.get("catalyst_type") or ""
-            is_institutional = cat_type in ["WAR_RIG_CONVERGENCE", "PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER"]
 
-            # Filter rules
+            # Strict Alpha Architecture: Only authorized catalysts and protective exits are eligible
+            ALLOWED_CYCLE_CATALYSTS = {
+                "WAR_RIG_CONVERGENCE",
+                "STAT_ARB_PAIR",
+                "TRAILING_STOP",
+                "STOP_LOSS",
+                "PROFIT_RATCHET",
+                "TIME_DECAY_EXIT"
+            }
+            is_exit_signal = signal_type in ("SELL", "CLOSE", "EXIT")
+            if not is_exit_signal and cat_type not in ALLOWED_CYCLE_CATALYSTS:
+                continue
+
+            # Filter rules: US equities only
             if us_only and not is_us_stock(ticker):
                 continue
 
-            if not is_institutional:
-                win_rate = float(alert["win_rate"])
-                sentiment = float(alert["sentiment_score"] or 0.0)
-                conviction = float(alert.get("conviction_score") or 0.5)
-                if win_rate < min_win_rate or sentiment < min_sentiment or conviction < min_conviction:
-                    continue
+            # Conviction threshold check
+            conviction = float(alert.get("conviction_score") or 0.5)
+            if conviction < min_conviction:
+                continue
 
-            # Prevent position stacking for BUY
+            # Prevent duplicate position stacking for BUY
             if signal_type == "BUY" and ticker in open_tickers:
                 continue
 
             # Check open positions limit
             if signal_type == "BUY" and len(open_tickers) >= max_open_pos:
-                print(f"[PAPER_TRADER] Portfolio concurrency limit reached ({len(open_tickers)}/{max_open_pos} positions). Deferring {ticker}.")
-                continue
-
-            # Daily Entry Pacing (exempt institutional convergence setups)
-            if signal_type == "BUY" and not is_institutional:
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {schema}.mimir_paper_trade_log
-                    WHERE entry_time::date = %s
-                """, (now_local.date(),))
-                today_count_row = cur.fetchone()
-                today_entries = (today_count_row["count"] if isinstance(today_count_row, dict) else today_count_row[0]) if today_count_row else 0
-                if today_entries >= 2:
-                    print(f"[PAPER_TRADER] Daily entry pacing limit reached ({today_entries}/2 trades today). Deferring entry for {ticker}.")
-                    continue
+                print(f"[PAPER_TRADER] Portfolio concurrency limit reached ({len(open_tickers)}/{max_open_pos} positions). Ending BUY execution sweep.")
+                break
 
             # Execute trade via execute_single_paper_trade
             res = execute_single_paper_trade(
@@ -721,7 +915,7 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                 trigger_price=trigger_price,
                 target_price=float(alert["target_price"]) if alert.get("target_price") else None,
                 stop_loss=float(alert["stop_loss"]) if alert.get("stop_loss") else None,
-                conviction_score=float(alert.get("conviction_score") or 0.5),
+                conviction_score=conviction,
                 catalyst_type=cat_type,
                 reason=alert.get("reason"),
                 conn=conn
@@ -772,7 +966,8 @@ def process_paper_position_exits() -> Dict[str, Any]:
             "message": "Paper position exits paused: outside US regular market hours (09:30-16:00 ET) or during retail blackout windows (09:30-10:15 & 15:45-16:00 ET)."
         }
 
-    positions = get_open_positions()
+    magic = int(config.get("mt5_magic", MIMIR_MAGIC))
+    positions = get_open_positions(magic_only=magic)
     if not positions:
         return {"closed_count": 0, "message": "No open MT5 positions to evaluate."}
 
@@ -794,8 +989,10 @@ def process_paper_position_exits() -> Dict[str, Any]:
 
             open_dt = datetime.strptime(open_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=gmt_plus_7)
 
-            # Upgrade 3: Dynamic Breakeven Stop Ratchet
-            # If position has gained >= +3.0% and SL is below entry, ratchet SL to breakeven (+0.5%)
+            # Phase 2 Upgrade: Full 3-Tier Profit Ratchet Ladder
+            # Tier 1 (+3% gain) -> Lock +0.5% profit
+            # Tier 2 (+6% gain) -> Lock +3.5% profit
+            # Tier 3 (+10% gain) -> Lock +7.5% profit
             entry_price = float(pos.get("avg_entry_price", 0.0))
             curr_price = float(pos.get("current_price", 0.0))
             curr_sl = float(pos.get("sl", 0.0))
@@ -804,13 +1001,44 @@ def process_paper_position_exits() -> Dict[str, Any]:
 
             if entry_price > 0 and pos_ticket:
                 gain_pct = ((curr_price - entry_price) / entry_price) * 100.0 if is_buy else ((entry_price - curr_price) / entry_price) * 100.0
-                if gain_pct >= 3.0:
-                    be_sl = round(entry_price * 1.005, 2) if is_buy else round(entry_price * 0.995, 2)
-                    should_ratchet = (curr_sl < be_sl) if is_buy else (curr_sl > be_sl or curr_sl == 0.0)
+                target_sl = None
+                tier_label = ""
+                locked_pct = 0.0
+
+                if gain_pct >= 10.0:
+                    target_sl = round(entry_price * 1.075, 2) if is_buy else round(entry_price * 0.925, 2)
+                    tier_label = "Tier 3 (+10%)"
+                    locked_pct = 7.5
+                elif gain_pct >= 6.0:
+                    target_sl = round(entry_price * 1.035, 2) if is_buy else round(entry_price * 0.965, 2)
+                    tier_label = "Tier 2 (+6%)"
+                    locked_pct = 3.5
+                elif gain_pct >= 3.0:
+                    target_sl = round(entry_price * 1.005, 2) if is_buy else round(entry_price * 0.995, 2)
+                    tier_label = "Tier 1 (+3%)"
+                    locked_pct = 0.5
+
+                if target_sl is not None:
+                    should_ratchet = (curr_sl < target_sl) if is_buy else (curr_sl > target_sl or curr_sl == 0.0)
                     if should_ratchet:
-                        mod_res = modify_position_sltp(ticket=pos_ticket, sl=be_sl)
+                        mod_res = modify_position_sltp(ticket=pos_ticket, sl=target_sl)
                         if mod_res.get("success"):
-                            print(f"[PAPER_TRADER] Dynamic Breakeven: Ratcheted SL for {ticker} (#{pos_ticket}) to ${be_sl} (Locked +0.5% profit at {gain_pct:+.1f}% gain).")
+                            print(f"[PAPER_TRADER] Profit Ratchet ({tier_label}): Ratcheted SL for {ticker} (#{pos_ticket}) to ${target_sl} (Locked +{locked_pct}% profit at {gain_pct:+.1f}% gain).")
+                            try:
+                                from backend.app.services.discord_notifier import send_ratchet_alert
+                                send_ratchet_alert(
+                                    ticker=ticker,
+                                    ticket=pos_ticket,
+                                    tier_label=tier_label,
+                                    locked_pct=locked_pct,
+                                    old_sl=curr_sl,
+                                    new_sl=target_sl,
+                                    entry_price=entry_price,
+                                    current_price=curr_price,
+                                    gain_pct=gain_pct
+                                )
+                            except Exception as r_err:
+                                logger.warning(f"[PAPER_TRADER] Failed to dispatch Discord ratchet alert: {r_err}")
 
             cur.execute(f"SELECT optimal_hold_days FROM {schema}.mimir_ticker_parameters WHERE ticker = %s", (ticker,))
             row = cur.fetchone()
@@ -844,6 +1072,21 @@ def process_paper_position_exits() -> Dict[str, Any]:
                         VALUES (%s, 'SELL', %s, %s, %s, %s, %s, 'HOLD_EXPIRATION', %s, 'Auto-closed on hold maturity', %s)
                     """, (ticker, pos["avg_entry_price"], pos["current_price"], pos["quantity"], open_dt, now_local, pos["unrealized_pnl"], pos["ticket"]))
 
+                    try:
+                        from backend.app.services.discord_notifier import send_trade_closed_alert
+                        send_trade_closed_alert(
+                            ticker=ticker,
+                            ticket=pos["ticket"],
+                            exit_reason="HOLD_EXPIRATION",
+                            entry_price=float(pos.get("avg_entry_price", 0.0)),
+                            exit_price=float(pos.get("current_price", 0.0)),
+                            volume=float(pos.get("quantity", 1.0)),
+                            realized_pnl=float(pos.get("unrealized_pnl") or 0.0),
+                            notes=f"Auto-closed on hold maturity ({hold_days} days held)"
+                        )
+                    except Exception as c_err:
+                        logger.warning(f"[PAPER_TRADER] Failed to dispatch Discord hold-close alert: {c_err}")
+
         conn.commit()
         return {
             "closed_count": closed_count,
@@ -865,8 +1108,17 @@ def get_paper_trading_summary() -> Dict[str, Any]:
     """
     config = get_paper_config()
     mt5_status = get_terminal_and_account_status()
-    open_positions = get_open_positions()
+    magic = int(config.get("mt5_magic", MIMIR_MAGIC))
+    open_positions = get_open_positions(magic_only=magic)
     closed_deals = get_closed_deals(days=90)
+
+    # Enrich open positions with sector classification
+    from backend.app.services.sector_rotation_service import get_ticker_sector_tailwinds
+    for p in open_positions:
+        sec_info = get_ticker_sector_tailwinds(p.get("ticker", ""))
+        p["sector"] = sec_info.get("sector_name", "Uncategorized")
+
+    portfolio_composition = get_active_portfolio_composition(open_positions=open_positions, config=config)
 
     # Compute open metrics
     total_open_value = sum(p["current_value"] for p in open_positions)
@@ -933,6 +1185,7 @@ def get_paper_trading_summary() -> Dict[str, Any]:
         "win_rate_pct": win_rate_pct,
         "active_positions": active_positions_dict,
         "active_positions_list": open_positions,
+        "portfolio_composition": portfolio_composition,
         "trade_logs": display_logs,
         "is_mt5_live": mt5_status.get("connected", False)
     }

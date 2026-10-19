@@ -1,11 +1,14 @@
 # backend/app/pipeline/sentiment_processor.py
 import psycopg2
 from psycopg2.extras import execute_values
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from backend.app.database import get_db_connection
 from backend.app.sentiment.deepseek_client import DeepSeekSentiment
 from backend.app.sentiment.asset_mapper import resolve_ticker, resolve_country_code, resolve_region
+
+# Anti-spam cache for breaking intelligence alerts (4-hour cooldown per topic/asset)
+_RECENT_BREAKING_ALERTS = {}
 
 # Spillover integration (lazy init — ponytail: avoids circular import at module level)
 _spillover_engine = None
@@ -42,9 +45,38 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
     Process one article: score it, insert impacts, update status.
     Returns:
         >0 : number of impacts inserted
-         0 : no assets found (status set to 'empty')
+         0 : no assets found, noise, or duplicate (skipped with 0 tokens spent)
         -1 : error occurred (status set to 'pending' for retry)
     """
+    from backend.app.sentiment.pre_scoring_filter import is_noise_or_junk, get_headline_deduplicator
+
+    # --- Pre-LLM Noise & Clickbait Interceptor ---
+    is_junk, junk_reason = is_noise_or_junk(title, summary or "")
+    if is_junk:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'noise' WHERE id = %s", (article_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"  [Pre-Filter] Article {article_id} dropped as NOISE ({junk_reason}) -> 0 tokens spent.")
+        return 0
+
+    # --- Pre-LLM Semantic Deduplication Interceptor ---
+    deduper = get_headline_deduplicator()
+    is_dup, matched_id, dup_reason = deduper.is_duplicate(title, article_id=article_id)
+    if is_dup:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'duplicate' WHERE id = %s", (article_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"  [Pre-Filter] Article {article_id} dropped as DUPLICATE ({dup_reason} matches #{matched_id}) -> 0 tokens spent.")
+        return 0
+
+    deduper.register(title, article_id)
+
     client = DeepSeekSentiment()
     conn = None
     cur = None
@@ -225,27 +257,58 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 except Exception as macro_err:
                     print(f"  [Thread] [Warning] Macro tracker upsert error: {macro_err}")
 
-        # 4. Detect and Dispatch Breaking Global Market-Moving Events
+        # 4. Detect and Dispatch Breaking Global Market-Moving Events (Intelligent Velocity & Anti-Spam Gate)
         title_lower = title.lower()
-        global_keywords = ["war", "tariff", "sanction", "fed", "cpi", "inflation", "yield", "crisis", "conflict", "emergency", "white house", "central bank"]
-        if any(kw in title_lower for kw in global_keywords) or any(abs(imp[6]) >= 0.75 for imp in impacts):
+        max_score = max([imp[6] for imp in impacts], key=abs) if impacts else 0.0
+        affected = [imp[11] for imp in impacts if imp[11]]
+
+        is_extreme_magnitude = abs(max_score) >= 0.85
+        critical_keywords = ["war", "strike", "missile", "invade", "sanction", "emergency", "default", "coup", "bailout", "fomc emergency"]
+        is_critical_crisis = any(w in title_lower for w in critical_keywords) and abs(max_score) >= 0.50
+
+        # Check for multi-source velocity if not an extreme single shock
+        should_alert = is_extreme_magnitude or is_critical_crisis
+        if not should_alert and affected:
             try:
-                from backend.app.services.discord_notifier import send_global_breaking_alert
-                cat_label = "GEOPOLITICS / WAR" if any(w in title_lower for w in ["war", "conflict", "sanction", "military"]) else \
-                            "CENTRAL BANK / MACRO" if any(w in title_lower for w in ["fed", "cpi", "inflation", "yield", "rate"]) else \
-                            "MAJOR MARKET IMPULSE"
-                max_score = max([imp[6] for imp in impacts], key=abs) if impacts else 0.0
-                affected = [imp[11] for imp in impacts if imp[11]]
-                send_global_breaking_alert(
-                    event_category=cat_label,
-                    headline=title,
-                    summary=summary or "",
-                    source=impacts[0][1] if impacts else "MIMIR Feed",
-                    sentiment_score=max_score,
-                    affected_assets=affected
-                )
-            except Exception as break_err:
-                print(f"  [Thread] [Warning] Global breaking alert error: {break_err}")
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                    WHERE si.ticker = %s
+                      AND a.published_ts >= NOW() - INTERVAL '60 minutes'
+                      AND ABS(si.sentiment_score) >= 0.40
+                """, (affected[0],))
+                v_count = cur.fetchone()[0]
+                if v_count >= 2:
+                    should_alert = True
+            except Exception:
+                pass
+
+        if should_alert:
+            # Anti-spam cooldown (4 hours per primary asset or topic cluster)
+            alert_key = affected[0] if affected else title_lower[:40]
+            now_utc = datetime.now(timezone.utc)
+            last_alerted = _RECENT_BREAKING_ALERTS.get(alert_key)
+            if not last_alerted or (now_utc - last_alerted) >= timedelta(hours=4):
+                try:
+                    from backend.app.services.discord_notifier import send_global_breaking_alert
+                    cat_label = "GEOPOLITICS / WAR" if any(w in title_lower for w in ["war", "conflict", "sanction", "military", "strike", "missile"]) else \
+                                "CENTRAL BANK / MACRO" if any(w in title_lower for w in ["fed", "cpi", "inflation", "yield", "rate", "fomc"]) else \
+                                "CRITICAL MARKET IMPULSE"
+
+                    res = send_global_breaking_alert(
+                        event_category=cat_label,
+                        headline=title,
+                        summary=summary or "",
+                        source=impacts[0][1] if impacts else "MIMIR Feed",
+                        sentiment_score=max_score,
+                        affected_assets=affected
+                    )
+                    if res:
+                        _RECENT_BREAKING_ALERTS[alert_key] = now_utc
+                        print(f"  [Thread] Dispatched Breaking Intelligence Alert to Discord: {title[:60]}")
+                except Exception as break_err:
+                    print(f"  [Thread] [Warning] Global breaking alert error: {break_err}")
 
         # --- Compute spillover impacts (graph-based + thematic) ---
         spillover_inserted = 0
@@ -545,18 +608,46 @@ def process_unscored_articles(batch_size: int = 50, max_workers: int = 4) -> int
         LIMIT %s
     """, (batch_size,))
     articles = cur.fetchall()
-    cur.close()
-    conn.close()
 
     if not articles:
+        cur.close()
+        conn.close()
         print("[MIMIR] No pending articles found.")
         return 0
 
-    # Group articles into chunks of 5
-    CHUNK_SIZE = 5
-    chunks = [articles[i:i + CHUNK_SIZE] for i in range(0, len(articles), CHUNK_SIZE)]
+    # --- Pre-LLM Noise & Deduplication Defense (0 Tokens Spent) ---
+    from backend.app.sentiment.pre_scoring_filter import filter_and_deduplicate_batch
+    art_dicts = [{"id": a[0], "title": a[1], "summary": a[2]} for a in articles]
+    clean_dicts, duplicate_items, noise_items = filter_and_deduplicate_batch(art_dicts)
 
-    print(f"[MIMIR] Processing {len(articles)} articles in {len(chunks)} batched LLM calls across {max_workers} parallel workers...")
+    # Purge noise and duplicates from database queue
+    if noise_items:
+        noise_ids = [item[0] for item in noise_items]
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'noise' WHERE id = ANY(%s)", (noise_ids,))
+        print(f"[PRE_FILTER] Filtered out {len(noise_ids)} noise/clickbait articles (0 tokens spent).")
+
+    if duplicate_items:
+        dup_ids = [item[0] for item in duplicate_items]
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'duplicate' WHERE id = ANY(%s)", (dup_ids,))
+        print(f"[PRE_FILTER] Filtered out {len(dup_ids)} duplicate syndicated articles (0 tokens spent).")
+
+    if noise_items or duplicate_items:
+        conn.commit()
+
+    cur.close()
+    conn.close()
+
+    if not clean_dicts:
+        print("[PRE_FILTER] All pending articles in batch were noise or duplicates. 0 LLM tokens spent.")
+        return 0
+
+    clean_articles = [(d["id"], d["title"], d["summary"]) for d in clean_dicts]
+
+    # Group verified clean articles into chunks of 5
+    CHUNK_SIZE = 5
+    chunks = [clean_articles[i:i + CHUNK_SIZE] for i in range(0, len(clean_articles), CHUNK_SIZE)]
+
+    print(f"[MIMIR] Processing {len(clean_articles)} verified high-signal articles in {len(chunks)} batched LLM calls across {max_workers} parallel workers...")
 
     total_inserted = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -664,25 +755,60 @@ def triage_pending_articles(batch_size: int = 1000) -> int:
         conn.close()
         return 0
         
-    print(f"[TRIAGE] Triaging {len(articles)} articles locally via Python regex (0 LLM tokens)...")
+    print(f"[TRIAGE] Triaging {len(articles)} articles locally via Python regex & deduplicator (0 LLM tokens)...")
     
+    from backend.app.sentiment.pre_scoring_filter import is_noise_or_junk, get_headline_deduplicator
+    deduper = get_headline_deduplicator()
     client = DeepSeekSentiment()
+
     relevant_ids = []
     ignored_ids = []
+    noise_ids = []
+    duplicate_ids = []
     
     for aid, title, summary in articles:
+        # 1. Noise / Clickbait check
+        is_junk, _ = is_noise_or_junk(title, summary or "")
+        if is_junk:
+            noise_ids.append(aid)
+            continue
+
+        # 2. Semantic deduplication check
+        is_dup, _, _ = deduper.is_duplicate(title, article_id=aid)
+        if is_dup:
+            duplicate_ids.append(aid)
+            continue
+
+        # 3. Macro & financial relevance check
         if client.is_financial_or_macro(title, summary or ""):
+            deduper.register(title, aid)
             relevant_ids.append(aid)
         else:
             ignored_ids.append(aid)
             
+    if noise_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'noise' 
+            WHERE id = ANY(%s)
+        """, (noise_ids,))
+        print(f" [TRIAGE] {len(noise_ids)} articles marked as NOISE (clickbait/fluff)")
+
+    if duplicate_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'duplicate' 
+            WHERE id = ANY(%s)
+        """, (duplicate_ids,))
+        print(f" [TRIAGE] {len(duplicate_ids)} articles marked as DUPLICATE (syndicated wire)")
+
     if relevant_ids:
         cur.execute("""
             UPDATE yggdrasil.mimir_raw_articles 
             SET scoring_status = 'pending' 
             WHERE id = ANY(%s)
         """, (relevant_ids,))
-        print(f" [TRIAGE] {len(relevant_ids)} articles marked as PENDING (relevant)")
+        print(f" [TRIAGE] {len(relevant_ids)} articles marked as PENDING (relevant high-signal)")
         
     if ignored_ids:
         cur.execute("""

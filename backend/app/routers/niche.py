@@ -4,13 +4,7 @@ from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from ..database import get_db_connection, get_db_connection_dict
 from ..config import get_settings
-from ..analytics.guerilla_hybrid import get_hybrid_signals
-try:
-    from ..analytics.stat_arb_apu import StatArbAPU, fetch_pair_prices, APU_PAIRS
-except ImportError:
-    StatArbAPU = None
-    fetch_pair_prices = None
-    APU_PAIRS = []
+from ..analytics.stat_arb_apu import StatArbAPU, fetch_pair_prices, APU_PAIRS
 
 router = APIRouter()
 settings = get_settings()
@@ -97,17 +91,13 @@ def get_niche_opportunities(refresh: bool = False):
     Return Stat-Arb APU pair opportunities cross-validated with DeepSeek sentiment and War Rig V8.
     If refresh is True or no active records exist, triggers a fresh master APU scan.
     """
-    if StatArbAPU:
-        try:
-            results = StatArbAPU.run_master_scan()
-            if results:
-                return NicheResponse(opportunities=[Opportunity(**r) for r in results])
-        except Exception as e:
-            print(f"[niche] Live APU scan failed: {e}")
-
-    # Fallback: legacy hybrid scan
-    results = get_hybrid_signals()
-    return NicheResponse(opportunities=[Opportunity(**r) for r in results])
+    try:
+        results = StatArbAPU.run_master_scan()
+        if results:
+            return NicheResponse(opportunities=[Opportunity(**r) for r in results])
+    except Exception as e:
+        print(f"[niche] Live APU scan failed: {e}")
+    return NicheResponse(opportunities=[])
 
 
 @router.get("/niche/performance")
@@ -173,7 +163,7 @@ def get_niche_signal_history(
 
 @router.get("/niche/stats", response_model=NicheStats)
 def get_niche_stats():
-    """Return real-time stats for the Guerilla Quant page."""
+    """Return real-time stats for the Stat-Arb APU page."""
     conn = get_db_connection_dict()
     try:
         cur = conn.cursor()
