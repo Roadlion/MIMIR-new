@@ -17,7 +17,7 @@ from .database import get_db_connection_dict
 
 settings = get_settings()
 
-SECRET_KEY = settings.admin_key or "mimir-quantum-market-reactor-secret-key-2025"
+SECRET_KEY = getattr(settings, "admin_key", None) or "mimir-quantum-market-reactor-secret-key-2025"
 TOKEN_EXPIRY_SECONDS = 86400 * 7  # 7 days
 
 def hash_password(password: str) -> str:
