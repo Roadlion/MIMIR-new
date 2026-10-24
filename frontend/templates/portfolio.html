@@ -33,8 +33,53 @@
             <p class="text-sm text-[#4A6A70] font-mono mt-1">Transaction Ledger • Live Price Tracking • AI Strategic Advice</p>
         </div>
         <div class="flex gap-3">
+            <button id="copilotBudgetBtn" onclick="openCopilotModal()" class="flex items-center gap-2 px-4 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-mono text-sm font-bold rounded transition-all shadow-[0_0_15px_rgba(0,166,178,0.3)]">
+                <i class="fas fa-coins mr-1"></i> Co-Pilot Budget ($)
+            </button>
             <button id="getAdviceBtn" class="flex items-center gap-2 px-4 py-2 bg-[#ffd700] hover:bg-[#cca300] text-[#0c1417] font-mono text-sm font-bold rounded transition-colors shadow-[0_0_15px_rgba(255,215,0,0.2)]">
                 <span><i class="fas fa-wand-sparkles mr-1"></i>Generate AI Strategy</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Co-Pilot IRL Command Card -->
+    <div class="card bg-[#0A161C] border border-[#00A6B2]/40 p-4 rounded-lg shadow-[0_0_20px_rgba(0,166,178,0.08)] flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
+        <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-lg bg-[#00A6B2]/10 border border-[#00A6B2]/30 flex items-center justify-center text-[#00E5F2] text-xl">
+                <i class="fas fa-wallet"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-mono uppercase tracking-wider text-[#00E5F2] font-bold">IRL Co-Pilot Sizing Engine</span>
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Dime! Clean Fractions Active</span>
+                </div>
+                <div class="flex flex-wrap items-baseline gap-4 mt-1 font-mono">
+                    <div>
+                        <span class="text-xs text-[#4A6A70]">Available Dry Powder:</span>
+                        <span id="cpDryPowder" class="text-xl font-bold text-emerald-400 ml-1">$0.00</span>
+                    </div>
+                    <div>
+                        <span class="text-xs text-[#4A6A70]">Total Budget:</span>
+                        <span id="cpTotalBudget" class="text-sm font-bold text-[#D6E5E3] ml-1">$0.00</span>
+                    </div>
+                    <div class="hidden sm:block">
+                        <span class="text-xs text-[#4A6A70]">Risk / Trade:</span>
+                        <span id="cpRiskPct" class="text-xs font-semibold text-[#8BA4A8] ml-1">1.0%</span>
+                    </div>
+                    <div class="hidden sm:block">
+                        <span class="text-xs text-[#4A6A70]">Max Single Pos:</span>
+                        <span id="cpMaxPos" class="text-xs font-semibold text-[#8BA4A8] ml-1">10.0%</span>
+                    </div>
+                    <div class="hidden md:block">
+                        <span class="text-xs text-[#4A6A70]">Max Sector:</span>
+                        <span id="cpMaxSector" class="text-xs font-semibold text-[#8BA4A8] ml-1">25.0%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center gap-2 w-full md:w-auto">
+            <button onclick="openCopilotModal()" class="w-full md:w-auto px-4 py-2 bg-[#00A6B2]/20 hover:bg-[#00A6B2]/30 text-[#00E5F2] border border-[#00A6B2]/50 hover:border-[#00E5F2] rounded text-xs font-mono font-bold transition-all flex items-center justify-center gap-2">
+                <i class="fas fa-sliders-h"></i> Configure Budget & Dry Powder
             </button>
         </div>
     </div>
@@ -2404,5 +2449,194 @@
             });
         }
     });
+
+    // ── Co-Pilot Web UI Management ──────────────────────────────────────────
+    async function loadCopilotConfig() {
+        try {
+            const res = await fetch('/api/v1/copilot/me');
+            if (!res.ok) return;
+            const json = await res.json();
+            const data = json.data;
+            if (!data) return;
+
+            const dpEl = document.getElementById("cpDryPowder");
+            const tbEl = document.getElementById("cpTotalBudget");
+            const rpEl = document.getElementById("cpRiskPct");
+            const mpEl = document.getElementById("cpMaxPos");
+            const msEl = document.getElementById("cpMaxSector");
+
+            if (dpEl) dpEl.textContent = `$${parseFloat(data.dry_powder || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            if (tbEl) tbEl.textContent = `$${parseFloat(data.total_budget || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            if (rpEl) rpEl.textContent = `${parseFloat(data.risk_per_trade_pct || 1.0).toFixed(1)}%`;
+            if (mpEl) mpEl.textContent = `${parseFloat(data.max_position_pct || 10.0).toFixed(1)}%`;
+            if (msEl) msEl.textContent = `${parseFloat(data.max_sector_pct || 25.0).toFixed(1)}%`;
+
+            const inBudget = document.getElementById("cfgTotalBudget");
+            const inDry = document.getElementById("cfgDryPowder");
+            const inRisk = document.getElementById("cfgRiskPct");
+            const inMaxPos = document.getElementById("cfgMaxPosPct");
+            const inMaxSec = document.getElementById("cfgMaxSectorPct");
+            const inWebhook = document.getElementById("cfgWebhook");
+            const inDiscordId = document.getElementById("cfgDiscordId");
+
+            if (inBudget) inBudget.value = data.total_budget;
+            if (inDry) inDry.value = data.dry_powder;
+            if (inRisk) inRisk.value = data.risk_per_trade_pct;
+            if (inMaxPos) inMaxPos.value = data.max_position_pct;
+            if (inMaxSec) inMaxSec.value = data.max_sector_pct;
+            if (inWebhook) inWebhook.value = data.discord_webhook_trades || "";
+            if (inDiscordId) inDiscordId.value = data.discord_id || "";
+        } catch (e) {
+            console.error("Failed to load Co-Pilot config:", e);
+        }
+    }
+
+    function openCopilotModal() {
+        loadCopilotConfig();
+        const m = document.getElementById("copilotModal");
+        if (m) m.classList.remove("hidden");
+    }
+
+    function closeCopilotModal() {
+        const m = document.getElementById("copilotModal");
+        if (m) m.classList.add("hidden");
+    }
+
+    function syncDryPowder() {
+        const b = document.getElementById("cfgTotalBudget");
+        const d = document.getElementById("cfgDryPowder");
+        if (b && d && b.value) d.value = b.value;
+    }
+
+    async function handleSaveCopilotConfig(e) {
+        e.preventDefault();
+        const btn = document.getElementById("saveCopilotBtn");
+        if (btn) btn.disabled = true;
+
+        const payload = {
+            total_budget: parseFloat(document.getElementById("cfgTotalBudget").value) || 0,
+            dry_powder: parseFloat(document.getElementById("cfgDryPowder").value) || 0,
+            risk_per_trade_pct: parseFloat(document.getElementById("cfgRiskPct").value) || 1.0,
+            max_position_pct: parseFloat(document.getElementById("cfgMaxPosPct").value) || 10.0,
+            max_sector_pct: parseFloat(document.getElementById("cfgMaxSectorPct").value) || 25.0,
+            discord_webhook_trades: document.getElementById("cfgWebhook").value.trim(),
+            discord_id: document.getElementById("cfgDiscordId").value.trim(),
+            is_copilot_active: true
+        };
+
+        try {
+            const res = await fetch('/api/v1/copilot/me', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const resJson = await res.json();
+            if (!res.ok) throw new Error(resJson.detail || "Failed to update budget");
+
+            closeCopilotModal();
+            await loadCopilotConfig();
+            alert("✅ Co-Pilot budget and dry powder successfully updated!");
+        } catch (err) {
+            alert("Error saving Co-Pilot budget: " + err.message);
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    window.openCopilotModal = openCopilotModal;
+    window.closeCopilotModal = closeCopilotModal;
+    window.syncDryPowder = syncDryPowder;
+    window.handleSaveCopilotConfig = handleSaveCopilotConfig;
+    document.addEventListener("DOMContentLoaded", loadCopilotConfig);
 </script>
+
+<!-- Co-Pilot Budget & Risk Modal -->
+<div id="copilotModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+    <div class="bg-[#0C1417] border border-[#00A6B2]/50 rounded-xl max-w-lg w-full p-6 shadow-2xl relative font-mono text-xs">
+        <button onclick="closeCopilotModal()" class="absolute top-4 right-4 text-[#4A6A70] hover:text-white transition-colors">
+            <i class="fas fa-times text-base"></i>
+        </button>
+        <div class="flex items-center gap-3 mb-4 border-b border-[#1A2A30] pb-3">
+            <div class="w-9 h-9 rounded-lg bg-[#00A6B2]/10 border border-[#00A6B2]/30 flex items-center justify-center text-[#00E5F2] text-base">
+                <i class="fas fa-sliders-h"></i>
+            </div>
+            <div>
+                <h3 class="text-base font-bold text-[#E8F1F0] font-mono">Co-Pilot Budget & Dry Powder</h3>
+                <p class="text-[11px] text-[#4A6A70]">Personalized Trade Sizing & Dime! Clean Fractional Execution</p>
+            </div>
+        </div>
+
+        <form id="copilotForm" onsubmit="handleSaveCopilotConfig(event)" class="space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-[#8BA4A8] mb-1 font-semibold">Total Portfolio Capital ($)</label>
+                    <input type="number" step="0.01" id="cfgTotalBudget" required
+                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none"
+                        placeholder="e.g. 15000">
+                </div>
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-[#8BA4A8] font-semibold">Dry Powder (Cash $)</label>
+                        <button type="button" onclick="syncDryPowder()" class="text-[10px] text-[#00E5F2] hover:underline">Match Budget</button>
+                    </div>
+                    <input type="number" step="0.01" id="cfgDryPowder" required
+                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-emerald-400 font-mono text-sm font-bold focus:outline-none"
+                        placeholder="e.g. 10000">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-[#8BA4A8] mb-1 font-semibold">Risk / Trade (%)</label>
+                    <input type="number" step="0.1" id="cfgRiskPct" required
+                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none"
+                        placeholder="1.0">
+                </div>
+                <div>
+                    <label class="block text-[#8BA4A8] mb-1 font-semibold">Max Pos Cap (%)</label>
+                    <input type="number" step="0.5" id="cfgMaxPosPct" required
+                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none"
+                        placeholder="10.0">
+                </div>
+                <div>
+                    <label class="block text-[#8BA4A8] mb-1 font-semibold">Max Sector (%)</label>
+                    <input type="number" step="0.5" id="cfgMaxSectorPct" required
+                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none"
+                        placeholder="25.0">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-[#8BA4A8] mb-1 font-semibold">Personal Discord Webhook URL (Optional)</label>
+                <input type="url" id="cfgWebhook"
+                    class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-xs focus:outline-none placeholder-[#4A6A70]"
+                    placeholder="https://discord.com/api/webhooks/...">
+                <p class="text-[10px] text-[#4A6A70] mt-1">Leave blank to use the system default trade alerts channel.</p>
+            </div>
+
+            <div>
+                <label class="block text-[#8BA4A8] mb-1 font-semibold">Discord User ID for @mentions (Optional)</label>
+                <input type="text" id="cfgDiscordId"
+                    class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-xs focus:outline-none placeholder-[#4A6A70]"
+                    placeholder="e.g. 192837465019283746">
+            </div>
+
+            <div class="p-3 bg-[#111C21]/60 border border-[#1A2A30] rounded text-[11px] text-[#8BA4A8] space-y-1">
+                <div class="flex items-center gap-1.5 text-[#00E5F2] font-bold">
+                    <i class="fas fa-check-circle"></i> Dime! Clean Fractional Sizing Enabled
+                </div>
+                <div>Recommendations round cleanly (e.g. 0.12, 0.125, 0.25, 1.25, 5 shares) respecting your dry powder and risk limits.</div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-[#1A2A30]">
+                <button type="button" onclick="closeCopilotModal()" class="px-4 py-2 border border-[#1A2A30] hover:bg-[#111C21] text-[#8BA4A8] rounded transition-colors">
+                    Cancel
+                </button>
+                <button type="submit" id="saveCopilotBtn" class="px-5 py-2 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] font-bold rounded transition-all shadow-[0_0_15px_rgba(0,166,178,0.3)]">
+                    Save Configuration
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
 {% endblock %}

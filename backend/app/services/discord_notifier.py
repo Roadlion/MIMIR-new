@@ -1061,4 +1061,294 @@ def send_market_session_briefing(
         return False
 
 
+# ── Co-Pilot Personalized Multi-User Alert Functions ─────────────────────────
+
+def send_copilot_buy_alert(
+    user: Dict[str, Any],
+    eval_result: Dict[str, Any],
+    webhook_url: Optional[str] = None
+) -> bool:
+    """
+    Sends a personalized BUY alert tailored to an individual user's
+    actual portfolio equity, dry powder, sector limit, and risk sizing.
+    """
+    target_url = (webhook_url or user.get("discord_webhook_trades") or get_webhook_url("trades") or "").strip()
+    if not target_url:
+        return False
+
+    ticker = eval_result["ticker"]
+    shares = eval_result["shares"]
+    entry_price = eval_result["entry_price"]
+    stop_loss = eval_result["stop_loss"]
+    target_price = eval_result.get("target_price")
+    estimated_cost = eval_result["estimated_cost"]
+    risk_dollars = eval_result["risk_dollars"]
+    risk_pct = eval_result["risk_pct_actual"]
+    pos_pct = eval_result["position_pct"]
+    sector = eval_result.get("sector", "General")
+    cur_sec_pct = eval_result.get("current_sector_pct", 0.0)
+    new_sec_pct = eval_result.get("new_sector_pct", 0.0)
+    max_sec_pct = user.get("max_sector_pct", 25.0)
+    dry_powder_before = eval_result["dry_powder_before"]
+    dry_powder_after = eval_result["dry_powder_after"]
+    holding_days = eval_result.get("holding_period_days", 7)
+    catalyst_type = eval_result.get("catalyst_type") or "WAR_RIG_CONVERGENCE"
+    cat_label = _CATALYST_LABELS.get(catalyst_type, "📊 Alpha Signal")
+
+    title = f"🎯 PERSONALIZED BUY ALERT — `${ticker}`"
+    downside_pct = ((stop_loss / entry_price) - 1.0) * 100.0
+
+    fields = [
+        {
+            "name": "👤 Target Portfolio",
+            "value": f"**{user['username']}**",
+            "inline": True
+        },
+        {
+            "name": "📡 Strategy",
+            "value": f"`{cat_label}`",
+            "inline": True
+        },
+        {
+            "name": "⏳ Horizon",
+            "value": f"`{holding_days} Days`",
+            "inline": True
+        },
+        {
+            "name": "🛒 Recommended Order",
+            "value": f"**BUY `{shares}` Shares** @ `${entry_price:,.2f}`",
+            "inline": False
+        },
+        {
+            "name": "🛑 Stop Loss",
+            "value": f"`${stop_loss:,.2f}` *({downside_pct:.1f}%)*",
+            "inline": True
+        }
+    ]
+
+    if target_price:
+        upside_pct = ((target_price / entry_price) - 1.0) * 100.0
+        fields.append({
+            "name": "🎯 Profit Target",
+            "value": f"`${target_price:,.2f}` *(+{upside_pct:.1f}%)*",
+            "inline": True
+        })
+    else:
+        fields.append({"name": "\u200b", "value": "\u200b", "inline": True})
+
+    fields.extend([
+        {
+            "name": "💵 Total Capital Allocated",
+            "value": f"`${estimated_cost:,.2f}` *({pos_pct}% of portfolio)*",
+            "inline": True
+        },
+        {
+            "name": "🛡️ Max Risk Capital",
+            "value": f"`${risk_dollars:,.2f}` *({risk_pct}% risk budget)*",
+            "inline": True
+        },
+        {
+            "name": "🧱 Sector Weight ({})".format(sector),
+            "value": f"`{cur_sec_pct:.1f}%` ➔ `{new_sec_pct:.1f}%` *(Cap: {max_sec_pct:.0f}%)*",
+            "inline": True
+        },
+        {
+            "name": "💰 Dry Powder",
+            "value": f"`${dry_powder_before:,.2f}` ➔ `${dry_powder_after:,.2f}`",
+            "inline": True
+        }
+    ])
+
+    embed = {
+        "title": title,
+        "description": f"Tailored trade alert based on your personal risk rules and available cash.",
+        "color": 0x00C896,  # Teal-green
+        "fields": fields,
+        "footer": {"text": "MIMIR Quant Co-Pilot • Institutional Portfolio Management"},
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    mention = f"<@{user['discord_id']}> " if user.get("discord_id") else ""
+    payload = {
+        "content": f"{mention}🚨 **NEW PERSONALIZED TRADE ALERT FOR {user['username'].upper()}**",
+        "embeds": [embed],
+        "username": "MIMIR Co-Pilot"
+    }
+
+    try:
+        resp = requests.post(target_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Co-Pilot buy alert to user {user.get('id')}: {e}")
+        return False
+
+
+def send_copilot_ratchet_alert(
+    user: Dict[str, Any],
+    ticker: str,
+    shares: float,
+    old_sl: float,
+    new_sl: float,
+    entry_price: float,
+    current_price: float,
+    locked_profit: float,
+    gain_pct: float,
+    webhook_url: Optional[str] = None
+) -> bool:
+    """
+    Sends an alert instructing the user to ratchet up their real-life stop-loss order
+    to lock in guaranteed profits.
+    """
+    target_url = (webhook_url or user.get("discord_webhook_trades") or get_webhook_url("trades") or "").strip()
+    if not target_url:
+        return False
+
+    title = f"🛡️ RATCHET STOP UPDATE — `${ticker}`"
+    locked_pct = ((new_sl / entry_price) - 1.0) * 100.0
+
+    fields = [
+        {
+            "name": "👤 Target Portfolio",
+            "value": f"**{user['username']}**",
+            "inline": True
+        },
+        {
+            "name": "📦 Position",
+            "value": f"`{shares}` shares @ `${entry_price:,.2f}`",
+            "inline": True
+        },
+        {
+            "name": "📈 Live Price",
+            "value": f"`${current_price:,.2f}` *({gain_pct:+.1f}%)*",
+            "inline": True
+        },
+        {
+            "name": "🔧 ACTION REQUIRED",
+            "value": f"Move your Broker Stop-Loss from `${old_sl:,.2f}` ➔ **`${new_sl:,.2f}`**",
+            "inline": False
+        },
+        {
+            "name": "🔒 Guaranteed Profit Locked",
+            "value": f"**+${locked_profit:,.2f}** *(+{locked_pct:.1f}% from entry)*",
+            "inline": True
+        }
+    ]
+
+    embed = {
+        "title": title,
+        "description": "Favorable momentum expansion triggered a risk ratchet. Move your broker stop to secure profits.",
+        "color": 0xF59E0B,  # Gold / Amber
+        "fields": fields,
+        "footer": {"text": "MIMIR Risk Engine • Trailing Profit Preservation"},
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    mention = f"<@{user['discord_id']}> " if user.get("discord_id") else ""
+    payload = {
+        "content": f"{mention}🛡️ **RATCHET PROFIT LOCK FOR {user['username'].upper()}**",
+        "embeds": [embed],
+        "username": "MIMIR Co-Pilot"
+    }
+
+    try:
+        resp = requests.post(target_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Co-Pilot ratchet alert to user {user.get('id')}: {e}")
+        return False
+
+
+def send_copilot_exit_alert(
+    user: Dict[str, Any],
+    ticker: str,
+    shares: float,
+    entry_price: float,
+    exit_price: float,
+    realized_pnl: float,
+    return_pct: float,
+    cash_recovered: float,
+    new_dry_powder: float,
+    exit_reason: str,
+    webhook_url: Optional[str] = None
+) -> bool:
+    """
+    Sends an alert instructing the user to close/sell their real-life position
+    and notifying them of restored dry powder.
+    """
+    target_url = (webhook_url or user.get("discord_webhook_trades") or get_webhook_url("trades") or "").strip()
+    if not target_url:
+        return False
+
+    is_win = realized_pnl >= 0
+    emoji = "🟢" if is_win else "🔴"
+    color = 0x00C896 if is_win else 0xFF4C5B
+
+    reason_label = {
+        "HOLD_MATURITY": "⏳ Holding Horizon Matured (Time Exit)",
+        "STOP_LOSS": "🛑 Stop Loss Triggered",
+        "RATCHET_TRIGGERED": "🛡️ Trailing Ratchet Profit Stop Hit",
+        "PROFIT_TARGET": "🎯 Profit Target Hit",
+        "MANUAL": "✋ Manual / User Requested Exit"
+    }.get(exit_reason, exit_reason)
+
+    title = f"{emoji} SELL / EXIT REMINDER — `${ticker}`"
+
+    fields = [
+        {
+            "name": "👤 Target Portfolio",
+            "value": f"**{user['username']}**",
+            "inline": True
+        },
+        {
+            "name": "⚡ Exit Trigger",
+            "value": f"`{reason_label}`",
+            "inline": True
+        },
+        {
+            "name": "🛒 Action to Take",
+            "value": f"**SELL ALL `{shares}` Shares @ Market**",
+            "inline": False
+        },
+        {
+            "name": "💵 Execution Prices",
+            "value": f"Entry: `${entry_price:,.2f}` ➔ Exit: `${exit_price:,.2f}`",
+            "inline": True
+        },
+        {
+            "name": "📊 Realized P&L",
+            "value": f"**{'+' if is_win else ''}${realized_pnl:,.2f}** *({return_pct:+.1f}%)*",
+            "inline": True
+        },
+        {
+            "name": "💰 Dry Powder Restored",
+            "value": f"**+${cash_recovered:,.2f}** ➔ New Balance: **`${new_dry_powder:,.2f}`**",
+            "inline": False
+        }
+    ]
+
+    embed = {
+        "title": title,
+        "description": "Position exit condition met. Close position in your broker to recycle capital into unallocated dry powder.",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "MIMIR Portfolio Co-Pilot • Capital Recycling"},
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    mention = f"<@{user['discord_id']}> " if user.get("discord_id") else ""
+    payload = {
+        "content": f"{mention}🚨 **SELL REMINDER FOR {user['username'].upper()}**",
+        "embeds": [embed],
+        "username": "MIMIR Co-Pilot"
+    }
+
+    try:
+        resp = requests.post(target_url, json=payload, timeout=8, verify=False)
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.error(f"[DISCORD] Failed to send Co-Pilot exit alert to user {user.get('id')}: {e}")
+        return False
+
+
+
 

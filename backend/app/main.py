@@ -10,7 +10,8 @@ from .routers import (
     articles, sentiment, prices, refresh, taxonomy, niche, 
     portfolio, backtest, trade_alerts, research, casino, 
     paper_trading, voice, earnings, auth_router, sitrep, system,
-    mt5_trading
+    mt5_trading,
+    copilot
 )
 from .config import get_settings
 from .auth import get_optional_current_user
@@ -74,6 +75,7 @@ app.include_router(earnings.router)
 app.include_router(sitrep.router, prefix="/api/v1/sitrep", tags=["sitrep"])
 app.include_router(system.router, prefix="/api/v1", tags=["system"])
 app.include_router(mt5_trading.router)
+app.include_router(copilot.router, prefix="/api/v1", tags=["copilot"])
 
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -1050,6 +1050,13 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
                 except Exception as d_err:
                     logger.warning(f"[WAR_RIG] Discord notify warning: {d_err}")
 
+                # Dispatch Personalized Co-Pilot alerts for each user's IRL portfolio
+                try:
+                    from ..services.copilot_allocator import dispatch_copilot_signals
+                    dispatch_copilot_signals(signal=sig, signal_id=new_signal_id, conn=conn)
+                except Exception as cp_err:
+                    logger.warning(f"[WAR_RIG] Co-Pilot dispatch warning: {cp_err}")
+
                 # Automatically trigger MT5 Paper Trade execution for this signal
                 try:
                     from .paper_trader import execute_single_paper_trade
