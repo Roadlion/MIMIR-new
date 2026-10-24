@@ -1,7 +1,12 @@
 # backend/app/integration/plugin.py
 from fastapi import APIRouter
-from app.routers import articles
-from app.config import get_settings
+try:
+    from backend.app.routers import articles
+    from backend.app.config import get_settings
+except ImportError:
+    from app.routers import articles
+    from app.config import get_settings
+
 
 class MIMIRPlugin:
     """MIMIR plugin interface for ASGARD."""

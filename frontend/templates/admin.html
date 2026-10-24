@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR - Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#1A2A30] pb-4">
+        <div>
+            <h1 class="text-2xl font-bold font-['JetBrains_Mono'] text-[#E0F2F1] flex items-center gap-2">
+                <i class="fas fa-user-shield text-[#00A6B2]"></i> ADMIN DASHBOARD
+            </h1>
+            <p class="text-xs text-[#4A6A70] font-mono mt-1">Manage user accounts, passwords, and daily Oracle message quotas for remote friends</p>
+        </div>
+        <div>
+            <button onclick="openCreateUserModal()" class="px-4 py-2 bg-[#00A6B2] hover:bg-[#008C96] text-[#03070A] font-bold rounded text-xs font-mono transition-all flex items-center gap-2 shadow-[0_0_12px_rgba(0,166,178,0.3)]">
+                <i class="fas fa-user-plus"></i> Create New User
+            </button>
+        </div>
+    </div>
+
+    <!-- Alert banner -->
+    <div id="adminNotification" class="hidden p-3 rounded-lg text-xs font-mono flex items-center justify-between">
+        <span id="adminNotificationText"></span>
+        <button onclick="document.getElementById('adminNotification').classList.add('hidden')" class="hover:text-white"><i class="fas fa-times"></i></button>
+    </div>
+
+    <!-- Users Table -->
+    <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl overflow-hidden shadow-xl">
+        <div class="px-6 py-4 border-b border-[#1A2A30] bg-[#060D11] flex items-center justify-between">
+            <h2 class="text-sm font-bold font-mono text-[#D6E5E3] uppercase tracking-wider">Registered Accounts</h2>
+            <button onclick="loadUsers()" class="text-xs text-[#00A6B2] hover:underline font-mono flex items-center gap-1">
+                <i class="fas fa-sync-alt"></i> Refresh List
+            </button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+                <thead class="bg-[#081217] text-[#4A6A70] uppercase border-b border-[#1A2A30]">
+                    <tr>
+                        <th class="px-6 py-3">User ID</th>
+                        <th class="px-6 py-3">Username</th>
+                        <th class="px-6 py-3">Role</th>
+                        <th class="px-6 py-3">Today Usage</th>
+                        <th class="px-6 py-3">Daily Quota</th>
+                        <th class="px-6 py-3">Created Date</th>
+                        <th class="px-6 py-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody" class="divide-y divide-[#1A2A30]/60 text-[#D6E5E3]">
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center text-[#4A6A70]">
+                            <i class="fas fa-spinner fa-spin mr-2"></i> Loading accounts...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Create User -->
+<div id="createUserModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3">
+            <h3 class="font-bold font-mono text-sm text-[#E0F2F1]"><i class="fas fa-user-plus text-[#00A6B2] mr-2"></i>Create New Account</h3>
+            <button onclick="closeCreateUserModal()" class="text-[#4A6A70] hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="submitCreateUser(event)" class="space-y-4 text-xs font-mono">
+            <div>
+                <label class="block text-[#8AA6A3] mb-1">Username</label>
+                <input type="text" id="newUsername" required class="w-full bg-[#060D11] border border-[#1A2A30] rounded px-3 py-2 text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-[#8AA6A3] mb-1">Password</label>
+                <input type="password" id="newPassword" required class="w-full bg-[#060D11] border border-[#1A2A30] rounded px-3 py-2 text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-[#8AA6A3] mb-1">Role</label>
+                <select id="newRole" class="w-full bg-[#060D11] border border-[#1A2A30] rounded px-3 py-2 text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none">
+                    <option value="user">User (Standard Friend)</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-[#8AA6A3] mb-1">Daily Oracle Message Quota</label>
+                <input type="number" id="newQuota" value="100" min="1" max="10000" required class="w-full bg-[#060D11] border border-[#1A2A30] rounded px-3 py-2 text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none">
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" onclick="closeCreateUserModal()" class="px-3 py-1.5 border border-[#1A2A30] rounded text-[#8AA6A3] hover:text-white">Cancel</button>
+                <button type="submit" class="px-4 py-1.5 bg-[#00A6B2] hover:bg-[#008C96] text-[#03070A] font-bold rounded">Create Account</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Reset Password -->
+<div id="resetPasswordModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3">
+            <h3 class="font-bold font-mono text-sm text-[#E0F2F1]"><i class="fas fa-key text-yellow-500 mr-2"></i>Reset User Password</h3>
+            <button onclick="closeResetPasswordModal()" class="text-[#4A6A70] hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="submitResetPassword(event)" class="space-y-4 text-xs font-mono">
+            <input type="hidden" id="resetUserId">
+            <div>
+                <label class="block text-[#8AA6A3] mb-1">User: <span id="resetUsernameDisplay" class="text-white font-bold"></span></label>
+                <label class="block text-[#8AA6A3] mt-2 mb-1">New Password</label>
+                <input type="password" id="resetNewPassword" required class="w-full bg-[#060D11] border border-[#1A2A30] rounded px-3 py-2 text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none">
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" onclick="closeResetPasswordModal()" class="px-3 py-1.5 border border-[#1A2A30] rounded text-[#8AA6A3] hover:text-white">Cancel</button>
+                <button type="submit" class="px-4 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-white font-bold rounded">Reset Password</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Edit Quota -->
+<div id="editQuotaModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3">
+            <h3 class="font-bold font-mono text-sm text-[#E0F2F1]"><i class="fas fa-sliders-h text-[#00A6B2] mr-2"></i>Update Daily Quota</h3>
+            <button onclick="closeEditQuotaModal()" class="text-[#4A6A70] hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="submitEditQuota(event)" class="space-y-4 text-xs font-mono">
+            <input type="hidden" id="quotaUserId">
+            <div>
+                <label class="block text-[#8AA6A3] mb-1">User: <span id="quotaUsernameDisplay" class="text-white font-bold"></span></label>
+                <label class="block text-[#8AA6A3] mt-2 mb-1">Daily Oracle Message Quota</label>
+                <input type="number" id="quotaValue" required min="1" max="10000" class="w-full bg-[#060D11] border border-[#1A2A30] rounded px-3 py-2 text-[#E0F2F1] focus:border-[#00A6B2] focus:outline-none">
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" onclick="closeEditQuotaModal()" class="px-3 py-1.5 border border-[#1A2A30] rounded text-[#8AA6A3] hover:text-white">Cancel</button>
+                <button type="submit" class="px-4 py-1.5 bg-[#00A6B2] hover:bg-[#008C96] text-[#03070A] font-bold rounded">Save Quota</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        loadUsers();
+    });
+
+    function showNotification(text, isError = false) {
+        const notif = document.getElementById('adminNotification');
+        const notifText = document.getElementById('adminNotificationText');
+        notifText.textContent = text;
+        notif.className = `p-3 rounded-lg text-xs font-mono flex items-center justify-between ${isError ? 'bg-red-950/80 text-red-300 border border-red-500/50' : 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'}`;
+        notif.classList.remove('hidden');
+        setTimeout(() => notif.classList.add('hidden'), 5000);
+    }
+
+    async function loadUsers() {
+        const tbody = document.getElementById('usersTableBody');
+        tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-8 text-center text-[#4A6A70]"><i class="fas fa-spinner fa-spin mr-2"></i> Loading accounts...</td></tr>`;
+
+        try {
+            const res = await fetch('/api/v1/admin/users');
+            if (!res.ok) {
+                if (res.status === 403 || res.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                throw new Error("Failed to load user list");
+            }
+            const data = await res.json();
+            
+            if (!data.users || data.users.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-8 text-center text-[#4A6A70]">No users found</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.users.map(u => `
+                <tr class="hover:bg-[#0E1E26] transition-colors">
+                    <td class="px-6 py-4 font-mono text-[#4A6A70]">#${u.id}</td>
+                    <td class="px-6 py-4 font-bold text-white flex items-center gap-2">
+                        <i class="fas fa-user-circle text-[#00A6B2]"></i> ${u.username}
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold ${u.role === 'admin' ? 'bg-purple-950 text-purple-300 border border-purple-800' : 'bg-blue-950 text-blue-300 border border-blue-800'}">
+                            ${u.role.toUpperCase()}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="font-bold ${u.today_usage >= u.daily_token_quota ? 'text-red-400' : 'text-emerald-400'}">${u.today_usage}</span> msgs
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="text-[#8AA6A3]">${u.daily_token_quota}</span> msgs/day
+                    </td>
+                    <td class="px-6 py-4 text-[#4A6A70]">
+                        ${new Date(u.created_at).toLocaleDateString()}
+                    </td>
+                    <td class="px-6 py-4 text-right space-x-2">
+                        <button onclick="openResetPasswordModal(${u.id}, '${u.username}')" class="px-2.5 py-1 bg-yellow-950/60 hover:bg-yellow-900 border border-yellow-700/50 text-yellow-300 rounded text-[11px]" title="Reset Password">
+                            <i class="fas fa-key"></i> Pass
+                        </button>
+                        <button onclick="openEditQuotaModal(${u.id}, '${u.username}', ${u.daily_token_quota})" class="px-2.5 py-1 bg-cyan-950/60 hover:bg-cyan-900 border border-cyan-700/50 text-cyan-300 rounded text-[11px]" title="Adjust Quota">
+                            <i class="fas fa-sliders-h"></i> Quota
+                        </button>
+                        ${u.role !== 'admin' ? `
+                            <button onclick="deleteUserAccount(${u.id}, '${u.username}')" class="px-2.5 py-1 bg-red-950/60 hover:bg-red-900 border border-red-700/50 text-red-300 rounded text-[11px]" title="Delete Account">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        ` : ''}
+                    </td>
+                </tr>
+            `).join('');
+
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-8 text-center text-red-400">Error loading users: ${err.message}</td></tr>`;
+        }
+    }
+
+    // Modal Handlers
+    function openCreateUserModal() { document.getElementById('createUserModal').classList.remove('hidden'); }
+    function closeCreateUserModal() { document.getElementById('createUserModal').classList.add('hidden'); }
+
+    async function submitCreateUser(e) {
+        e.preventDefault();
+        const username = document.getElementById('newUsername').value.trim();
+        const password = document.getElementById('newPassword').value;
+        const role = document.getElementById('newRole').value;
+        const quota = parseInt(document.getElementById('newQuota').value);
+
+        try {
+            const res = await fetch('/api/v1/admin/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role, daily_token_quota: quota })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to create user');
+            
+            closeCreateUserModal();
+            showNotification(`Account '${username}' created successfully!`);
+            loadUsers();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    function openResetPasswordModal(id, username) {
+        document.getElementById('resetUserId').value = id;
+        document.getElementById('resetUsernameDisplay').textContent = username;
+        document.getElementById('resetNewPassword').value = '';
+        document.getElementById('resetPasswordModal').classList.remove('hidden');
+    }
+    function closeResetPasswordModal() { document.getElementById('resetPasswordModal').classList.add('hidden'); }
+
+    async function submitResetPassword(e) {
+        e.preventDefault();
+        const userId = document.getElementById('resetUserId').value;
+        const new_password = document.getElementById('resetNewPassword').value;
+
+        try {
+            const res = await fetch(`/api/v1/admin/users/${userId}/reset-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ new_password })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to reset password');
+
+            closeResetPasswordModal();
+            showNotification(`Password reset successfully for user ID #${userId}`);
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    function openEditQuotaModal(id, username, currentQuota) {
+        document.getElementById('quotaUserId').value = id;
+        document.getElementById('quotaUsernameDisplay').textContent = username;
+        document.getElementById('quotaValue').value = currentQuota;
+        document.getElementById('editQuotaModal').classList.remove('hidden');
+    }
+    function closeEditQuotaModal() { document.getElementById('editQuotaModal').classList.add('hidden'); }
+
+    async function submitEditQuota(e) {
+        e.preventDefault();
+        const userId = document.getElementById('quotaUserId').value;
+        const daily_token_quota = parseInt(document.getElementById('quotaValue').value);
+
+        try {
+            const res = await fetch(`/api/v1/admin/users/${userId}/quota`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ daily_token_quota })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to update quota');
+
+            closeEditQuotaModal();
+            showNotification(`Quota updated to ${daily_token_quota} msgs/day`);
+            loadUsers();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function deleteUserAccount(id, username) {
+        if (!confirm(`Are you sure you want to delete user account '${username}' (ID: #${id})?`)) return;
+
+        try {
+            const res = await fetch(`/api/v1/admin/users/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to delete user');
+
+            showNotification(`Account '${username}' deleted.`);
+            loadUsers();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+</script>
+{% endblock %}

@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS yggdrasil.mimir_raw_articles (
     url_hash TEXT UNIQUE,
     title_hash VARCHAR(32) UNIQUE,   -- <-- NEW column for dedupe
     scraped_at TIMESTAMPTZ DEFAULT NOW(),
-    scoring_status VARCHAR(20) DEFAULT 'pending'
+    scoring_status VARCHAR(20) DEFAULT 'triage_pending'
 );
 
 -- Indexes for performance
@@ -78,22 +78,25 @@ def insert_articles(records):
         ON yggdrasil.mimir_raw_articles (title_hash);
     """)
 
-    # --- Get existing title hashes from DB ---
-    cur.execute("SELECT title_hash FROM yggdrasil.mimir_raw_articles")
-    existing_hashes = {row[0] for row in cur.fetchall()}
+    # Pre-calculate hashes and ensure url_hash is set
+    for r in records:
+        title_hash = hashlib.md5(r['title'].lower().strip().encode()).hexdigest()
+        r['title_hash'] = title_hash
+        if not r.get('url_hash'):
+            r['url_hash'] = hashlib.md5(r['link'].strip().encode()).hexdigest()
+
+    # --- Get existing title hashes from DB for this batch ONLY ---
+    batch_hashes = list({r['title_hash'] for r in records if r.get('title_hash')})
+    existing_hashes = set()
+    if batch_hashes:
+        cur.execute("SELECT title_hash FROM yggdrasil.mimir_raw_articles WHERE title_hash = ANY(%s)", (batch_hashes,))
+        existing_hashes = {row[0] for row in cur.fetchall()}
 
     # --- Filter out duplicates ---
     unique_records = []
     skipped_count = 0
     for r in records:
-        # Generate title_hash (same as scraper)
-        title_hash = hashlib.md5(r['title'].lower().strip().encode()).hexdigest()
-        r['title_hash'] = title_hash
-
-        # Also ensure url_hash exists (scraper should provide it)
-        if not r.get('url_hash'):
-            r['url_hash'] = hashlib.md5(r['link'].strip().encode()).hexdigest()
-
+        title_hash = r['title_hash']
         # Check if we've already seen this title in this run or in DB
         if title_hash in existing_hashes:
             skipped_count += 1
@@ -108,31 +111,41 @@ def insert_articles(records):
         return
 
     # --- Bulk insert with ON CONFLICT (url_hash) ---
+    from backend.app.sentiment.pre_scoring_filter import is_noise_or_junk
+
     sql = """
     INSERT INTO yggdrasil.mimir_raw_articles (
         source_name, feed_url, title, link, 
-        published_raw, published_ts, summary, url_hash, title_hash
+        published_raw, published_ts, summary, url_hash, title_hash, scoring_status
     ) VALUES %s
     ON CONFLICT (url_hash) DO NOTHING;
     """
 
-    data = [(
-        r['source_name'],
-        r['feed_url'],
-        r['title'],
-        r['link'],
-        r['published_raw'],
-        r['published_ts'],
-        r['summary'],
-        r['url_hash'],
-        r['title_hash']
-    ) for r in unique_records]
+    data = []
+    noise_count = 0
+    for r in unique_records:
+        is_junk, _ = is_noise_or_junk(r['title'], r.get('summary', ''))
+        status = 'noise' if is_junk else 'triage_pending'
+        if is_junk:
+            noise_count += 1
+        data.append((
+            r['source_name'],
+            r['feed_url'],
+            r['title'],
+            r['link'],
+            r['published_raw'],
+            r['published_ts'],
+            r['summary'],
+            r['url_hash'],
+            r['title_hash'],
+            status
+        ))
 
     try:
         execute_values(cur, sql, data)
         conn.commit()
         inserted = cur.rowcount
-        print(f"Inserted {inserted} new rows. Skipped {len(records) - inserted - skipped_count} duplicates (URL or title).")
+        print(f"Inserted {inserted} new rows ({noise_count} pre-flagged as noise/clickbait). Skipped {len(records) - inserted - skipped_count} duplicates (URL or title).")
     except Exception as e:
         print(f"❌ Insert failed: {e}")
         conn.rollback()

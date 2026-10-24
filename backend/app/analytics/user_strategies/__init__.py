@@ -1,4 +1,4 @@
-# bong_strats/__init__.py
+# backend/app/analytics/user_strategies/__init__.py
 from .base_strategy import Strategy, StaticStrategy
 from .quick_strategy import QuickStrategy, IndicatorHelper, BarIndicators
 from .static_strategies import (

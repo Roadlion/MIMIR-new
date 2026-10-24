@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from backend.app.pipeline.sentiment_processor import process_unscored_articles, get_status_counts
+from backend.app.pipeline.sentiment_processor import process_unscored_articles, get_status_counts, triage_pending_articles
 from backend.app.database import get_db_connection
 
 
@@ -47,10 +47,25 @@ def main():
     print("   Processing ALL pending articles until complete.")
     print("=" * 60)
 
+    # 1. Run batch triage pre-filtering on newly scraped articles
+    print("[PIPELINE] Running LLM Triage Gatekeeper pre-filtering...")
+    try:
+        total_triaged = 0
+        for _ in range(5):  # Triage up to 500 articles per run to clear backlog
+            triaged_count = triage_pending_articles(100)
+            total_triaged += triaged_count
+            if triaged_count < 100:
+                break
+        print(f"[PIPELINE] Successfully triaged {total_triaged} articles.")
+    except Exception as e:
+        print(f"[PIPELINE] Triage pre-filtering failed: {e}")
+    print("=" * 60)
+
     # Show current status
     status = get_status_counts()
     print("📊 Current status:")
-    print(f"   Pending:  {status.get('pending', 0)} (to be scored)")
+    print(f"   Triage Pending: {status.get('triage_pending', 0)}")
+    print(f"   Pending:        {status.get('pending', 0)} (to be scored)")
     print(f"   Scored:   {status.get('scored', 0)} (already done)")
     print(f"   Empty:    {status.get('empty', 0)} (no assets found, skipped)")
     print(f"   Failed:   {status.get('failed', 0)} (API errors, will retry)")

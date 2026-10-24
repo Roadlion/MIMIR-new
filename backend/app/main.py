@@ -1,12 +1,20 @@
 # backend/app/main.py
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import os
 
-from .routers import articles, sentiment, prices, refresh, taxonomy, niche
+from .routers import (
+    articles, sentiment, prices, refresh, taxonomy, niche, 
+    portfolio, backtest, trade_alerts, research, casino, 
+    paper_trading, voice, earnings, auth_router, sitrep, system,
+    mt5_trading,
+    copilot
+)
 from .config import get_settings
+from .auth import get_optional_current_user
 
 settings = get_settings()
 
@@ -16,18 +24,59 @@ app = FastAPI(
     description="Market Intelligence & Macroeconomic Indicator Reactor"
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.on_event("startup")
 async def startup_event():
     from .pipeline.background_worker import start_background_worker
+    from .utils.logo_downloader import preseed_portfolio_logos
+    from .services.process_manager import record_pid, apply_low_process_priority
+    from .services.db_integrity import ensure_database_integrity
+    import threading
+    record_pid("server", os.getpid())
+    apply_low_process_priority()
+    # Run DB integrity preflight check in background to auto-heal any disk page corruption
+    threading.Thread(target=ensure_database_integrity, daemon=True).start()
     start_background_worker()
+    threading.Thread(target=preseed_portfolio_logos, daemon=True).start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    from .services.process_manager import stop_all_processes
+    from .services.db_integrity import sync_database_buffers
+    try:
+        sync_database_buffers()
+    except Exception:
+        pass
+    stop_all_processes(skip_current=True)
 
 # --- API Routes ---
+app.include_router(auth_router.router, prefix="/api/v1", tags=["auth"])
 app.include_router(articles.router, prefix="/api/v1", tags=["articles"])
 app.include_router(sentiment.router, prefix="/api/v1", tags=["sentiment"])
 app.include_router(prices.router, prefix="/api/v1", tags=["prices"])
 app.include_router(refresh.router, prefix="/api/v1", tags=["refresh"])
 app.include_router(taxonomy.router, prefix="/api/v1", tags=["taxonomy"])
 app.include_router(niche.router, prefix="/api/v1", tags=["niche"])
+app.include_router(portfolio.router, prefix="/api/v1", tags=["portfolio"])
+app.include_router(trade_alerts.router, prefix="/api/v1", tags=["alerts"])
+app.include_router(paper_trading.router, prefix="/api/v1/paper-trading", tags=["paper-trading"])
+app.include_router(research.router, prefix="/api/v1/research", tags=["research"])
+app.include_router(backtest.router)
+app.include_router(casino.router, prefix="/api/v1/casino", tags=["casino"])
+app.include_router(voice.router)
+app.include_router(earnings.router)
+app.include_router(sitrep.router, prefix="/api/v1/sitrep", tags=["sitrep"])
+app.include_router(system.router, prefix="/api/v1", tags=["system"])
+app.include_router(mt5_trading.router)
+app.include_router(copilot.router, prefix="/api/v1", tags=["copilot"])
+
 # --- Static files (for CSS, JS, images) ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(BASE_DIR, "frontend", "static")
@@ -38,6 +87,19 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "frontend", "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(os.path.join(STATIC_DIR, "img", "mimir_logo.png"))
+
+# --- Authentication & Web Pages ---
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html")
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    return templates.TemplateResponse(request, "admin.html")
+
 # --- HTML Pages (served from templates) ---
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -47,6 +109,10 @@ async def index(request: Request):
 async def articles_page(request: Request):
     return templates.TemplateResponse(request, "articles.html")
 
+@app.get("/social")
+async def social_page(request: Request):
+    return RedirectResponse(url="/articles")
+
 @app.get("/asset/{ticker}", response_class=HTMLResponse)
 async def finance_page(request: Request, ticker: str):
     return templates.TemplateResponse(request, "finance.html", {"ticker": ticker.upper()})
@@ -55,17 +121,42 @@ async def finance_page(request: Request, ticker: str):
 async def watchlist_page(request: Request):
     return templates.TemplateResponse(request, "watchlist.html")
 
+@app.get("/portfolio", response_class=HTMLResponse)
+async def portfolio_page(request: Request):
+    return templates.TemplateResponse(request, "portfolio.html")
+
+@app.get("/alerts", response_class=HTMLResponse)
+async def alerts_page(request: Request):
+    return templates.TemplateResponse(request, "alerts.html")
+
 @app.get("/taxonomy", response_class=HTMLResponse)
 async def taxonomy_page(request: Request):
     return templates.TemplateResponse(request, "taxonomy.html")
 
+@app.get("/stat-arb", response_class=HTMLResponse)
 @app.get("/guerilla", response_class=HTMLResponse)
-async def guerilla_page(request: Request):
+async def stat_arb_page(request: Request):
     return templates.TemplateResponse(request, "guerilla.html")
 
 @app.get("/map", response_class=HTMLResponse)
 async def map_page(request: Request):
     return templates.TemplateResponse(request, "map.html")
+
+@app.get("/backtest", response_class=HTMLResponse)
+async def backtest_page(request: Request):
+    return templates.TemplateResponse(request, "backtest.html")
+
+@app.get("/alphas", response_class=HTMLResponse)
+async def alphas_page(request: Request):
+    return templates.TemplateResponse(request, "alphas.html")
+
+@app.get("/oracle", response_class=HTMLResponse)
+async def oracle_page(request: Request):
+    return templates.TemplateResponse(request, "research_chat.html")
+
+@app.get("/casino", response_class=HTMLResponse)
+async def casino_page(request: Request):
+    return templates.TemplateResponse(request, "casino.html")
 
 @app.get("/health")
 async def health():

@@ -1,78 +1,151 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
+from ..database import get_db_connection
+from ..config import get_settings
 
-def calculate_z_score(ticker1, ticker2, period="1y"):
-    """
-    Downloads historical data for two tickers and calculates the current z-score
-    of their price spread (Stat-Arb proxy).
-    """
+settings = get_settings()
+
+# ponytail: curated pairs — dynamic cointegration scanning is noisy at this scale
+NICHE_PAIRS = [
+    # Grains
+    ("CORN", "WEAT"),
+    ("WEAT", "SOYB"),
+    ("CORN", "SOYB"),
+    # Shipping
+    ("BDRY", "SBLK"),
+    ("BDRY", "GOGL"),
+    # Nuclear / Energy
+    ("URA", "NLR"),
+    ("XLE", "XOP"),
+    # Gold miners
+    ("GDX", "GDXJ"),
+    # Battery metals
+    ("COPX", "LIT"),
+    # Mega-Cap / Share Class Arbitrage
+    ("GOOG", "GOOGL"),
+    ("AAPL", "MSFT"),
+    # Financials Arbitrage
+    ("GS", "MS"),
+    # Consumer Staples Arbitrage
+    ("KO", "PEP"),
+    # Energy Majors Arbitrage
+    ("CVX", "XOM"),
+]
+
+
+def _fetch_daily_closes(ticker, period_days=365):
+    """Fetch daily close prices from mimir_hourly_ohlcv, fall back to yfinance."""
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=period_days)
     try:
-        data1 = yf.download(ticker1, period=period, progress=False)['Close']
-        data2 = yf.download(ticker2, period=period, progress=False)['Close']
-        
-        # Flatten multi-index columns if any
-        if isinstance(data1, pd.DataFrame):
-            data1 = data1.iloc[:, 0]
-        if isinstance(data2, pd.DataFrame):
-            data2 = data2.iloc[:, 0]
-
-        df = pd.concat([data1, data2], axis=1).dropna()
-        df.columns = [ticker1, ticker2]
-        
-        if df.empty:
-            return None
-
-        # Calculate spread ratio (or simple difference, here we use ratio for normalized comparison)
-        df['Spread'] = df[ticker1] / df[ticker2]
-        
-        mean_spread = df['Spread'].mean()
-        std_spread = df['Spread'].std()
-        
-        if std_spread == 0:
-            return None
-            
-        current_spread = df['Spread'].iloc[-1]
-        z_score = (current_spread - mean_spread) / std_spread
-        
-        # Determine the signal
-        if z_score > 2.0:
-            signal = f"SHORT {ticker1}, LONG {ticker2}"
-        elif z_score < -2.0:
-            signal = f"LONG {ticker1}, SHORT {ticker2}"
-        else:
-            signal = "WAIT"
-
-        return {
-            "pair": f"{ticker1} / {ticker2}",
-            "z_score": round(float(z_score), 2),
-            "mean_spread": round(float(mean_spread), 4),
-            "current_spread": round(float(current_spread), 4),
-            "signal": signal,
-            "status": "OPEN" if signal != "WAIT" else "CLOSED"
-        }
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT DISTINCT ON (timestamp::date)
+                timestamp::date AS date, close
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE ticker = %s AND timestamp >= %s
+            ORDER BY timestamp::date, timestamp DESC
+        """, (ticker, cutoff))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        if rows:
+            df = pd.DataFrame(rows, columns=["date", "close"])
+            df["close"] = df["close"].astype(float)
+            df = df.set_index("date").sort_index()
+            return df
     except Exception as e:
-        print(f"Error calculating z-score for {ticker1}/{ticker2}: {e}")
+        print(f"[cointegration] DB fetch failed for {ticker}: {e}")
+
+    # Fallback: yfinance
+    import time
+    import random
+    time.sleep(random.uniform(1.0, 2.5))  # Prevents Yahoo Finance rate-limiting when scanning multiple pairs
+    try:
+        import yfinance as yf
+        import requests
+        session = requests.Session()
+        session.verify = False
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        
+        for attempt in range(3):
+            try:
+                data = yf.download(ticker, period=f"{period_days}d", progress=False, session=session)["Close"]
+                if data is not None and not data.empty:
+                    if isinstance(data, pd.DataFrame):
+                        data = data.iloc[:, 0]
+                    return data.to_frame("close")
+            except Exception as ex:
+                if attempt == 2:
+                    raise ex
+                time.sleep(2 ** (attempt + 1))
+    except Exception as e:
+        print(f"[cointegration] yfinance fallback failed for {ticker}: {e}")
+    return None
+
+
+def calculate_z_score(ticker1, ticker2, period_days=365):
+    """Calculate current z-score of the T1/T2 spread ratio using cached OHLCV data."""
+    data1 = _fetch_daily_closes(ticker1, period_days)
+    data2 = _fetch_daily_closes(ticker2, period_days)
+    if data1 is None or data2 is None or data1.empty or data2.empty:
         return None
 
+    df = pd.concat([data1["close"], data2["close"]], axis=1, join="inner").dropna()
+    df.columns = [ticker1, ticker2]
+
+    if len(df) < 30:
+        return None
+
+    df["Spread"] = df[ticker1] / df[ticker2]
+    mean_spread = df["Spread"].mean()
+    std_spread = df["Spread"].std()
+    if std_spread == 0:
+        return None
+
+    # Calculate rolling 60-day Z-score to adapt dynamically to regime shifts
+    window = min(60, len(df))
+    df["rolling_mean"] = df["Spread"].rolling(window=window, min_periods=15).mean()
+    df["rolling_std"] = df["Spread"].rolling(window=window, min_periods=15).std()
+
+    current_spread = df["Spread"].iloc[-1]
+    curr_mean = df["rolling_mean"].iloc[-1]
+    curr_std = df["rolling_std"].iloc[-1]
+
+    if pd.isna(curr_mean) or pd.isna(curr_std) or curr_std == 0:
+        curr_mean = mean_spread
+        curr_std = std_spread
+
+    z_score = (current_spread - curr_mean) / curr_std
+
+    if z_score > 2.0:
+        signal = f"SHORT {ticker1}, LONG {ticker2}"
+    elif z_score < -2.0:
+        signal = f"LONG {ticker1}, SHORT {ticker2}"
+    else:
+        signal = "WAIT"
+
+    return {
+        "pair": f"{ticker1} / {ticker2}",
+        "ticker1": ticker1,
+        "ticker2": ticker2,
+        "z_score": round(float(z_score), 2),
+        "mean_spread": round(float(mean_spread), 4),
+        "current_spread": round(float(current_spread), 4),
+        "signal": signal,
+        "status": "OPEN" if signal != "WAIT" else "CLOSED",
+    }
+
+
 def scan_niche_opportunities():
-    """
-    Scans predefined niche pairs for stat-arb opportunities.
-    Using ETFs as proxies for obscure commodities since yfinance blocks raw futures often.
-    - CORN (Corn) vs WEAT (Wheat)
-    - BDRY (Dry Bulk Shipping) vs SBLK (Star Bulk Carriers)
-    - URA (Uranium) vs NLR (Nuclear Energy)
-    """
-    pairs = [
-        ("CORN", "WEAT"),
-        ("BDRY", "SBLK"),
-        ("URA", "NLR")
-    ]
-    
+    """Scan all NICHE_PAIRS for stat-arb opportunities."""
     opportunities = []
-    for t1, t2 in pairs:
+    for t1, t2 in NICHE_PAIRS:
         res = calculate_z_score(t1, t2)
         if res:
             opportunities.append(res)
-            
     return opportunities

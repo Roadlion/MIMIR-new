@@ -1,0 +1,420 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR Casino — AI Derivatives Strategy Planner{% endblock %}
+
+{% block head_extra %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/casino.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="casino-page" id="casinoPage">
+    <!-- Gold Particle Drift -->
+    <div class="casino-particles" id="casinoParticles"></div>
+
+    <div class="casino-container">
+        <!-- Casino Header -->
+        <div class="casino-header">
+            <div>
+                <div class="casino-title">
+                    <span class="icon">🎰</span>
+                    <span>The Casino</span>
+                </div>
+                <div class="casino-subtitle">AI-Powered Derivatives Strategy Planner</div>
+            </div>
+            <div class="casino-header-badge">
+                <i class="fas fa-microchip"></i> AI AGENT MODE ACTIVE
+            </div>
+        </div>
+
+        <!-- Section Tabs -->
+        <div class="casino-tabs">
+            <button class="casino-tab active" data-tab="floor">
+                <i class="fas fa-th-large"></i>&nbsp; Casino Floor
+            </button>
+            <button class="casino-tab" data-tab="builder">
+                <i class="fas fa-drafting-compass"></i>&nbsp; Strategy Builder
+            </button>
+            <button class="casino-tab" data-tab="payoff">
+                <i class="fas fa-chart-line"></i>&nbsp; Payoff Graph
+            </button>
+            <button class="casino-tab" data-tab="risk">
+                <i class="fas fa-shield-alt"></i>&nbsp; Greeks & Risk
+            </button>
+            <button class="casino-tab" data-tab="ledger">
+                <i class="fas fa-book"></i>&nbsp; Casino Ledger
+            </button>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- SECTION 1: Casino Floor (Universe Scanner) -->
+        <!-- ================================================================== -->
+        <div class="casino-section active" data-section="floor" id="sectionFloor">
+            <div class="section-header">
+                <div class="section-title">🃏 Top AI Recommendations</div>
+                <button class="btn-casino" id="btnRefreshFloor">
+                    <i class="fas fa-sync-alt"></i>&nbsp; Refresh Floor
+                </button>
+            </div>
+
+            <div class="filter-chips" id="filterChips">
+                <button class="filter-chip active" data-filter="all">All Strategies</button>
+                <button class="filter-chip" data-filter="high-conviction">🔥 High Conviction</button>
+                <button class="filter-chip" data-filter="bullish">♠ Bullish</button>
+                <button class="filter-chip" data-filter="bearish">♠ Bearish</button>
+                <button class="filter-chip" data-filter="neutral">♦ Neutral</button>
+                <button class="filter-chip" data-filter="volatility">♣ Volatility</button>
+            </div>
+
+            <div class="strategy-grid" id="strategyGrid">
+                <div class="casino-loading" id="floorLoading">
+                    <div class="roulette-spinner"></div>
+                    <div class="casino-loading-text">Spinning the wheel... scanning derivative opportunities</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- SECTION 2: Strategy Builder -->
+        <!-- ================================================================== -->
+        <div class="casino-section" data-section="builder" id="sectionBuilder">
+            <div class="section-header">
+                <div class="section-title">🔧 Strategy Builder</div>
+            </div>
+
+            <div class="builder-panel">
+                <!-- Ticker + Spot Price Row -->
+                <div class="builder-control-grid">
+                    <div>
+                        <label class="meta-label">Ticker Symbol</label>
+                        <div style="position: relative;">
+                            <input type="text" class="builder-input" id="builderTicker" placeholder="Type ticker (e.g. AAPL, NVDA, SPY)..." autocomplete="off" spellcheck="false">
+                            <div id="builderTickerDropdown" class="autocomplete-dropdown hidden"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="meta-label">Underlying Price</label>
+                        <input type="text" class="builder-input" id="builderSpotPrice" readonly placeholder="—" style="color: var(--accent-primary); font-weight: 700;">
+                    </div>
+                    <div style="display: flex; align-items: flex-end;">
+                        <button class="btn-ai-choose" id="btnAiChoose" title="Let AI recommend the best strategy for this ticker">
+                            <i class="fas fa-magic"></i> 🎰 Let AI Choose
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Expiration Chips -->
+                <div style="margin-top: 16px;">
+                    <label class="meta-label">Expiration Date</label>
+                    <div class="expiration-chips" id="expirationChips">
+                        <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">Search and select a ticker to load expiration dates...</span>
+                    </div>
+                </div>
+
+                <!-- Strategy Templates Carousel -->
+                <div style="margin-top: 20px;">
+                    <label class="meta-label">Strategy Templates</label>
+                    <div class="template-carousel" id="templateCarousel">
+                        <div class="template-card-skeleton">Select a ticker to load templates</div>
+                    </div>
+                </div>
+
+                <!-- Legs Editor -->
+                <div style="margin-top: 24px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <label class="meta-label" style="margin-bottom: 0;">Strategy Legs</label>
+                        <button class="btn-add-leg" id="btnAddLeg">
+                            <i class="fas fa-plus"></i> Add Leg
+                        </button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="legs-table" id="legsTable">
+                            <thead>
+                                <tr>
+                                    <th>Direction</th>
+                                    <th>Quantity</th>
+                                    <th>Type</th>
+                                    <th>Strike</th>
+                                    <th>Premium</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="legsBody">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-muted);">
+                                        No legs added yet. Choose a template or click "Add Leg".
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+                    <button class="btn-casino danger" id="btnClearLegs">
+                        <i class="fas fa-trash"></i>&nbsp; Clear All
+                    </button>
+                    <button class="btn-casino primary" id="btnCalculate">
+                        <i class="fas fa-calculator"></i>&nbsp; Compute Payoff & Risk
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- SECTION 3: Payoff Graph -->
+        <!-- ================================================================== -->
+        <div class="casino-section" data-section="payoff" id="sectionPayoff">
+            <div class="section-header">
+                <div class="section-title">📈 Payoff Diagram</div>
+            </div>
+
+            <div class="payoff-chart-container" id="payoffChartContainer">
+                <canvas id="payoffCanvas"></canvas>
+
+                <!-- Time Decay Slider -->
+                <div style="margin-top: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Time Decay Simulation</label>
+                        <span id="decayValueLabel" style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-primary); font-weight: 600;">At Expiration</span>
+                    </div>
+                    <input type="range" class="time-decay-slider" id="timeDecaySlider" min="0" max="0" value="0" step="1">
+                    <div class="slider-labels" id="sliderLabels"></div>
+                </div>
+
+                <!-- Payoff Summary Cards -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 20px;">
+                    <div class="perf-card">
+                        <div class="perf-value pnl-positive" id="payoffMaxProfit">—</div>
+                        <div class="perf-label">Max Profit</div>
+                    </div>
+                    <div class="perf-card">
+                        <div class="perf-value pnl-negative" id="payoffMaxLoss">—</div>
+                        <div class="perf-label">Max Loss</div>
+                    </div>
+                    <div class="perf-card">
+                        <div class="perf-value neutral" id="payoffBreakeven">—</div>
+                        <div class="perf-label">Breakeven(s)</div>
+                    </div>
+                    <div class="perf-card">
+                        <div class="perf-value" id="payoffPoP" style="color: var(--accent-primary);">—</div>
+                        <div class="perf-label">Prob of Profit</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="casino-empty" id="payoffEmpty" style="display: none;">
+                <div class="empty-icon">📊</div>
+                Build or select a strategy in the Strategy Builder to view the payoff curve.
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- SECTION 4: Greeks & Risk Dashboard -->
+        <!-- ================================================================== -->
+        <div class="casino-section" data-section="risk" id="sectionRisk">
+            <div class="section-header">
+                <div class="section-title">⚖️ Greeks & Risk Analysis</div>
+            </div>
+
+            <!-- Greeks Gauges -->
+            <div class="greeks-grid" id="greeksGrid">
+                <div class="greek-gauge">
+                    <div class="greek-symbol">Δ</div>
+                    <div class="greek-value" id="greekDelta">0.00</div>
+                    <div class="greek-label">Delta</div>
+                </div>
+                <div class="greek-gauge">
+                    <div class="greek-symbol">Γ</div>
+                    <div class="greek-value" id="greekGamma">0.00</div>
+                    <div class="greek-label">Gamma</div>
+                </div>
+                <div class="greek-gauge">
+                    <div class="greek-symbol">Θ</div>
+                    <div class="greek-value" id="greekTheta">0.00</div>
+                    <div class="greek-label">Theta / Day</div>
+                </div>
+                <div class="greek-gauge">
+                    <div class="greek-symbol">ν</div>
+                    <div class="greek-value" id="greekVega">0.00</div>
+                    <div class="greek-label">Vega</div>
+                </div>
+                <div class="greek-gauge">
+                    <div class="greek-symbol">ρ</div>
+                    <div class="greek-value" id="greekRho">0.00</div>
+                    <div class="greek-label">Rho</div>
+                </div>
+            </div>
+
+            <!-- Position Sizer & Risk/Reward -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 20px;">
+                <!-- Position Sizer -->
+                <div class="casino-card">
+                    <div class="casino-card-header">
+                        <div class="casino-card-title">💰 Position Sizer</div>
+                    </div>
+                    <div class="sizer-panel">
+                        <div class="sizer-input-group">
+                            <label>Account Size ($)</label>
+                            <input type="number" class="builder-input" id="accountSize" value="10000" min="100" step="100">
+                        </div>
+                        <div class="sizer-input-group">
+                            <label>Max Risk (%)</label>
+                            <input type="number" class="builder-input" id="maxRiskPct" value="5" min="0.5" max="25" step="0.5">
+                        </div>
+                    </div>
+                    <div class="sizer-result" style="margin-top: 16px;">
+                        <div class="big-number" id="optimalContracts">—</div>
+                        <div class="perf-label">Optimal Contracts</div>
+                        <div style="margin-top: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);">
+                            Max Loss: <span id="sizerMaxLoss">—</span> | Capital at Risk: <span id="sizerCapitalRisk">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk/Reward Summary -->
+                <div class="casino-card">
+                    <div class="casino-card-header">
+                        <div class="casino-card-title">🎯 Risk / Reward</div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="meta-item">
+                            <div class="meta-label">Max Profit</div>
+                            <div class="meta-value profit" id="riskMaxProfit">—</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Max Loss</div>
+                            <div class="meta-value loss" id="riskMaxLoss">—</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Breakeven(s)</div>
+                            <div class="meta-value neutral" id="riskBreakevens">—</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Risk/Reward Ratio</div>
+                            <div class="meta-value" id="riskRatio" style="color: var(--accent-primary);">—</div>
+                        </div>
+                    </div>
+
+                    <!-- House Edge Meter -->
+                    <div style="margin-top: 20px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span class="meta-label">House Edge (Expected Value)</span>
+                            <span class="meta-value" id="houseEdgeValue" style="font-size: 12px;">—</span>
+                        </div>
+                        <div class="house-edge-meter">
+                            <div class="house-edge-breakeven"></div>
+                            <div class="house-edge-marker" id="houseEdgeMarker" style="left: 50%;"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 9px; color: var(--text-muted);">
+                            <span>−EV (House Wins)</span>
+                            <span>+EV (Your Edge)</span>
+                        </div>
+                    </div>
+
+                    <!-- IV Rank -->
+                    <div style="margin-top: 20px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span class="meta-label">IV Rank</span>
+                            <span class="meta-value" id="ivRankValue" style="font-size: 12px; color: var(--accent-primary);">—</span>
+                        </div>
+                        <div class="iv-rank-bar">
+                            <div class="iv-rank-fill low" id="ivRankFill" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================================================================== -->
+        <!-- SECTION 5: Casino Ledger (Paper Portfolio) -->
+        <!-- ================================================================== -->
+        <div class="casino-section" data-section="ledger" id="sectionLedger">
+            <div class="section-header">
+                <div class="section-title">📒 Casino Ledger</div>
+            </div>
+
+            <!-- Performance Summary -->
+            <div class="perf-cards" id="perfCards">
+                <div class="perf-card">
+                    <div class="perf-value" id="perfTotalPnl" style="color: var(--text-primary);">$0.00</div>
+                    <div class="perf-label">Total P&L</div>
+                </div>
+                <div class="perf-card">
+                    <div class="perf-value" id="perfWinRate" style="color: var(--accent-primary);">—</div>
+                    <div class="perf-label">Win Rate</div>
+                </div>
+                <div class="perf-card">
+                    <div class="perf-value" id="perfActivePos" style="color: var(--neon-blue);">0</div>
+                    <div class="perf-label">Active Positions</div>
+                </div>
+                <div class="perf-card">
+                    <div class="perf-value" id="perfAvgConviction" style="color: var(--accent-primary);">—</div>
+                    <div class="perf-label">Avg Conviction</div>
+                </div>
+            </div>
+
+            <!-- Positions Table -->
+            <div class="casino-card" style="padding: 0; overflow-x: auto;">
+                <table class="ledger-table">
+                    <thead>
+                        <tr>
+                            <th>Strategy</th>
+                            <th>Ticker</th>
+                            <th>Opened</th>
+                            <th>Entry Premium</th>
+                            <th>Current P&L</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ledgerBody">
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                                <i class="fas fa-dice" style="font-size: 24px; margin-bottom: 8px; display: block; opacity: 0.3;"></i>
+                                No positions active. Select a strategy from the Casino Floor to start paper trading.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Strategy History -->
+            <div style="margin-top: 24px;">
+                <div class="section-header">
+                    <div class="section-title" style="font-size: 16px;">📜 Strategy History</div>
+                </div>
+                <div class="casino-card" style="padding: 0; overflow-x: auto;">
+                    <table class="ledger-table">
+                        <thead>
+                            <tr>
+                                <th>Strategy</th>
+                                <th>Ticker</th>
+                                <th>Date</th>
+                                <th>Conviction</th>
+                                <th>Risk Grade</th>
+                                <th>Status</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyBody">
+                            <tr>
+                                <td colspan="7" style="text-align: center; padding: 30px; color: var(--text-muted);">
+                                    No strategy history logged yet.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/casino.js"></script>
+{% endblock %}

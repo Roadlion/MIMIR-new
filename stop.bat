@@ -9,7 +9,7 @@ echo ===================================================
 echo.
 echo [1/3] Signaling MIMIR server to shut down cleanly...
 curl -s -m 2 -X POST http://127.0.0.1:8000/api/v1/system/shutdown >nul 2>&1
-ping 127.0.0.1 -n 2 >nul
+timeout /t 1 /nobreak >nul
 
 echo [2/3] Terminating background daemons and freeing CPU/RAM resources...
 if exist ".venv\Scripts\python.exe" (
@@ -33,5 +33,5 @@ echo  No orphaned background processes remaining.
 echo  Your computer resources have been fully restored.
 echo ===================================================
 echo.
-ping 127.0.0.1 -n 4 >nul
+timeout /t 3
 exit /b 0

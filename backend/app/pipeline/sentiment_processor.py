@@ -1,11 +1,43 @@
 # backend/app/pipeline/sentiment_processor.py
 import psycopg2
 from psycopg2.extras import execute_values
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from backend.app.database import get_db_connection
 from backend.app.sentiment.deepseek_client import DeepSeekSentiment
 from backend.app.sentiment.asset_mapper import resolve_ticker, resolve_country_code, resolve_region
+
+# Anti-spam cache for breaking intelligence alerts (4-hour cooldown per topic/asset)
+_RECENT_BREAKING_ALERTS = {}
+
+# Spillover integration (lazy init — ponytail: avoids circular import at module level)
+_spillover_engine = None
+_thematic_detector = None
+
+# Central bank name set for policy_signal tracking
+_CENTRAL_BANK_NAMES = {
+    "federal reserve", "fed", "fomc",
+    "ecb", "european central bank",
+    "boj", "bank of japan",
+    "pboc", "people's bank of china",
+    "boe", "bank of england",
+}
+
+
+def _get_spillover_engine():
+    global _spillover_engine
+    if _spillover_engine is None:
+        from backend.app.pipeline.spillover_engine import SpilloverEngine
+        _spillover_engine = SpilloverEngine()
+    return _spillover_engine
+
+
+def _get_thematic_detector():
+    global _thematic_detector
+    if _thematic_detector is None:
+        from backend.app.sentiment.thematic_detector import ThematicDetector
+        _thematic_detector = ThematicDetector()
+    return _thematic_detector
 
 
 def process_single_article(article_id: int, title: str, summary: str) -> int:
@@ -13,9 +45,38 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
     Process one article: score it, insert impacts, update status.
     Returns:
         >0 : number of impacts inserted
-         0 : no assets found (status set to 'empty')
+         0 : no assets found, noise, or duplicate (skipped with 0 tokens spent)
         -1 : error occurred (status set to 'pending' for retry)
     """
+    from backend.app.sentiment.pre_scoring_filter import is_noise_or_junk, get_headline_deduplicator
+
+    # --- Pre-LLM Noise & Clickbait Interceptor ---
+    is_junk, junk_reason = is_noise_or_junk(title, summary or "")
+    if is_junk:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'noise' WHERE id = %s", (article_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"  [Pre-Filter] Article {article_id} dropped as NOISE ({junk_reason}) -> 0 tokens spent.")
+        return 0
+
+    # --- Pre-LLM Semantic Deduplication Interceptor ---
+    deduper = get_headline_deduplicator()
+    is_dup, matched_id, dup_reason = deduper.is_duplicate(title, article_id=article_id)
+    if is_dup:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'duplicate' WHERE id = %s", (article_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"  [Pre-Filter] Article {article_id} dropped as DUPLICATE ({dup_reason} matches #{matched_id}) -> 0 tokens spent.")
+        return 0
+
+    deduper.register(title, article_id)
+
     client = DeepSeekSentiment()
     conn = None
     cur = None
@@ -36,7 +97,7 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 WHERE id = %s
             """, (article_id,))
             conn.commit()
-            print(f"  [Thread] Article {article_id}: No assets → marked empty")
+            print(f"  [Thread] Article {article_id}: No assets -> marked empty")
             return 0
 
         # --- Build impacts list ---
@@ -55,6 +116,8 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             # Enforce strict mapping of region by resolving it from the country code first
             resolved_reg = resolve_region(country) if country else None
             region = resolved_reg or asset.get("region")
+            from datetime import datetime, timezone
+            now_ts = datetime.now(timezone.utc)
 
             impacts.append((
                 article_id,
@@ -69,7 +132,11 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
                 asset.get("magnitude", "MEDIUM"),
                 asset.get("reasoning", ""),
                 ticker,
-                asset.get("policy_signal")
+                asset.get("policy_signal"),
+                False,  # is_spillover
+                None,   # spillover_source_article_id
+                None,   # spillover_source_asset
+                now_ts, # activation_date (direct impact is immediate)
             ))
 
         if not impacts:
@@ -82,12 +149,13 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             conn.commit()
             return 0
 
-        # --- Insert impacts ---
+        # --- Insert direct impacts ---
         sql = """
         INSERT INTO yggdrasil.mimir_sentiment_impacts (
             article_id, asset_name, asset_category, asset_sub_category,
             country, region, sentiment_score, confidence, direction,
-            magnitude, reasoning, ticker, policy_signal
+            magnitude, reasoning, ticker, policy_signal,
+            is_spillover, spillover_source_article_id, spillover_source_asset, activation_date
         ) VALUES %s
         ON CONFLICT (article_id, asset_name) DO NOTHING;
         """
@@ -95,19 +163,202 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
         conn.commit()
         inserted = cur.rowcount
 
+        # --- Compute & Insert Supply Chain Spillover Impacts ---
+        spillovers = []
+        try:
+            spillover_engine = _get_spillover_engine()
+            spillover_tuples = spillover_engine.run(
+                article_id=article_id,
+                direct_impacts=assets,
+                published_ts=now_ts
+            )
+            if spillover_tuples:
+                execute_values(cur, sql, spillover_tuples)
+                conn.commit()
+                spillovers = spillover_tuples
+        except Exception as sp_err:
+            print(f"  [Thread] [Warning] Spillover engine error for article {article_id}: {sp_err}")
+
+        # --- Trigger Real-Time Catalyst Alert Evaluation & LLM Supply Chain Discovery ---
+        for imp in impacts:
+            score = imp[6]
+            conf = imp[7]
+            reasoning = imp[10]
+            ticker_val = imp[11]
+            policy_sig = imp[12]
+
+            if ticker_val:
+                # 1. Real-time catalyst alert evaluation
+                try:
+                    from backend.app.analytics.catalyst_engine import eval_realtime_article_catalyst
+                    eval_realtime_article_catalyst(
+                        ticker=ticker_val,
+                        sentiment_score=score,
+                        confidence=conf,
+                        headline=title,
+                        reasoning=reasoning,
+                        policy_signal=policy_sig,
+                        is_spillover=False,
+                        conn=conn
+                    )
+                except Exception as cat_err:
+                    print(f"  [Thread] [Warning] Catalyst alert trigger error for {ticker_val}: {cat_err}")
+
+        # --- Trigger Supply Chain Spillover Catalyst Alerts ---
+        for sp in spillovers:
+            sp_score = sp[6]
+            sp_conf = sp[7]
+            sp_reason = sp[10]
+            sp_ticker = sp[11]
+            sp_source = sp[15]
+            if sp_ticker and abs(sp_score) >= 0.40 and sp_conf >= 0.60:
+                try:
+                    from backend.app.analytics.catalyst_engine import eval_realtime_article_catalyst
+                    eval_realtime_article_catalyst(
+                        ticker=sp_ticker,
+                        sentiment_score=sp_score,
+                        confidence=sp_conf,
+                        headline=f"[Supply Chain Spillover from {sp_source}] {title}",
+                        reasoning=sp_reason,
+                        policy_signal=None,
+                        is_spillover=True,
+                        spillover_source_asset=sp_source,
+                        conn=conn
+                    )
+                except Exception as cat_err:
+                    print(f"  [Thread] [Warning] Spillover catalyst alert error for {sp_ticker}: {cat_err}")
+
+        # --- LLM supply chain discovery for high-impact headlines (|score| >= 0.7) ---
+        for imp in impacts:
+            score = imp[6]
+            ticker_val = imp[11]
+            if ticker_val and abs(score) >= 0.7:
+                try:
+                    from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                    discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+                except Exception as llm_err:
+                    print(f"  [Thread] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+
+        # 3. Track Central Bank policy signals into mimir_macro_signals
+        for imp in impacts:
+            asset_name_lower = imp[1].lower() if imp[1] else ""
+            policy_sig = imp[12]
+            if policy_sig and asset_name_lower in _CENTRAL_BANK_NAMES:
+                try:
+                    from backend.app.services.macro_tracker import upsert_policy_signal
+                    upsert_policy_signal(
+                        institution=imp[1],
+                        policy_signal=policy_sig,
+                        sentiment_score=imp[6],
+                        headline=title,
+                        article_id=article_id,
+                        conn=conn
+                    )
+                except Exception as macro_err:
+                    print(f"  [Thread] [Warning] Macro tracker upsert error: {macro_err}")
+
+        # 4. Detect and Dispatch Breaking Global Market-Moving Events (Intelligent Velocity & Anti-Spam Gate)
+        title_lower = title.lower()
+        max_score = max([imp[6] for imp in impacts], key=abs) if impacts else 0.0
+        affected = [imp[11] for imp in impacts if imp[11]]
+
+        is_extreme_magnitude = abs(max_score) >= 0.85
+        critical_keywords = ["war", "strike", "missile", "invade", "sanction", "emergency", "default", "coup", "bailout", "fomc emergency"]
+        is_critical_crisis = any(w in title_lower for w in critical_keywords) and abs(max_score) >= 0.50
+
+        # Check for multi-source velocity if not an extreme single shock
+        should_alert = is_extreme_magnitude or is_critical_crisis
+        if not should_alert and affected:
+            try:
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                    WHERE si.ticker = %s
+                      AND a.published_ts >= NOW() - INTERVAL '60 minutes'
+                      AND ABS(si.sentiment_score) >= 0.40
+                """, (affected[0],))
+                v_count = cur.fetchone()[0]
+                if v_count >= 2:
+                    should_alert = True
+            except Exception:
+                pass
+
+        if should_alert:
+            # Anti-spam cooldown (4 hours per primary asset or topic cluster)
+            alert_key = affected[0] if affected else title_lower[:40]
+            now_utc = datetime.now(timezone.utc)
+            last_alerted = _RECENT_BREAKING_ALERTS.get(alert_key)
+            if not last_alerted or (now_utc - last_alerted) >= timedelta(hours=4):
+                try:
+                    from backend.app.services.discord_notifier import send_global_breaking_alert
+                    cat_label = "GEOPOLITICS / WAR" if any(w in title_lower for w in ["war", "conflict", "sanction", "military", "strike", "missile"]) else \
+                                "CENTRAL BANK / MACRO" if any(w in title_lower for w in ["fed", "cpi", "inflation", "yield", "rate", "fomc"]) else \
+                                "CRITICAL MARKET IMPULSE"
+
+                    res = send_global_breaking_alert(
+                        event_category=cat_label,
+                        headline=title,
+                        summary=summary or "",
+                        source=impacts[0][1] if impacts else "MIMIR Feed",
+                        sentiment_score=max_score,
+                        affected_assets=affected
+                    )
+                    if res:
+                        _RECENT_BREAKING_ALERTS[alert_key] = now_utc
+                        print(f"  [Thread] Dispatched Breaking Intelligence Alert to Discord: {title[:60]}")
+                except Exception as break_err:
+                    print(f"  [Thread] [Warning] Global breaking alert error: {break_err}")
+
+        # --- Compute spillover impacts (graph-based + thematic) ---
+        spillover_inserted = 0
+        try:
+            # Build asset dicts for spillover engine
+            asset_dicts = []
+            for imp in impacts:
+                asset_dicts.append({
+                    "asset_name": imp[1],
+                    "asset_category": imp[2],
+                    "sub_category": imp[3],
+                    "country": imp[4],
+                    "region": imp[5],
+                    "sentiment_score": imp[6],
+                    "confidence": imp[7],
+                    "ticker": imp[11],
+                })
+
+            # Graph-based spillover
+            engine = _get_spillover_engine()
+            graph_spills = engine.run(article_id, asset_dicts, published_ts=now_ts)
+
+            # Thematic spillover
+            detector = _get_thematic_detector()
+            thematic_spills = detector.compute_spillovers(
+                article_id, asset_dicts, title, summary or "",
+            )
+
+            # Merge and insert
+            all_spills = graph_spills + thematic_spills
+            if all_spills:
+                execute_values(cur, sql, all_spills)
+                conn.commit()
+                spillover_inserted = cur.rowcount
+        except Exception as spill_err:
+            print(f"  [Thread] [Warning] Spillover skipped for article {article_id}: {spill_err}")
+
         # --- Mark article as 'scored' ---
         cur.execute("""
-            UPDATE yggdrasil.mimir_raw_articles 
-            SET scoring_status = 'scored' 
+            UPDATE yggdrasil.mimir_raw_articles
+            SET scoring_status = 'scored'
             WHERE id = %s
         """, (article_id,))
         conn.commit()
 
-        print(f"  [Thread] Article {article_id}: Inserted {inserted} impacts → marked scored")
-        return inserted
+        print(f"  [Thread] Article {article_id}: {inserted} direct + {spillover_inserted} spillover -> scored")
+        return inserted + spillover_inserted
 
     except Exception as e:
-        print(f"  [Thread] ❌ Error on article {article_id}: {e}")
+        print(f"  [Thread] [Error] Error on article {article_id}: {e}")
         # Mark as 'pending' so it can be retried later
         if conn and cur:
             try:
@@ -127,9 +378,223 @@ def process_single_article(article_id: int, title: str, summary: str) -> int:
             conn.close()
 
 
-def process_unscored_articles(batch_size: int = 50, max_workers: int = 10) -> int:
+def process_article_batch(batch_articles: List[tuple]) -> int:
     """
-    Fetch a batch of unscored articles and process them in parallel using ThreadPoolExecutor.
+    Process a batch of up to 5 articles in a single LLM API call.
+    batch_articles: List of (article_id, title, summary)
+    Returns: total number of inserted impacts.
+    """
+    if not batch_articles:
+        return 0
+
+    client = DeepSeekSentiment()
+    art_dicts = [{"id": aid, "title": title, "summary": summary or ""} for aid, title, summary in batch_articles]
+    
+    # Score batch via single DeepSeek call
+    batch_results = client.score_articles_batch(art_dicts)
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    total_impacts_inserted = 0
+
+    try:
+        from datetime import datetime, timezone
+        now_ts = datetime.now(timezone.utc)
+
+        for aid, title, summary in batch_articles:
+            res = batch_results.get(aid, {"overall_sentiment": 0.0, "assets": []})
+            assets = res.get("assets", [])
+
+            if not assets:
+                cur.execute("""
+                    UPDATE yggdrasil.mimir_raw_articles 
+                    SET scoring_status = 'empty' 
+                    WHERE id = %s
+                """, (aid,))
+                continue
+
+            impacts = []
+            for asset in assets:
+                asset_name = asset.get("asset_name", "").strip()
+                if not asset_name:
+                    continue
+
+                ticker, _ = resolve_ticker(asset_name)
+                country = asset.get("country")
+                if country:
+                    country = resolve_country_code(country) or country
+                else:
+                    country = resolve_country_code(asset_name)
+                resolved_reg = resolve_region(country) if country else None
+                region = resolved_reg or asset.get("region")
+
+                impacts.append((
+                    aid,
+                    asset_name,
+                    asset.get("asset_category", "UNKNOWN"),
+                    asset.get("sub_category"),
+                    country,
+                    region,
+                    asset.get("sentiment_score", 0.0),
+                    asset.get("confidence", 0.5),
+                    asset.get("direction", "neutral"),
+                    asset.get("magnitude", "MEDIUM"),
+                    asset.get("reasoning", ""),
+                    ticker,
+                    asset.get("policy_signal"),
+                    False,  # is_spillover
+                    None,   # spillover_source_article_id
+                    None,   # spillover_source_asset
+                    now_ts, # activation_date
+                ))
+
+            if not impacts:
+                cur.execute("""
+                    UPDATE yggdrasil.mimir_raw_articles 
+                    SET scoring_status = 'empty' 
+                    WHERE id = %s
+                """, (aid,))
+                continue
+
+            sql = """
+            INSERT INTO yggdrasil.mimir_sentiment_impacts (
+                article_id, asset_name, asset_category, asset_sub_category,
+                country, region, sentiment_score, confidence, direction,
+                magnitude, reasoning, ticker, policy_signal,
+                is_spillover, spillover_source_article_id, spillover_source_asset, activation_date
+            ) VALUES %s
+            ON CONFLICT (article_id, asset_name) DO NOTHING;
+            """
+            execute_values(cur, sql, impacts)
+            inserted = cur.rowcount
+            total_impacts_inserted += inserted
+
+            # --- Compute & Insert Supply Chain Spillover Impacts (Batch path) ---
+            spillovers = []
+            try:
+                spillover_engine = _get_spillover_engine()
+                spillover_tuples = spillover_engine.run(
+                    article_id=aid,
+                    direct_impacts=assets,
+                    published_ts=now_ts
+                )
+                if spillover_tuples:
+                    execute_values(cur, sql, spillover_tuples)
+                    conn.commit()
+                    spillovers = spillover_tuples
+                    total_impacts_inserted += len(spillover_tuples)
+            except Exception as sp_err:
+                print(f"  [Batch] [Warning] Spillover engine error for article {aid}: {sp_err}")
+
+            # Trigger real-time catalyst alerts + LLM supply chain discovery (batch path)
+            for imp in impacts:
+                score = imp[6]
+                conf = imp[7]
+                reasoning = imp[10]
+                ticker_val = imp[11]
+                policy_sig = imp[12]
+
+                if ticker_val:
+                    # Real-time catalyst alert evaluation (was missing from batch path)
+                    try:
+                        from backend.app.analytics.catalyst_engine import eval_realtime_article_catalyst
+                        eval_realtime_article_catalyst(
+                            ticker=ticker_val,
+                            sentiment_score=score,
+                            confidence=conf,
+                            headline=title,
+                            reasoning=reasoning,
+                            policy_signal=policy_sig,
+                            is_spillover=False,
+                            conn=conn
+                        )
+                    except Exception as cat_err:
+                        print(f"  [Batch] [Warning] Catalyst alert trigger error for {ticker_val}: {cat_err}")
+
+                    # LLM supply chain discovery for high-impact articles
+                    if abs(score) >= 0.75:
+                        try:
+                            from backend.app.sentiment.supply_chain_mapper import discover_llm_supply_chain
+                            discover_llm_supply_chain(title, summary or "", ticker_val, score, conn=conn)
+                        except Exception as llm_err:
+                            print(f"  [Batch] [Warning] LLM supply chain discovery error for {ticker_val}: {llm_err}")
+
+                # Track Central Bank policy signals
+                asset_name_lower = imp[1].lower() if imp[1] else ""
+                if policy_sig and asset_name_lower in _CENTRAL_BANK_NAMES:
+                    try:
+                        from backend.app.services.macro_tracker import upsert_policy_signal
+                        upsert_policy_signal(
+                            institution=imp[1],
+                            policy_signal=policy_sig,
+                            sentiment_score=imp[6],
+                            headline=title,
+                            article_id=aid,
+                            conn=conn
+                        )
+                    except Exception as macro_err:
+                        print(f"  [Batch] [Warning] Macro tracker upsert error: {macro_err}")
+
+            # Compute spillover impacts
+            try:
+                asset_dicts = [{
+                    "asset_name": imp[1],
+                    "asset_category": imp[2],
+                    "sub_category": imp[3],
+                    "country": imp[4],
+                    "region": imp[5],
+                    "sentiment_score": imp[6],
+                    "confidence": imp[7],
+                    "ticker": imp[11],
+                } for imp in impacts]
+
+                engine = _get_spillover_engine()
+                graph_spills = engine.run(aid, asset_dicts, published_ts=now_ts)
+
+                detector = _get_thematic_detector()
+                thematic_spills = detector.compute_spillovers(aid, asset_dicts, title, summary or "")
+
+                all_spills = graph_spills + thematic_spills
+                if all_spills:
+                    execute_values(cur, sql, all_spills)
+                    total_impacts_inserted += cur.rowcount
+            except Exception as spill_err:
+                print(f"  [Thread] [Warning] Spillover skipped for article {aid}: {spill_err}")
+
+            cur.execute("""
+                UPDATE yggdrasil.mimir_raw_articles
+                SET scoring_status = 'scored'
+                WHERE id = %s
+            """, (aid,))
+
+        conn.commit()
+        return total_impacts_inserted
+
+    except Exception as e:
+        print(f"  [Batch] Error processing batch of articles: {e}")
+        if conn:
+            conn.rollback()
+            for aid, _, _ in batch_articles:
+                try:
+                    cur.execute("""
+                        UPDATE yggdrasil.mimir_raw_articles 
+                        SET scoring_status = 'pending' 
+                        WHERE id = %s
+                    """, (aid,))
+                except Exception:
+                    pass
+            conn.commit()
+        return -1
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def process_unscored_articles(batch_size: int = 50, max_workers: int = 4) -> int:
+    """
+    Fetch a batch of unscored articles and process them in 5-article LLM batches in parallel.
     Returns total number of inserted asset impacts.
     """
     # --- Get pending articles ---
@@ -143,52 +608,57 @@ def process_unscored_articles(batch_size: int = 50, max_workers: int = 10) -> in
         LIMIT %s
     """, (batch_size,))
     articles = cur.fetchall()
-    cur.close()
-    conn.close()
 
     if not articles:
+        cur.close()
+        conn.close()
         print("[MIMIR] No pending articles found.")
         return 0
 
-    print(f"[MIMIR] Processing {len(articles)} articles with {max_workers} parallel workers...")
+    # --- Pre-LLM Noise & Deduplication Defense (0 Tokens Spent) ---
+    from backend.app.sentiment.pre_scoring_filter import filter_and_deduplicate_batch
+    art_dicts = [{"id": a[0], "title": a[1], "summary": a[2]} for a in articles]
+    clean_dicts, duplicate_items, noise_items = filter_and_deduplicate_batch(art_dicts)
+
+    # Purge noise and duplicates from database queue
+    if noise_items:
+        noise_ids = [item[0] for item in noise_items]
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'noise' WHERE id = ANY(%s)", (noise_ids,))
+        print(f"[PRE_FILTER] Filtered out {len(noise_ids)} noise/clickbait articles (0 tokens spent).")
+
+    if duplicate_items:
+        dup_ids = [item[0] for item in duplicate_items]
+        cur.execute("UPDATE yggdrasil.mimir_raw_articles SET scoring_status = 'duplicate' WHERE id = ANY(%s)", (dup_ids,))
+        print(f"[PRE_FILTER] Filtered out {len(dup_ids)} duplicate syndicated articles (0 tokens spent).")
+
+    if noise_items or duplicate_items:
+        conn.commit()
+
+    cur.close()
+    conn.close()
+
+    if not clean_dicts:
+        print("[PRE_FILTER] All pending articles in batch were noise or duplicates. 0 LLM tokens spent.")
+        return 0
+
+    clean_articles = [(d["id"], d["title"], d["summary"]) for d in clean_dicts]
+
+    # Group verified clean articles into chunks of 5
+    CHUNK_SIZE = 5
+    chunks = [clean_articles[i:i + CHUNK_SIZE] for i in range(0, len(clean_articles), CHUNK_SIZE)]
+
+    print(f"[MIMIR] Processing {len(clean_articles)} verified high-signal articles in {len(chunks)} batched LLM calls across {max_workers} parallel workers...")
 
     total_inserted = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_article = {
-            executor.submit(process_single_article, article_id, title, summary): article_id
-            for article_id, title, summary in articles
-        }
-
-        # Process results as they complete
-        for future in as_completed(future_to_article):
-            article_id = future_to_article[future]
+        futures = [executor.submit(process_article_batch, chunk) for chunk in chunks]
+        for future in as_completed(futures):
             try:
-                result = future.result()
-                if result > 0:
-                    total_inserted += result
-                elif result == 0:
-                    # empty – already logged in thread
-                    pass
-                else:  # -1 error – already marked pending
-                    pass
+                res = future.result()
+                if res > 0:
+                    total_inserted += res
             except Exception as e:
-                print(f"  [Main] Unexpected error for article {article_id}: {e}")
-                # Optionally mark as pending again, but the thread should have handled it
-                # We'll do a fallback update
-                try:
-                    conn2 = get_db_connection()
-                    cur2 = conn2.cursor()
-                    cur2.execute("""
-                        UPDATE yggdrasil.mimir_raw_articles 
-                        SET scoring_status = 'pending' 
-                        WHERE id = %s AND scoring_status = 'scored'
-                    """, (article_id,))
-                    conn2.commit()
-                    cur2.close()
-                    conn2.close()
-                except Exception:
-                    pass
+                print(f"  [Main] Batch processing error: {e}")
 
     print(f"[MIMIR] Total impacts inserted: {total_inserted}")
     
@@ -255,3 +725,100 @@ def get_status_counts() -> dict:
     cur.close()
     conn.close()
     return results
+
+def run_triage_batch(articles: List[tuple]) -> List[dict]:
+    """DEPRECATED: Use triage_pending_articles() local Python triage instead."""
+    return []
+
+def triage_pending_articles(batch_size: int = 1000) -> int:
+    """
+    Fetches articles in 'triage_pending' status, triages them locally using
+    fast Python regex (DeepSeekSentiment.is_financial_or_macro), and updates
+    their status to 'pending' (if relevant) or 'ignored' (if not).
+    ZERO LLM API COST.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Fetch triage_pending articles
+    cur.execute("""
+        SELECT id, title, summary 
+        FROM yggdrasil.mimir_raw_articles 
+        WHERE scoring_status = 'triage_pending'
+        ORDER BY published_ts DESC NULLS LAST
+        LIMIT %s
+    """, (batch_size,))
+    articles = cur.fetchall()
+    
+    if not articles:
+        cur.close()
+        conn.close()
+        return 0
+        
+    print(f"[TRIAGE] Triaging {len(articles)} articles locally via Python regex & deduplicator (0 LLM tokens)...")
+    
+    from backend.app.sentiment.pre_scoring_filter import is_noise_or_junk, get_headline_deduplicator
+    deduper = get_headline_deduplicator()
+    client = DeepSeekSentiment()
+
+    relevant_ids = []
+    ignored_ids = []
+    noise_ids = []
+    duplicate_ids = []
+    
+    for aid, title, summary in articles:
+        # 1. Noise / Clickbait check
+        is_junk, _ = is_noise_or_junk(title, summary or "")
+        if is_junk:
+            noise_ids.append(aid)
+            continue
+
+        # 2. Semantic deduplication check
+        is_dup, _, _ = deduper.is_duplicate(title, article_id=aid)
+        if is_dup:
+            duplicate_ids.append(aid)
+            continue
+
+        # 3. Macro & financial relevance check
+        if client.is_financial_or_macro(title, summary or ""):
+            deduper.register(title, aid)
+            relevant_ids.append(aid)
+        else:
+            ignored_ids.append(aid)
+            
+    if noise_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'noise' 
+            WHERE id = ANY(%s)
+        """, (noise_ids,))
+        print(f" [TRIAGE] {len(noise_ids)} articles marked as NOISE (clickbait/fluff)")
+
+    if duplicate_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'duplicate' 
+            WHERE id = ANY(%s)
+        """, (duplicate_ids,))
+        print(f" [TRIAGE] {len(duplicate_ids)} articles marked as DUPLICATE (syndicated wire)")
+
+    if relevant_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'pending' 
+            WHERE id = ANY(%s)
+        """, (relevant_ids,))
+        print(f" [TRIAGE] {len(relevant_ids)} articles marked as PENDING (relevant high-signal)")
+        
+    if ignored_ids:
+        cur.execute("""
+            UPDATE yggdrasil.mimir_raw_articles 
+            SET scoring_status = 'ignored' 
+            WHERE id = ANY(%s)
+        """, (ignored_ids,))
+        print(f" [TRIAGE] {len(ignored_ids)} articles marked as IGNORED (not relevant)")
+        
+    conn.commit()
+    cur.close()
+    conn.close()
+    return len(articles)

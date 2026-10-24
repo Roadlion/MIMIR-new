@@ -1,0 +1,26 @@
+RETURNCODE: 1
+STDOUT:
+CUDA Available: True
+GPU Device: NVIDIA GeForce RTX 3060 Laptop GPU
+
+STDERR:
+Traceback (most recent call last):
+  File "E:\lion_stuff\Da Projects\MIMIR-new\run_gpu_clone.py", line 57, in <module>
+    from f5_tts.model import DiT
+  File "E:\conda\Lib\site-packages\f5_tts\model\__init__.py", line 1, in <module>
+    from f5_tts.model.backbones.dit import DiT
+  File "E:\conda\Lib\site-packages\f5_tts\model\backbones\dit.py", line 20, in <module>
+    from f5_tts.model.modules import (
+    ...<6 lines>...
+    )
+  File "E:\conda\Lib\site-packages\f5_tts\model\modules.py", line 20, in <module>
+    from librosa.filters import mel as librosa_mel_fn
+  File "E:\conda\Lib\site-packages\librosa\filters.py", line 52, in <module>
+    from numba import jit
+  File "E:\conda\Lib\site-packages\numba\__init__.py", line 59, in <module>
+    _ensure_critical_deps()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "E:\conda\Lib\site-packages\numba\__init__.py", line 45, in _ensure_critical_deps
+    raise ImportError(msg)
+ImportError: Numba needs NumPy 2.4 or less. Got NumPy 2.5.
+

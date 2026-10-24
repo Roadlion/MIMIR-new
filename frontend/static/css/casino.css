@@ -1,0 +1,1398 @@
+/* ============================================================================
+   MIMIR Casino — Dual Theme Stylesheet
+   ============================================================================
+   Theme System:
+   - [data-theme="casino"]  →  High-End Vegas (The Bellagio)
+   - [data-theme="mimir"]   →  Standard MIMIR dark theme
+   - Default: casino
+   
+   Toggle: CSS custom properties on body, persisted to localStorage
+   
+   NOTE: Casino fonts (Playfair Display, Cinzel) are loaded via <link> tag
+   in casino.html to avoid CSS @import reliability issues.
+   ============================================================================ */
+
+/* ============================================================================
+   CSS CUSTOM PROPERTIES — THEME TOKENS
+   ============================================================================ */
+
+:root,
+[data-theme="casino"],
+body {
+    --bg-primary:       #080810;
+    --bg-secondary:     #0d0d1a;
+    --bg-card:          #111128;
+    --bg-card-hover:    #1a1a3e;
+    --bg-input:         #0a0a1e;
+    --surface-glass:    rgba(17, 17, 40, 0.85);
+
+    --gold:             #d4af37;
+    --gold-bright:      #ffd700;
+    --gold-dim:         #8b7536;
+    --gold-glow:        rgba(212, 175, 55, 0.4);
+
+    --neon-green:       #00ff88;
+    --neon-green-dim:   rgba(0, 255, 136, 0.15);
+    --neon-red:         #ff2d55;
+    --neon-red-dim:     rgba(255, 45, 85, 0.15);
+    --neon-blue:        #00aaff;
+    --neon-blue-dim:    rgba(0, 170, 255, 0.15);
+    --neon-purple:      #a855f7;
+    --neon-amber:       #ffaa00;
+
+    --text-primary:     #e8e8f0;
+    --text-secondary:   #9999bb;
+    --text-gold:        #d4af37;
+    --text-muted:       #666688;
+
+    --border-subtle:    rgba(212, 175, 55, 0.15);
+    --border-glow:      rgba(212, 175, 55, 0.4);
+    --border-card:      rgba(212, 175, 55, 0.1);
+
+    --shadow-card:      0 4px 24px rgba(0, 0, 0, 0.6), 0 0 40px rgba(212, 175, 55, 0.04);
+    --shadow-glow:      0 0 20px rgba(212, 175, 55, 0.25);
+    --shadow-neon:      0 0 15px rgba(0, 255, 136, 0.3);
+
+    --accent-primary:   var(--gold);
+    --accent-glow:      var(--gold-glow);
+
+    --font-display:     'Outfit', sans-serif;
+    --font-accent:      'Space Grotesk', sans-serif;
+    --font-body:        'Inter', -apple-system, sans-serif;
+    --font-mono:        'JetBrains Mono', 'Fira Code', monospace;
+
+    --radius-sm:        6px;
+    --radius-md:        10px;
+    --radius-lg:        16px;
+
+    --transition-fast:  150ms ease;
+    --transition-med:   300ms ease;
+    --transition-slow:  500ms ease;
+}
+
+
+/* ============================================================================
+   CASINO PAGE BASE & CONTAINER STYLES
+   ============================================================================ */
+.casino-page {
+    background:
+        repeating-linear-gradient(
+            45deg,
+            transparent,
+            transparent 30px,
+            rgba(212, 175, 55, 0.015) 30px,
+            rgba(212, 175, 55, 0.015) 31px
+        ),
+        repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 30px,
+            rgba(212, 175, 55, 0.015) 30px,
+            rgba(212, 175, 55, 0.015) 31px
+        ),
+        var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    width: 100%;
+}
+
+.casino-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.casino-header-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--gold);
+    background: rgba(212, 175, 55, 0.08);
+    border: 1px solid var(--border-glow);
+    padding: 6px 14px;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+    box-shadow: 0 0 10px rgba(212, 175, 55, 0.15);
+}
+
+.builder-control-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 16px;
+    align-items: end;
+}
+
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border-glow);
+    border-radius: var(--radius-sm);
+    z-index: 50;
+    margin-top: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+}
+
+.autocomplete-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background var(--transition-fast);
+}
+
+.autocomplete-item:hover {
+    background: rgba(212, 175, 55, 0.15);
+    color: var(--gold-bright);
+}
+
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+
+
+/* ============================================================================
+   THEME TOGGLE SWITCH
+   ============================================================================ */
+.theme-toggle-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.theme-toggle-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: color var(--transition-theme);
+}
+
+.theme-toggle-label.active {
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
+.theme-toggle {
+    position: relative;
+    width: 52px;
+    height: 26px;
+    cursor: pointer;
+}
+
+.theme-toggle input {
+    display: none;
+}
+
+.theme-toggle .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 13px;
+    transition: background var(--transition-med), border-color var(--transition-med);
+}
+
+.theme-toggle .toggle-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    box-shadow: 0 0 8px var(--accent-glow);
+    transition: transform var(--transition-med), background var(--transition-med), box-shadow var(--transition-med);
+}
+
+.theme-toggle input:checked + .toggle-track + .toggle-thumb {
+    transform: translateX(26px);
+}
+
+
+/* ============================================================================
+   CASINO HEADER
+   ============================================================================ */
+.casino-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 24px;
+}
+
+.casino-title {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.casino-title .icon {
+    font-size: 24px;
+}
+
+.casino-subtitle {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    letter-spacing: 0.5px;
+}
+
+
+/* ============================================================================
+   SECTION TABS
+   ============================================================================ */
+.casino-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 24px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.casino-tabs::-webkit-scrollbar { display: none; }
+
+.casino-tab {
+    padding: 10px 20px;
+    font-family: var(--font-accent);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.casino-tab:hover {
+    color: var(--text-primary);
+}
+
+.casino-tab.active {
+    color: var(--accent-primary);
+    border-bottom-color: var(--accent-primary);
+}
+
+
+/* ============================================================================
+   CARDS — Glass Panels
+   ============================================================================ */
+.casino-card {
+    background: var(--surface-glass);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    box-shadow: var(--shadow-card);
+    transition:
+        transform var(--transition-fast),
+        border-color var(--transition-fast),
+        box-shadow var(--transition-fast),
+        background var(--transition-theme);
+}
+
+.casino-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-glow);
+    box-shadow: var(--shadow-card), var(--shadow-glow);
+}
+
+.casino-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.casino-card-title {
+    font-family: var(--font-accent);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+
+/* ============================================================================
+   STRATEGY CARDS (Casino Floor)
+   ============================================================================ */
+.strategy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+}
+
+.strategy-card {
+    background: var(--surface-glass);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--shadow-card);
+    transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+    perspective: 800px;
+}
+
+.strategy-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--border-glow);
+    box-shadow: var(--shadow-card), var(--shadow-glow);
+}
+
+.strategy-card.dealing {
+    animation: cardFlip 600ms ease-out both;
+}
+
+.strategy-card .ticker-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-primary);
+}
+
+.strategy-card .strategy-name {
+    font-family: var(--font-accent);
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 12px 0 6px;
+}
+
+.strategy-card .strategy-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.strategy-card .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.strategy-card .meta-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.strategy-card .meta-value {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.meta-value.profit { color: var(--neon-green); }
+.meta-value.loss   { color: var(--neon-red); }
+.meta-value.neutral { color: var(--neon-blue); }
+
+
+/* ============================================================================
+   RISK GRADE BADGES — Neon Sign Effect
+   ============================================================================ */
+.risk-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.risk-badge.low {
+    background: var(--neon-green-dim);
+    color: var(--neon-green);
+    border: 1px solid rgba(0, 255, 136, 0.25);
+    animation: neonFlicker 3s ease-in-out 1;
+    --glow-color: var(--neon-green);
+}
+
+.risk-badge.medium {
+    background: var(--neon-blue-dim);
+    color: var(--neon-blue);
+    border: 1px solid rgba(0, 170, 255, 0.25);
+    animation: neonFlicker 3s ease-in-out 1;
+    --glow-color: var(--neon-blue);
+}
+
+.risk-badge.high {
+    background: rgba(255, 170, 0, 0.12);
+    color: var(--neon-amber);
+    border: 1px solid rgba(255, 170, 0, 0.25);
+    animation: neonFlicker 2.5s ease-in-out 1;
+    --glow-color: var(--neon-amber);
+}
+
+.risk-badge.extreme {
+    background: var(--neon-red-dim);
+    color: var(--neon-red);
+    border: 1px solid rgba(255, 45, 85, 0.3);
+    animation: neonFlicker 2s ease-in-out 1, neonPulse 2s ease-in-out infinite 2s;
+    --glow-color: var(--neon-red);
+}
+
+
+/* ============================================================================
+   CONVICTION DISPLAY — Slot Machine Reel
+   ============================================================================ */
+.conviction-display {
+    position: relative;
+    overflow: hidden;
+    height: 32px;
+    display: flex;
+    align-items: center;
+}
+
+.conviction-value {
+    font-family: var(--font-mono);
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--accent-primary);
+}
+
+.conviction-value.spinning {
+    animation: slotSpin 800ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.conviction-value.high-conviction {
+    text-shadow: 0 0 12px var(--accent-glow);
+}
+
+.conviction-suffix {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-left: 2px;
+}
+
+
+/* ============================================================================
+   FILTER CHIPS
+   ============================================================================ */
+.filter-chips {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.filter-chip {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.filter-chip:hover {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.filter-chip.active {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: var(--bg-primary);
+    font-weight: 700;
+}
+
+
+/* ============================================================================
+   STRATEGY BUILDER
+   ============================================================================ */
+.builder-panel {
+    background: var(--surface-glass);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+}
+
+.builder-row {
+    display: grid;
+    grid-template-columns: 200px 1fr 1fr 200px;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.builder-input,
+.builder-select {
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    outline: none;
+    transition: border-color var(--transition-fast);
+    width: 100%;
+}
+
+.builder-input:focus,
+.builder-select:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.builder-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238888aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 30px;
+}
+
+/* Legs table */
+.legs-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-top: 16px;
+}
+
+.legs-table th {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.legs-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    vertical-align: middle;
+}
+
+.legs-table tr:hover td {
+    background: rgba(255,255,255,0.02);
+}
+
+/* AI Choose Button */
+.btn-ai-choose {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 24px;
+    background: linear-gradient(135deg, var(--gold-dim), var(--gold));
+    border: none;
+    border-radius: var(--radius-sm);
+    color: #080810;
+    font-family: var(--font-accent);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.btn-ai-choose:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-glow);
+}
+
+.btn-ai-choose::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -100%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transform: rotate(30deg);
+    animation: shimmer 3s infinite;
+}
+
+.btn-casino {
+    padding: 8px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-casino:hover {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.btn-casino.primary {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: var(--bg-primary);
+    font-weight: 600;
+}
+
+.btn-casino.danger {
+    border-color: var(--neon-red);
+    color: var(--neon-red);
+}
+
+.btn-casino.danger:hover {
+    background: var(--neon-red-dim);
+}
+
+.btn-add-leg {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px dashed var(--border-subtle);
+    border-radius: 20px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-add-leg:hover {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    border-style: solid;
+}
+
+
+/* ============================================================================
+   PAYOFF CHART AREA
+   ============================================================================ */
+.payoff-chart-container {
+    position: relative;
+    background: var(--surface-glass);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+}
+
+.payoff-chart-container canvas {
+    width: 100% !important;
+    height: 350px !important;
+}
+
+.time-decay-slider {
+    width: 100%;
+    margin-top: 16px;
+    appearance: none;
+    height: 4px;
+    background: var(--bg-card);
+    border-radius: 2px;
+    outline: none;
+}
+
+.time-decay-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    box-shadow: 0 0 8px var(--accent-glow);
+    cursor: pointer;
+    transition: transform var(--transition-fast);
+}
+
+.time-decay-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.slider-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+
+/* ============================================================================
+   GREEKS GAUGES
+   ============================================================================ */
+.greeks-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+}
+
+.greek-gauge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 14px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast);
+}
+
+.greek-gauge:hover {
+    border-color: var(--border-subtle);
+}
+
+.greek-symbol {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent-primary);
+}
+
+.greek-value {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.greek-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+
+/* ============================================================================
+   POSITION SIZER
+   ============================================================================ */
+.sizer-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.sizer-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sizer-input-group label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sizer-result {
+    text-align: center;
+    padding: 16px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-card);
+}
+
+.sizer-result .big-number {
+    font-family: var(--font-mono);
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--accent-primary);
+}
+
+
+/* ============================================================================
+   HOUSE EDGE METER
+   ============================================================================ */
+.house-edge-meter {
+    width: 100%;
+    height: 10px;
+    border-radius: 5px;
+    background: linear-gradient(90deg, var(--neon-red), var(--neon-amber) 40%, var(--neon-green));
+    position: relative;
+    margin: 12px 0;
+}
+
+.house-edge-marker {
+    position: absolute;
+    top: -4px;
+    width: 4px;
+    height: 18px;
+    background: var(--text-primary);
+    border-radius: 2px;
+    transition: left var(--transition-med);
+}
+
+.house-edge-breakeven {
+    position: absolute;
+    top: -4px;
+    width: 1px;
+    height: 18px;
+    background: var(--text-muted);
+    left: 50%;
+}
+
+
+/* ============================================================================
+   CASINO LEDGER TABLE
+   ============================================================================ */
+.ledger-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.ledger-table thead th {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-subtle);
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 1;
+}
+
+.ledger-table tbody td {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.ledger-table tbody tr {
+    transition: background var(--transition-fast);
+}
+
+.ledger-table tbody tr:hover {
+    background: rgba(255,255,255,0.02);
+}
+
+.ledger-table tbody tr:nth-child(even) {
+    background: rgba(255,255,255,0.01);
+}
+
+.pnl-positive { color: var(--neon-green) !important; }
+.pnl-negative { color: var(--neon-red) !important; }
+
+
+/* ============================================================================
+   PERFORMANCE SUMMARY CARDS
+   ============================================================================ */
+.perf-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+}
+
+.perf-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    text-align: center;
+}
+
+.perf-card .perf-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 800;
+    margin-bottom: 4px;
+}
+
+.perf-card .perf-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+
+/* ============================================================================
+   LOADING — ROULETTE SPINNER
+   ============================================================================ */
+.casino-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 16px;
+}
+
+.roulette-spinner {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 3px solid var(--border-subtle);
+    border-top-color: var(--accent-primary);
+    border-right-color: var(--neon-red);
+    animation: rouletteSpin 1s linear infinite;
+    position: relative;
+}
+
+.roulette-spinner::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: var(--gold-bright);
+    border-radius: 50%;
+    top: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    box-shadow: 0 0 8px var(--gold-glow);
+}
+
+.casino-loading-text {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    animation: loadingTextPulse 2s ease-in-out infinite;
+}
+
+/* Empty state */
+.casino-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.casino-empty .empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.3;
+}
+
+
+/* ============================================================================
+   STRATEGY CATEGORY SUIT ICONS
+   ============================================================================ */
+.suit-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+    border-radius: 50%;
+}
+
+.suit-icon.bullish  { color: var(--neon-green);  animation: floatUp 3s ease-in-out infinite; }
+.suit-icon.bearish  { color: var(--neon-red);    animation: floatDown 3s ease-in-out infinite; }
+.suit-icon.income   { color: var(--neon-amber);  animation: heartPulse 2s ease-in-out infinite; }
+.suit-icon.neutral  { color: var(--neon-blue);   animation: diamondRotate 4s linear infinite; }
+.suit-icon.volatility { color: var(--neon-purple); animation: jitter 0.5s ease-in-out infinite; }
+.suit-icon.hedge    { color: var(--text-secondary); }
+
+
+/* ============================================================================
+   CHIP DROP — Approved Strategy Animation
+   ============================================================================ */
+.chip-drop {
+    animation: chipDrop 600ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.casino-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px dashed;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+}
+
+
+/* ============================================================================
+   SECTION WRAPPER
+   ============================================================================ */
+.casino-section {
+    display: none;
+}
+
+.casino-section.active {
+    display: block;
+    animation: fadeIn 300ms ease;
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.section-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+
+/* ============================================================================
+   SCROLLBAR STYLES
+   ============================================================================ */
+.casino-page ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.casino-page ::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.casino-page ::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 3px;
+}
+
+.casino-page ::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-primary);
+}
+
+
+/* ============================================================================
+   RESPONSIVE
+   ============================================================================ */
+@media (max-width: 1024px) {
+    .greeks-grid { grid-template-columns: repeat(3, 1fr); }
+    .builder-row { grid-template-columns: 1fr 1fr; }
+    .strategy-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
+
+@media (max-width: 768px) {
+    .greeks-grid { grid-template-columns: repeat(2, 1fr); }
+    .builder-row { grid-template-columns: 1fr; }
+    .sizer-panel { grid-template-columns: 1fr; }
+    .casino-header { flex-direction: column; gap: 12px; align-items: flex-start; }
+}
+
+
+/* ============================================================================
+   KEYFRAME ANIMATIONS
+   ============================================================================ */
+
+/* Card Flip — Strategy card dealing */
+@keyframes cardFlip {
+    0%   { transform: perspective(800px) rotateY(180deg) translateY(20px); opacity: 0; }
+    40%  { opacity: 1; }
+    60%  { transform: perspective(800px) rotateY(-8deg) translateY(0); }
+    80%  { transform: perspective(800px) rotateY(3deg); }
+    100% { transform: perspective(800px) rotateY(0deg); opacity: 1; }
+}
+
+/* Slot Machine Reel Spin */
+@keyframes slotSpin {
+    0%   { transform: translateY(-180%); filter: blur(3px); opacity: 0.3; }
+    60%  { filter: blur(0); opacity: 1; }
+    75%  { transform: translateY(5%); }
+    90%  { transform: translateY(-2%); }
+    100% { transform: translateY(0); }
+}
+
+/* Casino Chip Drop */
+@keyframes chipDrop {
+    0%   { transform: translateY(-80px) rotate(0deg) scale(0.5); opacity: 0; }
+    50%  { opacity: 1; }
+    70%  { transform: translateY(8px) rotate(200deg) scale(1.05); }
+    85%  { transform: translateY(-3px) rotate(175deg) scale(0.98); }
+    100% { transform: translateY(0) rotate(180deg) scale(1); }
+}
+
+/* Neon Sign Flicker */
+@keyframes neonFlicker {
+    0%, 18%, 22%, 25%, 53%, 57%, 100% {
+        opacity: 1;
+        text-shadow: 0 0 8px var(--glow-color, var(--accent-primary));
+    }
+    20%, 24%, 55% {
+        opacity: 0.5;
+        text-shadow: none;
+    }
+}
+
+/* Neon Pulse (for EXTREME risk badges) */
+@keyframes neonPulse {
+    0%, 100% { text-shadow: 0 0 8px var(--glow-color); }
+    50%      { text-shadow: 0 0 20px var(--glow-color), 0 0 40px var(--glow-color); }
+}
+
+/* Roulette Spinner */
+@keyframes rouletteSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Shimmer effect for AI button */
+@keyframes shimmer {
+    0%   { left: -100%; }
+    100% { left: 100%; }
+}
+
+/* Fade In */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Suit icon animations */
+@keyframes floatUp {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+}
+
+@keyframes floatDown {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(3px); }
+}
+
+@keyframes heartPulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.15); }
+}
+
+@keyframes diamondRotate {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+@keyframes jitter {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-2px); }
+    75%      { transform: translateX(2px); }
+}
+
+/* Loading text pulse */
+@keyframes loadingTextPulse {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 1; }
+}
+
+/* P&L counting animation helper */
+@keyframes countUp {
+    from { opacity: 0.7; transform: scale(0.95); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+/* Gold particle drift (for Casino theme background) */
+@keyframes particleDrift {
+    0%   { transform: translateY(0) translateX(0); opacity: 0; }
+    10%  { opacity: 0.6; }
+    90%  { opacity: 0.6; }
+    100% { transform: translateY(-100vh) translateX(20px); opacity: 0; }
+}
+
+/* Theme switch flash */
+@keyframes themeFlash {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+.theme-switching {
+    animation: themeFlash 400ms ease;
+}
+
+
+/* ============================================================================
+   GOLD PARTICLE DRIFT (Casino theme only)
+   ============================================================================ */
+[data-theme="casino"] .casino-particles,
+body:not([data-theme]) .casino-particles {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+}
+
+.casino-particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: var(--gold-bright);
+    border-radius: 50%;
+    opacity: 0;
+    animation: particleDrift var(--drift-duration, 15s) linear infinite;
+    animation-delay: var(--drift-delay, 0s);
+}
+
+[data-theme="mimir"] .casino-particles {
+    display: none;
+}
+
+
+/* ============================================================================
+   TEMPLATE CAROUSEL
+   ============================================================================ */
+.template-carousel {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 4px 0 12px;
+    scrollbar-width: thin;
+}
+
+.template-card {
+    flex: 0 0 160px;
+    padding: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: center;
+}
+
+.template-card:hover {
+    border-color: var(--accent-primary);
+    transform: translateY(-2px);
+}
+
+.template-card.selected {
+    border-color: var(--accent-primary);
+    background: rgba(212, 175, 55, 0.08);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.template-card .template-name {
+    font-family: var(--font-accent);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.template-card .template-legs {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+
+/* ============================================================================
+   IV RANK BAR
+   ============================================================================ */
+.iv-rank-bar {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-card);
+    border-radius: 3px;
+    position: relative;
+    margin: 8px 0;
+}
+
+.iv-rank-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width var(--transition-med);
+}
+
+.iv-rank-fill.low    { background: var(--neon-green); }
+.iv-rank-fill.medium { background: var(--neon-amber); }
+.iv-rank-fill.high   { background: var(--neon-red); }
+
+
+/* ============================================================================
+   EXPIRATION DATE CHIPS
+   ============================================================================ */
+.expiration-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 8px 0;
+}
+
+.exp-chip {
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.exp-chip:hover {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.exp-chip.selected {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: var(--bg-primary);
+    font-weight: 600;
+}
+
+.exp-chip .dte {
+    font-size: 9px;
+    opacity: 0.7;
+    margin-left: 4px;
+}

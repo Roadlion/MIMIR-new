@@ -19,7 +19,7 @@ except ImportError:
 
 DEFAULT_MAGIC_NUMBER = 202608
 DEFAULT_LOT_SIZE = 0.01
-LIVE_TRADING_ENABLED = True  # Master toggle for direct MT5 order execution
+LIVE_TRADING_ENABLED = False  # Master toggle: toggleable via API/UI
 
 
 def initialize_mt5() -> bool:

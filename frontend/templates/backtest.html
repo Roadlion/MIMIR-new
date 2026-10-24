@@ -1,0 +1,1055 @@
+{% extends "base.html" %}
+
+{% block title %}MIMIR — Quant Strategy Backtester{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    /* Glassmorphism panel styling */
+    .glass-panel {
+        background: rgba(10, 22, 28, 0.75);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(26, 42, 48, 0.6);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+    
+    .editor-textarea {
+        font-family: 'JetBrains Mono', monospace;
+        background-color: #030709;
+        border: 1px solid #142228;
+        color: #8BA4A8;
+    }
+    
+    .editor-textarea:focus {
+        border-color: #00A6B2;
+        box-shadow: 0 0 10px rgba(0, 166, 178, 0.25);
+        color: #00E5F2;
+    }
+    
+    .neon-text-glow {
+        text-shadow: 0 0 8px rgba(0, 229, 242, 0.4);
+    }
+
+    /* Checkbox styling customization */
+    .checkbox-dropdown-menu {
+        border: 1px solid #1A2A30;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Tab navigation */
+    .tab-btn {
+        padding: 0.5rem 1.25rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #4A6A70;
+        background: transparent;
+        border: 1px solid transparent;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .tab-btn:hover {
+        color: #8BA4A8;
+    }
+    .tab-btn.active {
+        color: #00A6B2;
+        border-bottom-color: #00A6B2;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Reference doc styles */
+    .ref-section {
+        margin-bottom: 1.5rem;
+    }
+    .ref-section h3 {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #00A6B2;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.75rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #1A2A30;
+    }
+    .ref-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.7rem;
+    }
+    .ref-table th {
+        text-align: left;
+        padding: 0.45rem 0.75rem;
+        color: #4A6A70;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.62rem;
+        border-bottom: 1px solid #1A2A30;
+        background: #0A1418;
+    }
+    .ref-table td {
+        padding: 0.45rem 0.75rem;
+        color: #8BA4A8;
+        border-bottom: 1px solid rgba(26, 42, 48, 0.4);
+        vertical-align: top;
+    }
+    .ref-table tr:hover td {
+        background: rgba(0, 166, 178, 0.03);
+    }
+    .ref-table .sig {
+        color: #00E5F2;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .ref-table .ret {
+        color: #D6E5E3;
+        font-size: 0.65rem;
+    }
+    .ref-table .desc {
+        color: #8BA4A8;
+        font-size: 0.7rem;
+        line-height: 1.5;
+    }
+    .ref-badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+        font-size: 0.58rem;
+        font-weight: 600;
+        margin-right: 0.25rem;
+    }
+    .badge-xs { background: rgba(0, 166, 178, 0.15); color: #00A6B2; }
+    .badge-ts { background: rgba(0, 229, 242, 0.1); color: #00E5F2; }
+    .badge-math { background: rgba(255, 215, 64, 0.1); color: #FFD740; }
+    .badge-special { background: rgba(0, 230, 118, 0.1); color: #00E676; }
+    .badge-var { background: rgba(138, 158, 155, 0.1); color: #8A9E9B; }
+    .ref-search {
+        width: 100%;
+        background: #0A161C;
+        border: 1px solid #1A2A30;
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        color: #D6E5E3;
+        margin-bottom: 1rem;
+    }
+    .ref-search:focus {
+        border-color: #00A6B2;
+        outline: none;
+    }
+    .ref-search::placeholder {
+        color: #4A6A70;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <!-- Header Block -->
+    <div class="glass-panel p-6 rounded-xl border border-[#1A2A30] flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-[#00A6B2] flex items-center gap-2 font-['JetBrains_Mono']">
+                <i class="fas fa-microchip text-2xl"></i> QUANT ALPHA BUILDER
+            </h1>
+            <p class="text-[#4A6A70] text-sm mt-1">Vectorized strategy simulator modeled on the WorldQuant Brain alpha research ecosystem.</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <div class="flex gap-0 border-b border-transparent">
+                <button class="tab-btn active" data-tab="builder">Alpha Builder</button>
+                <button class="tab-btn" data-tab="reference">Reference</button>
+            </div>
+            <span class="px-2.5 py-1 bg-[#112228] border border-[#1A3A40] rounded text-xs text-[#00A6B2] font-mono">
+                <i class="fas fa-database mr-1"></i> yggdrasil.v_mimir_daily_ohlcv
+            </span>
+        </div>
+    </div>
+
+    <!-- ===== TAB: Alpha Builder ===== -->
+    <div id="tab-builder" class="tab-panel active">
+
+    <!-- Main Workspace Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Left: Configuration & Formula Editor (5 cols) -->
+        <div class="lg:col-span-5 space-y-6">
+            <!-- Parameters Configurator -->
+            <form id="backtestForm" class="glass-panel p-5 rounded-xl border border-[#1A2A30] space-y-4">
+                <h2 class="text-sm font-bold text-[#D6E5E3] uppercase tracking-wider font-mono border-b border-[#1A2A30] pb-2">
+                    <i class="fas fa-sliders-h mr-1.5 text-[#00A6B2]"></i> Configuration
+                </h2>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Universe</label>
+                        <select id="universe" name="universe" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none">
+                            <option value="core">Core ETFs / Indices</option>
+                            <option value="all">All News Tickers (Alpha)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Portfolio Style</label>
+                        <select id="style" name="style" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none">
+                            <option value="long_short">Long / Short Neutral</option>
+                            <option value="long_only">Long Only</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Stock Markets Dropdown Checkboxes -->
+                <div>
+                    <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Stock Markets Filter</label>
+                    <div class="relative">
+                        <button type="button" id="marketDropdownBtn" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none flex justify-between items-center select-none font-mono">
+                            <span id="marketDropdownSelected" class="truncate pr-4">All Markets</span>
+                            <i class="fas fa-chevron-down text-xs text-[#4A6A70]"></i>
+                        </button>
+                        <div id="marketDropdownMenu" class="hidden absolute left-0 right-0 mt-1 bg-[#0A161C] border border-[#1A2A30] rounded shadow-xl z-50 p-2 space-y-1.5 max-h-60 overflow-y-auto checkbox-dropdown-menu">
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="us" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                US (NYSE/NASDAQ)
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="china" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                China (SSE/SZSE)
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="korea" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                Korea (KRX)
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="japan" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                Japan (TSE)
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="thailand" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                Thailand (SET)
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="crypto" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                Cryptocurrencies
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="forex" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                Forex Currency Pairs
+                            </label>
+                            <label class="flex items-center gap-2 px-2 py-1 text-xs font-mono text-[#D6E5E3] hover:bg-[#112228] rounded cursor-pointer select-none">
+                                <input type="checkbox" name="markets" value="commodity" checked class="rounded border-[#1A2A30] bg-[#0A161C] text-[#00A6B2] focus:ring-0 focus:ring-offset-0">
+                                Commodities Futures
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Start Date</label>
+                        <input type="date" id="startDate" name="start_date" value="2025-06-01" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">End Date</label>
+                        <input type="date" id="endDate" name="end_date" value="2026-06-30" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none font-mono">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Hold Period (Decay)</label>
+                        <div class="flex items-center">
+                            <input type="number" id="holdingPeriod" name="holding_period" value="1" min="1" max="30" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded-l px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none font-mono">
+                            <span class="bg-[#112228] border border-l-0 border-[#1A2A30] text-xs text-[#4A6A70] px-2 py-2 rounded-r font-mono">Days</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Slippage / Fee</label>
+                        <div class="flex items-center">
+                            <input type="number" id="slippageBps" name="slippage_bps" value="5.0" min="0.0" step="0.5" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded-l px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none font-mono">
+                            <span class="bg-[#112228] border border-l-0 border-[#1A2A30] text-xs text-[#4A6A70] px-2 py-2 rounded-r font-mono">BPS</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs text-[#4A6A70] font-mono uppercase mb-1">Portfolio Asset Count Limit</label>
+                    <input type="number" id="portfolioSize" name="portfolio_size" placeholder="All assets" class="w-full bg-[#0A161C] border border-[#1A2A30] text-sm text-[#D6E5E3] rounded px-3 py-1.5 focus:border-[#00A6B2] focus:outline-none font-mono">
+                    <span class="text-[10px] text-[#4A6A70] font-mono mt-1 block">Zeros out weights outside the top/bottom N ranks.</span>
+                </div>
+            </form>
+
+            <!-- Expression Code Editor -->
+            <div class="glass-panel p-5 rounded-xl border border-[#1A2A30] space-y-4">
+                <h2 class="text-sm font-bold text-[#D6E5E3] uppercase tracking-wider font-mono border-b border-[#1A2A30] pb-2 flex justify-between items-center">
+                    <span><i class="fas fa-code mr-1.5 text-[#00A6B2]"></i> Alpha Expression</span>
+                    <span class="text-[10px] text-[#00E5F2] bg-[#112228] px-2 py-0.5 rounded font-mono">AST Engine V1</span>
+                </h2>
+
+                <div>
+                    <textarea id="formulaInput" class="w-full h-36 editor-textarea rounded p-4 font-mono text-xs focus:outline-none resize-none" placeholder="// Type formula...&#10;// Example: neutralize(scale(sentiment)) - neutralize(scale(delay(returns(5), 1)))">neutralize(scale(sentiment))</textarea>
+                </div>
+
+                <button id="runBtn" class="w-full py-3 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#050B0D] font-bold rounded-lg text-sm transition-all duration-300 shadow-[0_0_15px_rgba(0,166,178,0.25)] flex items-center justify-center gap-2">
+                    <i class="fas fa-play"></i> SIMULATE ALPHAS
+                </button>
+            </div>
+
+        </div>
+
+        <!-- Right: Diagnostic Performance Output (7 cols) -->
+        <div class="lg:col-span-7 space-y-6">
+            <!-- Placeholder screen when no simulation has run -->
+            <div id="resultsPlaceholder" class="glass-panel rounded-xl border border-[#1A2A30] h-[630px] flex flex-col items-center justify-center text-center p-8">
+                <div class="w-20 h-20 bg-[#112228] border border-[#1A3A40] rounded-full flex items-center justify-center text-3xl text-[#4A6A70] mb-4">
+                    <i class="fas fa-terminal"></i>
+                </div>
+                <h3 class="text-[#D6E5E3] font-bold text-lg font-mono">System Awaiting Alpha Formula</h3>
+                <p class="text-[#4A6A70] text-sm mt-2 max-w-sm">Enter settings and write your mathematical expression on the left, then click Simulate.</p>
+            </div>
+
+            <!-- Main Results Screen (Hidden initially) -->
+            <div id="resultsPanel" class="hidden space-y-6">
+                <!-- Diagnostic Metrics Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Sharpe Ratio</span>
+                        <div id="metricSharpe" class="text-2xl font-bold font-mono text-[#00A6B2] mt-1 neon-text-glow">--</div>
+                    </div>
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Annual Return</span>
+                        <div id="metricReturn" class="text-2xl font-bold font-mono text-[#D6E5E3] mt-1">--</div>
+                    </div>
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Max Drawdown</span>
+                        <div id="metricDrawdown" class="text-2xl font-bold font-mono text-[#FF5252] mt-1">--</div>
+                    </div>
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Daily Turnover</span>
+                        <div id="metricTurnover" class="text-2xl font-bold font-mono text-[#8BA4A8] mt-1">--</div>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Win Rate</span>
+                        <div id="metricWinRate" class="text-lg font-bold font-mono text-[#D6E5E3] mt-1">--</div>
+                    </div>
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Information Coeff (IC)</span>
+                        <div id="metricIC" class="text-lg font-bold font-mono text-[#00A6B2] mt-1">--</div>
+                    </div>
+                    <div class="glass-panel p-4 rounded-lg border border-[#1A2A30]">
+                        <span class="text-[10px] font-mono text-[#4A6A70] uppercase">Fitness Score</span>
+                        <div id="metricFitness" class="text-lg font-bold font-mono text-[#00E5F2] mt-1">--</div>
+                    </div>
+                </div>
+
+                <!-- Rebalancing returns chart panel -->
+                <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+                    <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono mb-4">Cumulative Return Performance</h3>
+                    <div style="position: relative; height: 320px; width: 100%;">
+                        <canvas id="performanceChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Trade Execution log -->
+                <div class="glass-panel p-5 rounded-xl border border-[#1A2A30] space-y-4">
+                    <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono">Recent Executed Positions</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left font-mono text-xs text-[#8BA4A8]">
+                            <thead>
+                                <tr class="border-b border-[#1A2A30] text-[#4A6A70] uppercase">
+                                    <th class="pb-2">Date</th>
+                                    <th class="pb-2">Ticker</th>
+                                    <th class="pb-2">Action</th>
+                                    <th class="pb-2 text-right">Weight</th>
+                                    <th class="pb-2 text-right">Asset Price</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tradeLogTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination Controls -->
+                    <div id="tradeLogPagination" class="flex justify-between items-center pt-3 border-t border-[#1A2A30]/60 text-[10px] font-mono text-[#8BA4A8]">
+                        <div class="flex items-center space-x-1.5">
+                            <span>Show</span>
+                            <select id="tradeLogPageSize" class="bg-[#091518]/80 border border-[#1A2A30] text-[#D6E5E3] rounded px-1.5 py-0.5 focus:outline-none focus:border-[#00A6B2] text-[10px]">
+                                <option value="10">10</option>
+                                <option value="20" selected>20</option>
+                                <option value="50">50</option>
+                            </select>
+                            <span>rows</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button id="tradeLogPrevBtn" class="bg-[#091518]/80 border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00E5F2] px-2 py-0.5 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center">
+                                <i class="fas fa-chevron-left mr-1"></i> Prev
+                            </button>
+                            <span id="tradeLogPageIndicator" class="text-xs text-[#D6E5E3] font-semibold">Page 1 of 1</span>
+                            <button id="tradeLogNextBtn" class="bg-[#091518]/80 border border-[#1A2A30] hover:border-[#00A6B2] hover:text-[#00E5F2] px-2 py-0.5 rounded transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center">
+                                Next <i class="fas fa-chevron-right ml-1"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div><!-- /#tab-builder -->
+
+<!-- ===== TAB: Reference ===== -->
+<div id="tab-reference" class="tab-panel">
+<div class="max-w-7xl mx-auto">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- Left: Variables -->
+    <div class="lg:col-span-4 space-y-6">
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-database mr-1.5"></i> Data Variables</h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Available as identifiers in any expression. Case-insensitive.</p>
+                <table class="ref-table">
+                    <thead><tr><th>Variable</th><th>Type</th><th>Source</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="sig">open</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily open price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">high</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily high price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">low</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily low price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">close</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily close price, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">volume</td>
+                            <td><span class="ref-badge badge-var">OHLCV</span></td>
+                            <td class="desc">Daily traded volume, forward-filled</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">vwap</td>
+                            <td><span class="ref-badge badge-var">Derived</span></td>
+                            <td class="desc">(high + low + close) / 3.0</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">returns</td>
+                            <td><span class="ref-badge badge-var">Derived</span></td>
+                            <td class="desc">Daily close-to-close % change</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">sentiment</td>
+                            <td><span class="ref-badge badge-var">News</span></td>
+                            <td class="desc">Average daily news sentiment, 3-day decay</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">social_chatter</td>
+                            <td><span class="ref-badge badge-var">Social</span></td>
+                            <td class="desc">Average daily social media sentiment, 3-day decay</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">sentiment_spillover</td>
+                            <td><span class="ref-badge badge-var">Graph</span></td>
+                            <td class="desc">Inter-asset sentiment propagation (defaults to sentiment)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Expression operators -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-code mr-1.5"></i> Python Expression Ops</h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Standard arithmetic & comparison operators usable inline.</p>
+                <table class="ref-table">
+                    <thead><tr><th>Op</th><th>Example</th><th>Result</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">+</td><td class="desc"><code>sentiment + social_chatter</code></td><td class="ret">Element-wise sum</td></tr>
+                        <tr><td class="sig">-</td><td class="desc"><code>close - open</code></td><td class="ret">Element-wise difference</td></tr>
+                        <tr><td class="sig">*</td><td class="desc"><code>sentiment * 2.0</code></td><td class="ret">Scalar multiply</td></tr>
+                        <tr><td class="sig">/</td><td class="desc"><code>close / open</code></td><td class="ret">Element-wise ratio (+1e-15 guard)</td></tr>
+                        <tr><td class="sig">&gt;</td><td class="desc"><code>close > open</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">&lt;</td><td class="desc"><code>volume < 1000000</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">&gt;=</td><td class="desc"><code>returns >= 0.02</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">&lt;=</td><td class="desc"><code>sentiment <= 0</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">==</td><td class="desc"><code>sign(returns) == 1</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">!=</td><td class="desc"><code>volume != 0</code></td><td class="ret">Boolean mask</td></tr>
+                        <tr><td class="sig">-x</td><td class="desc"><code>-sentiment</code></td><td class="ret">Unary negation</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Operator Reference -->
+    <div class="lg:col-span-8 space-y-6">
+
+        <!-- Cross-sectional -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-layer-group mr-1.5"></i> Cross-Sectional Operators <span class="ref-badge badge-xs">1 arg</span></h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Operate across all tickers on each date independently.</p>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="sig">rank(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Cross-sectional percentile rank (0.0–1.0). Non-zero elements only; zeros remain 0.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">scale(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Divides each row by its absolute sum → weights sum to 1.0 across tickers.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">neutralize(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Subtracts the cross-sectional mean → dollar-neutral portfolio weights.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">zscore(x)</td>
+                            <td class="ret">DataFrame</td>
+                            <td class="desc">Cross-sectional z-score: (x − μ) / σ. Standardizes across tickers per day.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Math / Unary -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-square-root-alt mr-1.5"></i> Math / Unary Operators <span class="ref-badge badge-math">1 arg</span></h3>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">abs(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Absolute value.</td></tr>
+                        <tr><td class="sig">log(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Natural logarithm. Clamped at 1e-15 to avoid −∞.</td></tr>
+                        <tr><td class="sig">exp(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Exponential <i>e<sup>x</sup></i>.</td></tr>
+                        <tr><td class="sig">sqrt(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Square root. Clamped ≥ 0 to avoid NaN.</td></tr>
+                        <tr><td class="sig">sign(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Sign indicator: 1.0, −1.0, or 0.0.</td></tr>
+                        <tr><td class="sig">ceil(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Round up to nearest integer.</td></tr>
+                        <tr><td class="sig">floor(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Round down to nearest integer.</td></tr>
+                        <tr><td class="sig">round(x)</td><td class="ret">DataFrame / scalar</td><td class="desc">Round to nearest integer.</td></tr>
+                        <tr><td class="sig">sigmoid(x)</td><td class="ret">DataFrame</td><td class="desc">Logistic: 1 / (1 + <i>e</i><sup>−x</sup>). Squashes to (0, 1).</td></tr>
+                        <tr><td class="sig">tanh(x)</td><td class="ret">DataFrame</td><td class="desc">Hyperbolic tangent. Squashes to (−1, 1).</td></tr>
+                        <tr><td class="sig">s_log_1p(x)</td><td class="ret">DataFrame</td><td class="desc">Signed log1p: sign(x) · log(1 + |x|). Compresses magnitude, preserves sign.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Binary -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-divide mr-1.5"></i> Binary / Pairwise Operators <span class="ref-badge badge-math">2 args</span></h3>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">min(x, y)</td><td class="ret">DataFrame / scalar</td><td class="desc">Element-wise minimum. Works DataFrame↔scalar.</td></tr>
+                        <tr><td class="sig">max(x, y)</td><td class="ret">DataFrame / scalar</td><td class="desc">Element-wise maximum. Works DataFrame↔scalar.</td></tr>
+                        <tr><td class="sig">power(x, y)</td><td class="ret">DataFrame / scalar</td><td class="desc">Element-wise <i>x<sup>y</sup></i>. Works DataFrame↔scalar.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Time-series -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-chart-line mr-1.5"></i> Time-Series Operators <span class="ref-badge badge-ts">2 args</span></h3>
+                <p class="text-[10px] text-[#4A6A70] font-mono mb-3">Rolling window functions: <code>func(dataframe, window_days)</code>. d must be a positive integer (except <code>ts_decay_exp</code>: float halflife).</p>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Alias</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">ts_delay(x, d)</td><td class="ret">delay</td><td class="desc">Shift x backward by d days (NaN pad at start).</td></tr>
+                        <tr><td class="sig">ts_delta(x, d)</td><td class="ret">—</td><td class="desc">Difference: x − ts_delay(x, d).</td></tr>
+                        <tr><td class="sig">ts_mean(x, d)</td><td class="ret">—</td><td class="desc">Simple moving average over d days.</td></tr>
+                        <tr><td class="sig">ts_std(x, d)</td><td class="ret">ts_std_dev</td><td class="desc">Rolling standard deviation over d days.</td></tr>
+                        <tr><td class="sig">ts_sum(x, d)</td><td class="ret">—</td><td class="desc">Rolling sum over d days.</td></tr>
+                        <tr><td class="sig">ts_max(x, d)</td><td class="ret">—</td><td class="desc">Rolling maximum over d days.</td></tr>
+                        <tr><td class="sig">ts_min(x, d)</td><td class="ret">—</td><td class="desc">Rolling minimum over d days.</td></tr>
+                        <tr><td class="sig">ts_rank(x, d)</td><td class="ret">—</td><td class="desc">Rolling percentile rank of latest value within window.</td></tr>
+                        <tr><td class="sig">ts_zscore(x, d)</td><td class="ret">—</td><td class="desc">Rolling z-score: (x − rolling_mean) / rolling_std.</td></tr>
+                        <tr><td class="sig">ts_decay_linear(x, d)</td><td class="ret">—</td><td class="desc">Linearly-weighted decay (recent → higher weight).</td></tr>
+                        <tr><td class="sig">ts_decay_exp(x, d)</td><td class="ret">—</td><td class="desc">Exponential weighted moving average. d = halflife (float).</td></tr>
+                        <tr><td class="sig">ts_argmax(x, d)</td><td class="ret">—</td><td class="desc">Days since maximum value in window (0 = today).</td></tr>
+                        <tr><td class="sig">ts_argmin(x, d)</td><td class="ret">—</td><td class="desc">Days since minimum value in window (0 = today).</td></tr>
+                        <tr><td class="sig">ts_skewness(x, d)</td><td class="ret">—</td><td class="desc">Rolling skewness of distribution in window.</td></tr>
+                        <tr><td class="sig">ts_kurtosis(x, d)</td><td class="ret">—</td><td class="desc">Rolling excess kurtosis in window.</td></tr>
+                        <tr><td class="sig">ts_product(x, d)</td><td class="ret">—</td><td class="desc">Rolling product (∏) over d days.</td></tr>
+                        <tr><td class="sig">ts_min_max_scale(x, d)</td><td class="ret">—</td><td class="desc">Scale to [0, 1]: (x − min) / (max − min) over window.</td></tr>
+                        <tr><td class="sig">ts_av_diff(x, d)</td><td class="ret">—</td><td class="desc">Deviation from rolling mean: x − ts_mean(x, d).</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Multi-arg / Special -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-star mr-1.5"></i> Multi-Arg & Special Operators <span class="ref-badge badge-special">2–3 args</span></h3>
+                <table class="ref-table">
+                    <thead><tr><th>Function</th><th>Args</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="sig">returns(d)</td>
+                            <td class="ret">1</td>
+                            <td class="desc">Close % change over d days. Shorthand for <code>close.pct_change(d)</code>. Also callable as <code>returns(x, d)</code> on any DataFrame.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">if_else(cond, x, y)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Ternary: where <code>cond</code> is True use <code>x</code>, else <code>y</code>. Element-wise.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">clamp(x, lo, hi)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Clip x to [lo, hi]. Equivalent to <code>max(lo, min(x, hi))</code>.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">trade_when(t, a, e)</td>
+                            <td class="ret">3</td>
+                            <td class="desc"><b>Stateful entry/exit.</b> Enter position <code>a</code> when trigger <code>t</code> is True. Hold until exit <code>e</code> is True (→ NaN).</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_corr(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling Pearson correlation of y and x over d days. Alias: <code>correlation</code>.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_covariance(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling covariance of y and x over d days.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_regression_beta(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling β: Cov(y, x) / Var(x) over d days.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_regression_alpha(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling α: mean(y) − β · mean(x) over d days.</td>
+                        </tr>
+                        <tr>
+                            <td class="sig">ts_regression_residual(y, x, d)</td>
+                            <td class="ret">3</td>
+                            <td class="desc">Rolling residual: y − (β·x + α) over d days.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Example recipes -->
+        <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
+            <div class="ref-section" style="margin-bottom:0">
+                <h3><i class="fas fa-flask mr-1.5"></i> Example Recipes</h3>
+                <table class="ref-table">
+                    <thead><tr><th>Pattern</th><th>Formula</th></tr></thead>
+                    <tbody>
+                        <tr><td class="sig">Momentum</td><td class="desc"><code>neutralize(scale(returns(5)))</code></td></tr>
+                        <tr><td class="sig">Mean Reversion</td><td class="desc"><code>neutralize(scale(-ts_delta(close, 3)))</code></td></tr>
+                        <tr><td class="sig">Sentiment Momentum</td><td class="desc"><code>neutralize(scale(ts_decay_linear(sentiment, 5)))</code></td></tr>
+                        <tr><td class="sig">Sentiment + Social Blend</td><td class="desc"><code>neutralize(scale(sentiment * 0.7 + social_chatter * 0.3))</code></td></tr>
+                        <tr><td class="sig">Z-Score Breakout</td><td class="desc"><code>neutralize(scale(if_else(ts_zscore(close, 20) > 2, -1, if_else(ts_zscore(close, 20) < -2, 1, 0))))</code></td></tr>
+                        <tr><td class="sig">Volatility-Weighted</td><td class="desc"><code>neutralize(scale(sentiment / ts_std(returns, 20)))</code></td></tr>
+                        <tr><td class="sig">Correlation Hedge</td><td class="desc"><code>if_else(ts_corr(close, sentiment, 20) > 0.5, 0, neutralize(scale(sentiment)))</code></td></tr>
+                        <tr><td class="sig">Trend + Sentiment</td><td class="desc"><code>neutralize(scale(sign(ts_mean(returns, 10)) * abs(sentiment)))</code></td></tr>
+                        <tr><td class="sig">Clamped Signal</td><td class="desc"><code>neutralize(scale(clamp(sentiment, -0.5, 0.5)))</code></td></tr>
+                        <tr><td class="sig">Guerilla Trigger</td><td class="desc"><code>trade_when(abs(sentiment) > 0.7, sign(sentiment), abs(sentiment) < 0.2)</code></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div><!-- /right col -->
+</div>
+</div>
+</div><!-- /#tab-reference -->
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+        });
+    });
+
+    let myChart = null;
+    let allTrades = [];
+    let currentTradesPage = 1;
+    let tradesPageSize = 20;
+
+    // Dropdown Checkboxes Toggle and Selection UI
+    const marketDropdownBtn = document.getElementById('marketDropdownBtn');
+    const marketDropdownMenu = document.getElementById('marketDropdownMenu');
+    const marketDropdownSelected = document.getElementById('marketDropdownSelected');
+    const marketCheckboxes = document.getElementsByName('markets');
+
+    marketDropdownBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        marketDropdownMenu.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#marketDropdownMenu') && !e.target.closest('#marketDropdownBtn')) {
+            marketDropdownMenu.classList.add('hidden');
+        }
+    });
+
+    function updateMarketSelectionText() {
+        const checked = Array.from(marketCheckboxes).filter(cb => cb.checked);
+        if (checked.length === 0) {
+            marketDropdownSelected.innerText = "No Markets Selected";
+            marketDropdownSelected.classList.add('text-[#FF5252]');
+        } else if (checked.length === marketCheckboxes.length) {
+            marketDropdownSelected.innerText = "All Markets";
+            marketDropdownSelected.classList.remove('text-[#FF5252]');
+        } else {
+            const labels = checked.map(cb => cb.parentElement.innerText.trim());
+            marketDropdownSelected.innerText = labels.join(', ');
+            marketDropdownSelected.classList.remove('text-[#FF5252]');
+        }
+    }
+
+    marketCheckboxes.forEach(cb => {
+        cb.addEventListener('change', updateMarketSelectionText);
+    });
+
+    // Initial update
+    updateMarketSelectionText();
+
+    function insertTemplate(text) {
+        const input = document.getElementById('formulaInput');
+        input.value = text;
+    }
+
+    // Load backtest configurations from history record
+    function loadHistoryItem(item) {
+        document.getElementById('formulaInput').value = item.formula;
+        document.getElementById('universe').value = item.universe;
+        document.getElementById('style').value = item.style;
+        document.getElementById('startDate').value = item.start_date;
+        document.getElementById('endDate').value = item.end_date;
+        document.getElementById('holdingPeriod').value = item.holding_period;
+        document.getElementById('slippageBps').value = item.slippage_bps;
+        document.getElementById('portfolioSize').value = item.portfolio_size !== null ? item.portfolio_size : "";
+        
+        // Reset and check matching checkboxes
+        const selectedMarkets = item.markets || [];
+        marketCheckboxes.forEach(cb => {
+            cb.checked = selectedMarkets.length === 0 || selectedMarkets.includes(cb.value);
+        });
+        updateMarketSelectionText();
+        
+        // Scroll back to top workspace smoothly
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+
+    // Trigger simulation
+    document.getElementById('runBtn').addEventListener('click', async () => {
+        const runBtn = document.getElementById('runBtn');
+        const resultsPlaceholder = document.getElementById('resultsPlaceholder');
+        const resultsPanel = document.getElementById('resultsPanel');
+        
+        // Show loading state
+        runBtn.disabled = true;
+        runBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Evaluating Alphas...';
+        
+        const formula = document.getElementById('formulaInput').value.trim();
+        const start_date = document.getElementById('startDate').value;
+        const end_date = document.getElementById('endDate').value;
+        const universe = document.getElementById('universe').value;
+        const style = document.getElementById('style').value;
+        const holding_period = parseInt(document.getElementById('holdingPeriod').value) || 1;
+        const slippage_bps = parseFloat(document.getElementById('slippageBps').value) || 5.0;
+        
+        let portfolio_size = document.getElementById('portfolioSize').value;
+        portfolio_size = portfolio_size.trim() !== "" ? parseInt(portfolio_size) : null;
+
+        // Gather checked markets
+        const checkedMarkets = Array.from(marketCheckboxes)
+            .filter(cb => cb.checked)
+            .map(cb => cb.value);
+
+        if (checkedMarkets.length === 0) {
+            alert("Selection Error: Please select at least one stock market to trade.");
+            runBtn.disabled = false;
+            runBtn.innerHTML = '<i class="fas fa-play"></i> SIMULATE ALPHAS';
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/v1/backtest/run', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    formula,
+                    start_date,
+                    end_date,
+                    universe,
+                    style,
+                    holding_period,
+                    slippage_bps,
+                    portfolio_size,
+                    markets: checkedMarkets
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                alert(`Backtest Failed:\n${data.detail || 'Unknown error'}`);
+                return;
+            }
+
+            // Hide placeholder, show panel
+            resultsPlaceholder.classList.add('hidden');
+            resultsPanel.classList.remove('hidden');
+
+            // Render Metrics
+            // Helper function to format metric values nicely
+            const showVal = (val, suffix='') => {
+                return (val === null || val === -999.99) ? '--' : `${val}${suffix}`;
+            };
+            document.getElementById('metricSharpe').innerText = showVal(data.metrics.sharpe);
+            document.getElementById('metricReturn').innerText = showVal(data.metrics.annualized_return, '%');
+            document.getElementById('metricDrawdown').innerText = showVal(data.metrics.max_drawdown, '%');
+            document.getElementById('metricTurnover').innerText = showVal(data.metrics.turnover, '%');
+            document.getElementById('metricWinRate').innerText = showVal(data.metrics.win_rate, '%');
+            document.getElementById('metricIC').innerText = showVal(data.metrics.ic);
+            document.getElementById('metricFitness').innerText = showVal(data.metrics.fitness);
+
+            // Render Chart
+            renderChart(data.chart);
+
+            // Render Trades Table
+            allTrades = data.trades || [];
+            currentTradesPage = 1;
+            renderTradesTable();
+
+
+
+        } catch (error) {
+            alert(`Network Error: ${error.message}`);
+        } finally {
+            runBtn.disabled = false;
+            runBtn.innerHTML = '<i class="fas fa-play"></i> SIMULATE ALPHAS';
+        }
+    });
+
+    function renderTradesTable() {
+        const tbody = document.getElementById('tradeLogTableBody');
+        const prevBtn = document.getElementById('tradeLogPrevBtn');
+        const nextBtn = document.getElementById('tradeLogNextBtn');
+        const pageIndicator = document.getElementById('tradeLogPageIndicator');
+        
+        if (allTrades.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-[#4A6A70]">No recent trades generated</td></tr>';
+            prevBtn.disabled = true;
+            nextBtn.disabled = true;
+            pageIndicator.innerText = "Page 1 of 1";
+            return;
+        }
+        
+        const totalPages = Math.ceil(allTrades.length / tradesPageSize);
+        if (currentTradesPage > totalPages) {
+            currentTradesPage = totalPages;
+        }
+        if (currentTradesPage < 1) {
+            currentTradesPage = 1;
+        }
+        
+        const startIndex = (currentTradesPage - 1) * tradesPageSize;
+        const endIndex = startIndex + tradesPageSize;
+        const pageTrades = allTrades.slice(startIndex, endIndex);
+        
+        tbody.innerHTML = pageTrades.map(t => `
+            <tr class="border-b border-[#1A2A30]/40 hover:bg-[#112228]/20 transition-colors">
+                <td class="py-2.5">${t.date}</td>
+                <td class="py-2.5 font-bold text-[#00A6B2]">${t.ticker}</td>
+                <td class="py-2.5">
+                    <span class="${t.action.includes('Long') ? 'text-[#00E5F2]' : 'text-[#FF5252]'} bg-[#112228] px-2 py-0.5 rounded text-[10px]">
+                        ${t.action}
+                    </span>
+                </td>
+                <td class="py-2.5 text-right font-semibold">${t.weight}%</td>
+                <td class="py-2.5 text-right text-[#4A6A70]">$${t.price}</td>
+            </tr>
+        `).join('');
+        
+        pageIndicator.innerText = `Page ${currentTradesPage} of ${totalPages}`;
+        prevBtn.disabled = currentTradesPage === 1;
+        nextBtn.disabled = currentTradesPage === totalPages;
+    }
+
+    document.getElementById('tradeLogPrevBtn').addEventListener('click', () => {
+        if (currentTradesPage > 1) {
+            currentTradesPage--;
+            renderTradesTable();
+        }
+    });
+
+    document.getElementById('tradeLogNextBtn').addEventListener('click', () => {
+        const totalPages = Math.ceil(allTrades.length / tradesPageSize);
+        if (currentTradesPage < totalPages) {
+            currentTradesPage++;
+            renderTradesTable();
+        }
+    });
+
+    document.getElementById('tradeLogPageSize').addEventListener('change', (e) => {
+        tradesPageSize = parseInt(e.target.value);
+        currentTradesPage = 1;
+        renderTradesTable();
+    });
+
+    function renderChart(chartPoints) {
+        const labels = chartPoints.map(p => p.date);
+        const strategyData = chartPoints.map(p => p.strategy);
+        const benchmarkData = chartPoints.map(p => p.benchmark);
+        const drawdownData = chartPoints.map(p => p.drawdown);
+
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+
+        if (myChart) {
+            myChart.destroy();
+        }
+
+        myChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Strategy Performance (Net)',
+                        data: strategyData,
+                        borderColor: '#00A6B2',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        hoverBackgroundColor: '#00E5F2'
+                    },
+                    {
+                        label: 'Benchmark (SPY)',
+                        data: benchmarkData,
+                        borderColor: '#4A6A70',
+                        borderWidth: 1.5,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 4
+                    },
+                    {
+                        label: 'Drawdown (%)',
+                        data: drawdownData,
+                        borderColor: 'rgba(255, 82, 82, 0.4)',
+                        backgroundColor: 'rgba(255, 82, 82, 0.08)',
+                        borderWidth: 1,
+                        fill: true,
+                        pointRadius: 0,
+                        yAxisID: 'y_drawdown'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            color: '#8BA4A8',
+                            font: { family: 'JetBrains Mono', size: 10 }
+                        }
+                    },
+                    tooltip: {
+                        enabled: true,
+                        mode: 'index',
+                        intersect: false
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(26, 42, 48, 0.2)' },
+                        ticks: {
+                            color: '#4A6A70',
+                            font: { family: 'JetBrains Mono', size: 9 },
+                            maxTicksLimit: 12
+                        }
+                    },
+                    y: {
+                        position: 'left',
+                        grid: { color: 'rgba(26, 42, 48, 0.2)' },
+                        ticks: {
+                            color: '#8BA4A8',
+                            font: { family: 'JetBrains Mono', size: 9 },
+                            callback: function(value) { return value + '%'; }
+                        }
+                    },
+                    y_drawdown: {
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            color: '#FF5252',
+                            font: { family: 'JetBrains Mono', size: 9 },
+                            callback: function(value) { return value + '%'; }
+                        },
+                        min: -100,
+                        max: 0
+                    }
+                }
+            }
+        });
+    }
+
+    // Check for sessionStorage loaded backtests on load
+    document.addEventListener('DOMContentLoaded', () => {
+        const loaded = sessionStorage.getItem('loadedBacktest');
+        if (loaded) {
+            try {
+                const item = JSON.parse(loaded);
+                sessionStorage.removeItem('loadedBacktest');
+                loadHistoryItem(item);
+            } catch (e) {
+                console.error("Failed to load backtest from session storage:", e);
+            }
+        }
+    });
+</script>
+{% endblock %}

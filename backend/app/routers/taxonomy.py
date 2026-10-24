@@ -7,7 +7,7 @@ from backend.app.sentiment.asset_mapper import ASSET_TO_TICKER
 router = APIRouter()
 
 @router.get("/taxonomy/assets")
-async def get_taxonomy_assets():
+def get_taxonomy_assets():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -73,7 +73,7 @@ async def get_taxonomy_assets():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/taxonomy/update")
-async def update_taxonomy_asset(payload: Dict = Body(...)):
+def update_taxonomy_asset(payload: Dict = Body(...)):
     asset_name = payload.get("asset_name")
     ticker = payload.get("ticker")
     

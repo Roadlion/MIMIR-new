@@ -4,12 +4,17 @@ from typing import Optional, List, Dict, Any
 from ..database import get_db_connection_dict
 from ..config import get_settings
 
+import time
+import json
+
 router = APIRouter()
 settings = get_settings()
 
+_articles_cache = {}
+CACHE_TTL_SECONDS = 300
 
 @router.get("/articles")
-async def get_articles(
+def get_articles(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = None,
@@ -22,6 +27,13 @@ async def get_articles(
     sort: Optional[str] = None
 ):
     """Get articles with sentiment impacts, with filters and offset pagination."""
+    cache_key = (page, limit, search, source, asset, sentiment, days, region, country, sort)
+    now = time.time()
+    if cache_key in _articles_cache:
+        ts, cached_data = _articles_cache[cache_key]
+        if now - ts < CACHE_TTL_SECONDS:
+            return cached_data
+
     conn = get_db_connection_dict()
     cur = conn.cursor()
     
@@ -29,7 +41,7 @@ async def get_articles(
     params = []
     
     if days is not None:
-        where_clauses.append("COALESCE(a.published_ts, a.scraped_at) > NOW() - (%s * INTERVAL '1 day')")
+        where_clauses.append("a.published_ts >= NOW() - (%s * INTERVAL '1 day')")
         params.append(days)
         
     if search:
@@ -124,13 +136,11 @@ async def get_articles(
     cur.close()
     conn.close()
     
-    pages = (total_count + limit - 1) // limit if total_count > 0 else 1
-    
-    return {
+    response_data = {
         "total": total_count,
         "page": page,
         "limit": limit,
-        "pages": pages,
+        "pages": (total_count + limit - 1) // limit if total_count > 0 else 1,
         "articles": [
             {
                 "id": r.get("id"),
@@ -145,10 +155,12 @@ async def get_articles(
             for r in results
         ]
     }
-
+    
+    _articles_cache[cache_key] = (now, response_data)
+    return response_data
 
 @router.get("/articles/sources")
-async def get_article_sources():
+def get_article_sources():
     """Get all unique news sources."""
     conn = get_db_connection_dict()
     cur = conn.cursor()
@@ -167,7 +179,7 @@ async def get_article_sources():
 
 
 @router.get("/articles/{article_id}")
-async def get_article(article_id: int):
+def get_article(article_id: int):
     """Get a single article with its sentiment impacts."""
     conn = get_db_connection_dict()
     cur = conn.cursor()

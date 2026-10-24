@@ -6,7 +6,7 @@
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
     <!-- Left: Dashboard Cards (2/3) -->
     <div class="w-full lg:col-span-2">
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-5">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <!-- Global Sentiment Card -->
             <div class="card flex flex-col justify-between h-40">
                 <div>
@@ -743,8 +743,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const cached = getTickerInfoCache();
         const uncached = list.filter(t => 
             !(t in cached) || 
-            !('long_name' in cached[t]) || 
-            (cached[t].logo_url && !cached[t].logo_url.includes('perplexity.ai'))
+            !('long_name' in cached[t])
         );
         if (uncached.length === 0) return;
 
@@ -1114,6 +1113,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadWatchlistPrices();
         loadWatchlistSentiment();
     }, 300000);
+
+    // Cross-page storage event listener for real-time watchlist sync
+    window.addEventListener('storage', () => {
+        renderWatchlist();
+        loadWatchlistPrices();
+        loadWatchlistSentiment();
+    });
 
     // ==================== MARKET SUMMARY ====================
     const summaryContainer = document.getElementById('market-summary-container');

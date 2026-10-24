@@ -19,15 +19,38 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     
+    # Fallback LLMs (Free Options)
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    
+    nvidia_api_key: str = ""
+    nvidia_model: str = "meta/llama-3.3-70b-instruct"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemma-4-31b-it:free"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
     # Redis (later)
     redis_url: str = "redis://localhost:6379/0"
     
-    # News API keys
+    # Search API keys
     newsapi_key: str = ""
     gnews_api_key: str = ""
+    tavily_api_key: str = ""
+
+    # Discord Notifications
+    discord_webhook_url: str = ""           # Universal / fallback Discord webhook URL
+    discord_webhook_trades: str = ""        # Dedicated webhook for #mimir-trades (entries, ratchets, exits)
+    discord_webhook_macro: str = ""         # Dedicated webhook for #mimir-macro (briefings, yield/vix shocks)
+    discord_webhook_breaking: str = ""      # Dedicated webhook for #mimir-intel (breaking geopolitical & macro events)
+    discord_mention_role_id: str = ""       # Optional: role ID to @mention on Tier 1 alerts
     
     # Mode - map from MIMIR_MODE env var
     mode: str = Field(default="standalone", alias="MIMIR_MODE")
+    mimir_disable_gpu: bool = Field(default=True, alias="MIMIR_DISABLE_GPU")
+    mimir_gamer_mode: bool = Field(default=False, alias="MIMIR_GAMER_MODE")
     
     class Config:
         env_file = ".env"

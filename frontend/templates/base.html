@@ -7,7 +7,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
-    <link rel="stylesheet" href="https://cloudflare.com">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="icon" type="image/png" href="/static/img/mimir_logo.png">
     {% block head_extra %}{% endblock %}
 </head>
 <body class="font-['Inter'] antialiased min-h-screen flex flex-col">
@@ -15,31 +16,133 @@
     <div id="ticker-bar" class="w-full bg-[#060A0D] border-b border-[#1A2A30] py-1.5 overflow-hidden text-xs font-mono select-none">
         <div class="ticker-wrapper">
             <div id="ticker-track" class="ticker-track">
-                <span class="text-[#4A6A70]">🌳 Loading market data from Valhalla...</span>
+                <span class="text-[#4A6A70]"><i class="fas fa-tree mr-1"></i>Loading market data from Valhalla...</span>
             </div>
         </div>
     </div>
 
-    <nav class="border-b border-[#1A2A30] px-6 py-3 flex items-center justify-between">
-        <div class="flex items-center gap-6">
+    <nav class="border-b border-[#1A2A30] px-4 lg:px-6 py-3 flex flex-col lg:flex-row lg:items-center justify-between relative z-50">
+        <!-- Brand & Mobile Toggle -->
+        <div class="flex items-center justify-between w-full lg:w-auto">
             <div class="flex items-center gap-2">
                 <span class="text-[#00A6B2] font-bold text-xl font-['JetBrains_Mono']">MIMIR</span>
                 <span class="text-xs text-[#4A6A70] font-mono">v1.0</span>
             </div>
-            <div class="flex gap-6 text-sm">
-                <a href="/" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Dashboard</a>
-                <a href="/articles" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Articles</a>
-                <a href="/watchlist" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Watchlist</a>
-                <a href="/taxonomy" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Taxonomy</a>
-                <a href="/map" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors">Map</a>
-                <a href="/guerilla" class="text-[#ffd700] hover:text-[#00A6B2] transition-colors font-bold border border-[#ffd700]/30 px-2 rounded bg-[#ffd700]/10 ml-2">Guerilla Quant</a>
+            
+            <div class="flex items-center gap-3 lg:hidden">
+                <button onclick="triggerMimirBriefing()" class="px-2 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded font-mono shadow-[0_0_12px_rgba(0,166,178,0.2)]">
+                    <i class="fas fa-volume-high animate-pulse"></i>
+                </button>
+                <button id="mobileMenuBtn" class="text-[#D6E5E3] hover:text-[#00A6B2] transition-colors p-1">
+                    <i class="fas fa-bars text-lg"></i>
+                </button>
             </div>
         </div>
-        <div class="flex items-center gap-4">
-            <span class="text-xs text-[#4A6A70] font-mono">⏱️ <span id="clock">--:--:--</span></span>
-            <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
-                ↻ Refresh
-            </button>
+
+        <!-- Collapsible Menu (Links + Tools) -->
+        <div id="navMenu" class="hidden lg:flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6 w-full lg:w-auto mt-4 lg:mt-0">
+            <div class="flex flex-col lg:flex-row gap-2 lg:gap-1 text-sm w-full lg:w-auto">
+                <a href="/" class="nav-link w-full lg:w-auto block">Dashboard</a>
+
+                <!-- Portfolio dropdown -->
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Portfolio <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
+                        <a href="/portfolio">Overview</a>
+                        <a href="/watchlist">Watchlist</a>
+                        <a href="/alerts">Trade Alerts</a>
+                    </div>
+                </div>
+
+                <!-- Markets dropdown -->
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Markets <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
+                        <a href="/map">Heat Map</a>
+                        <a href="/taxonomy">Taxonomy</a>
+                    </div>
+                </div>
+
+                <!-- Research dropdown -->
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Research <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
+                        <a href="/articles">Intelligence Feed</a>
+                        <a href="/stat-arb">Stat-Arb APU</a>
+                    </div>
+                </div>
+
+                <!-- Tools dropdown -->
+                <div class="nav-dropdown w-full lg:w-auto">
+                    <button class="nav-dropdown-trigger w-full text-left lg:w-auto flex justify-between items-center">Tools <i class="fas fa-chevron-down text-[9px] ml-1"></i></button>
+                    <div class="nav-dropdown-menu relative lg:absolute w-full lg:w-auto mt-1 lg:mt-0">
+                        <a href="/backtest">Simulate</a>
+                        <a href="/alphas">Alphas</a>
+                        <a href="/oracle">Oracle Assistant</a>
+                        <a href="/casino">🎰 Casino</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 w-full lg:w-auto border-t lg:border-none border-[#1A2A30] pt-4 lg:pt-0">
+                <!-- Search -->
+                <div class="relative w-full lg:w-auto">
+                    <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#4A6A70] pointer-events-none"></i>
+                    <input type="text" id="searchInput"
+                        class="w-full lg:w-44 bg-[#0A161C] border border-[#1A2A30] rounded pl-7 pr-3 py-2 lg:py-1 text-xs text-[#D6E5E3] font-mono placeholder-[#4A6A70] focus:border-[#00A6B2] focus:outline-none transition-colors"
+                        placeholder="Search tickers..." autocomplete="off" spellcheck="false">
+                    <div id="searchDropdown" class="hidden absolute left-0 right-0 lg:right-0 lg:left-auto top-full mt-2 w-full lg:w-80 bg-[#0A161C] border border-[#1A2A30] rounded-lg shadow-xl z-50 overflow-hidden"></div>
+                </div>
+                
+                <div class="hidden lg:flex items-center gap-3">
+                    <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock">--:--:--</span></span>
+                    
+                    <!-- User Profile & Auth Pill -->
+                    <div id="userNavPill" class="flex items-center gap-2 bg-[#0A161C] border border-[#1A2A30] rounded-lg px-2.5 py-1 text-xs font-mono">
+                        <i class="fas fa-user-circle text-[#00A6B2]"></i>
+                        <span id="navUsername" class="text-white font-bold">...</span>
+                        <span id="navQuota" class="text-[10px] text-[#4A6A70] bg-[#060D11] px-1.5 py-0.5 rounded border border-[#1A2A30]">100 left</span>
+                        <a id="adminNavLink" href="/admin" class="hidden text-[11px] text-purple-400 hover:text-purple-300 font-bold ml-1" title="Admin Dashboard">
+                            <i class="fas fa-cog"></i> Admin
+                        </a>
+                        <button onclick="handleLogout()" class="text-[#4A6A70] hover:text-red-400 text-xs ml-1" title="Logout">
+                            <i class="fas fa-sign-out-alt"></i>
+                        </button>
+                    </div>
+
+                    <button onclick="openSitRepModal()" class="px-3 py-1 text-xs border border-[#1E88E5] text-[#1E88E5] bg-[#1E88E5]/10 rounded hover:bg-[#1E88E5]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(30,136,229,0.2)]">
+                        <i class="fas fa-globe text-[#1E88E5]"></i> Sit Rep
+                    </button>
+                    <button onclick="triggerMimirBriefing()" class="px-3 py-1 text-xs border border-[#00A6B2] text-[#00A6B2] bg-[#00A6B2]/10 rounded hover:bg-[#00A6B2]/20 font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(0,166,178,0.2)]">
+                        <i class="fas fa-volume-high animate-pulse text-[#00A6B2]"></i> Mimir's Briefing
+                    </button>
+                    <button id="mimirMicBtn" onclick="toggleMimirVoiceMic()" title="Voice Command Mic" class="px-2.5 py-1 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <button id="refreshBtn" class="px-3 py-1 text-xs border border-[#2A4A50] rounded hover:border-[#00A6B2] hover:text-[#00A6B2] transition-colors">
+                        <i class="fas fa-sync-alt mr-1"></i> Refresh
+                    </button>
+                    <button id="mimirPowerBtn" onclick="openShutdownModal()" title="Turn Off MIMIR Safely" class="px-2.5 py-1 text-xs border border-red-500/50 text-red-400 bg-red-500/10 hover:bg-red-500/25 hover:border-red-400 hover:text-red-300 rounded font-mono flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(239,68,68,0.25)]">
+                        <i class="fas fa-power-off text-red-400"></i> <span class="font-bold tracking-wider">OFF</span>
+                    </button>
+                </div>
+                
+                <!-- Mobile Only Tools -->
+                <div class="flex lg:hidden items-center justify-between w-full mt-2">
+                    <span class="text-xs text-[#4A6A70] font-mono"><i class="far fa-clock mr-1"></i><span id="clock-mobile">--:--:--</span></span>
+                    <div class="flex items-center gap-2">
+                        <button id="mimirMicBtn-mobile" onclick="toggleMimirVoiceMic()" class="px-2.5 py-1.5 text-xs border border-[#1A2A30] text-[#4A6A70] rounded hover:text-[#00A6B2] bg-[#0A161C]">
+                            <i class="fas fa-microphone"></i> Voice
+                        </button>
+                        <button id="refreshBtn-mobile" class="px-2.5 py-1.5 text-xs border border-[#2A4A50] rounded bg-[#0A161C] text-[#D6E5E3] hover:text-[#00A6B2]">
+                            <i class="fas fa-sync-alt mr-1"></i> Refresh
+                        </button>
+                        <button id="mimirPowerBtn-mobile" onclick="openShutdownModal()" class="px-2.5 py-1.5 text-xs border border-red-500/50 text-red-400 bg-red-500/10 hover:bg-red-500/25 rounded font-mono flex items-center gap-1">
+                            <i class="fas fa-power-off text-red-400"></i> OFF
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </nav>
     
@@ -76,6 +179,705 @@
     </footer>
 
     <script src="/static/js/main.js?v=1.0.2"></script>
+    <script>
+    // Mobile menu toggle
+    document.addEventListener('DOMContentLoaded', () => {
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const navMenu = document.getElementById('navMenu');
+        if (mobileMenuBtn && navMenu) {
+            mobileMenuBtn.addEventListener('click', () => {
+                navMenu.classList.toggle('hidden');
+                navMenu.classList.toggle('flex');
+            });
+        }
+        
+        // Mobile menu dropdowns toggle
+        const dropdownTriggers = document.querySelectorAll('.nav-dropdown-trigger');
+        dropdownTriggers.forEach(trigger => {
+            trigger.addEventListener('click', (e) => {
+                if (window.innerWidth < 1024) { // lg breakpoint
+                    const menu = trigger.nextElementSibling;
+                    if (menu) {
+                        menu.classList.toggle('hidden');
+                    }
+                }
+            });
+        });
+    });
+
+    // Active navbar route highlighter
+    document.addEventListener('DOMContentLoaded', () => {
+        const currentPath = window.location.pathname;
+        const navLinks = document.querySelectorAll('.nav-link, .nav-dropdown-menu a');
+        navLinks.forEach(link => {
+            if (link.getAttribute('href') === currentPath) {
+                link.classList.add('active');
+                const parentDropdown = link.closest('.nav-dropdown');
+                if (parentDropdown) {
+                    const trigger = parentDropdown.querySelector('.nav-dropdown-trigger');
+                    if (trigger) trigger.classList.add('active');
+                }
+            }
+        });
+    });
+
+    // Ticker search with debounce & keyboard navigation
+    const searchInput = document.getElementById('searchInput');
+    const dropdown = document.getElementById('searchDropdown');
+    let searchTimer;
+    let selectedSearchIdx = -1;
+
+    searchInput.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        selectedSearchIdx = -1;
+        const q = searchInput.value.trim();
+        if (q.length < 1) {
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+            return;
+        }
+        searchTimer = setTimeout(async () => {
+            dropdown.innerHTML = '<div class="p-3 text-xs text-[#4A6A70] text-center font-mono"><i class="fas fa-search mr-1"></i>Searching...</div>';
+            dropdown.classList.remove('hidden');
+            try {
+                const res = await fetch(`/api/v1/prices/search?q=${encodeURIComponent(q)}`);
+                const data = await res.json();
+                if (!data.results || data.results.length === 0) {
+                    dropdown.innerHTML = '<div class="p-3 text-xs text-[#4A6A70] text-center font-mono">No tickers found</div>';
+                    return;
+                }
+                dropdown.innerHTML = data.results.map((r, idx) => `
+                    <a href="/asset/${r.ticker}" data-idx="${idx}" class="search-result-item flex items-center gap-3 px-4 py-2.5 hover:bg-[#111A20] transition-colors border-b border-[#1A2A30]/50 last:border-b-0">
+                        <img src="${r.logo_url}" alt="${r.ticker}" class="w-7 h-7 rounded object-contain bg-[#111A20]" onerror="this.style.display='none'">
+                        <div class="flex flex-col min-w-0">
+                            <span class="text-sm font-mono font-bold text-[#00A6B2]">${r.ticker}</span>
+                            <span class="text-xs text-[#8BA4A8] truncate">${r.long_name}</span>
+                        </div>
+                    </a>
+                `).join('');
+            } catch (e) {
+                dropdown.innerHTML = '<div class="p-3 text-xs text-[#FF5252] text-center font-mono">Search failed</div>';
+            }
+        }, 250);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#searchInput') && !e.target.closest('#searchDropdown')) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        // Press '/' hotkey anywhere (except inside inputs) to focus search bar
+        if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            searchInput.focus();
+            return;
+        }
+
+        if (e.key === 'Escape') {
+            dropdown.classList.add('hidden');
+            searchInput.blur();
+            return;
+        }
+
+        // Arrow Key & Enter Navigation for search dropdown
+        if (!dropdown.classList.contains('hidden')) {
+            const items = dropdown.querySelectorAll('.search-result-item');
+            if (items.length === 0) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedSearchIdx = (selectedSearchIdx + 1) % items.length;
+                highlightSearchItem(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedSearchIdx = (selectedSearchIdx - 1 + items.length) % items.length;
+                highlightSearchItem(items);
+            } else if (e.key === 'Enter' && selectedSearchIdx >= 0 && selectedSearchIdx < items.length) {
+                e.preventDefault();
+                items[selectedSearchIdx].click();
+            }
+        }
+    });
+
+    function highlightSearchItem(items) {
+        items.forEach((item, idx) => {
+            if (idx === selectedSearchIdx) {
+                item.classList.add('bg-[#111A20]', 'border-l-2', 'border-l-[#00A6B2]');
+            } else {
+                item.classList.remove('bg-[#111A20]', 'border-l-2', 'border-l-[#00A6B2]');
+            }
+        });
+    }
+    </script>
+
+    <!-- MIMIR Jarvis Voice & Portfolio Briefing Modal -->
+    <div id="mimirJarvisModal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="bg-[#0A161C] border border-[#00A6B2] w-full max-w-2xl rounded-xl shadow-[0_0_50px_rgba(0,166,178,0.25)] overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <!-- Header Bar -->
+            <div class="px-5 py-4 border-b border-[#1A2A30] flex items-center justify-between bg-[#060A0D]">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-[#00A6B2]/20 border border-[#00A6B2] flex items-center justify-center">
+                        <i class="fas fa-tree text-[#00A6B2] text-sm animate-pulse"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold text-[#D6E5E3] font-mono tracking-wide">MIMIR BRIEFING HUD</h3>
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-[#00A6B2]/20 text-[#00A6B2] border border-[#00A6B2]/30">SMARTEST MAN ALIVE</span>
+                        </div>
+                        <p id="jarvisMarketSummary" class="text-xs text-[#4A6A70] font-mono mt-0.5">Fetching market intelligence from Valhalla...</p>
+                    </div>
+                </div>
+                
+                <button onclick="closeJarvisModal()" class="w-7 h-7 rounded hover:bg-[#1A2A30] text-[#4A6A70] hover:text-[#D6E5E3] flex items-center justify-center transition-colors">
+                    <i class="fas fa-times text-xs"></i>
+                </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-5 overflow-y-auto space-y-4">
+                
+                <!-- Loading State -->
+                <div id="jarvisLoadingState" class="py-12 flex flex-col items-center justify-center gap-3 text-center">
+                    <div class="flex items-center gap-1.5 h-8">
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0s;"></span>
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0.15s;"></span>
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0.3s;"></span>
+                        <span class="w-1.5 bg-[#00A6B2] h-full rounded animate-bounce" style="animation-delay: 0.45s;"></span>
+                    </div>
+                    <p class="text-xs font-mono text-[#00A6B2] uppercase tracking-wider">Consulting Mimir's Oracle & Synthesizing Voice...</p>
+                    <p class="text-[11px] text-[#4A6A70] font-mono">Analyzing overnight news, sentiment velocity, and portfolio impacts.</p>
+                </div>
+
+                <!-- Main Content State -->
+                <div id="jarvisContentState" class="hidden space-y-4">
+                    
+                    <!-- Audio Visualizer Waveform Bar -->
+                    <div class="bg-[#060A0D] border border-[#1A2A30] rounded-lg p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="flex items-end gap-1 h-6">
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-3 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-6 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-4 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-5 rounded"></span>
+                                <span class="jarvis-wave-bar w-1 bg-[#00A6B2] h-2 rounded"></span>
+                            </div>
+                            <span class="text-xs font-mono text-[#00A6B2] font-semibold">Mimir's Scottish Audio Digest</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <button onclick="triggerMimirBriefing()" class="px-2.5 py-1 text-xs border border-[#1A2A30] rounded hover:border-[#00A6B2] text-[#D6E5E3] transition-colors font-mono">
+                                <i class="fas fa-rotate-right mr-1"></i> Re-Synthesize
+                            </button>
+                            <button onclick="stopMimirAudio()" class="px-2.5 py-1 text-xs border border-[#1A2A30] rounded hover:border-red-500 text-red-400 transition-colors font-mono">
+                                <i class="fas fa-stop mr-1"></i> Stop Audio
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Spoken Transcript -->
+                    <div>
+                        <h4 class="text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Mimir's Spoken Transcript</h4>
+                        <div id="jarvisVoiceScript" class="bg-[#060A0D] border border-[#1A2A30] rounded-lg p-4 text-xs font-sans text-[#D6E5E3] leading-relaxed italic border-l-4 border-l-[#00A6B2]">
+                            "Loading transcript..."
+                        </div>
+                    </div>
+
+                    <!-- Portfolio Digest Cards -->
+                    <div>
+                        <h4 class="text-xs font-mono text-[#4A6A70] uppercase mb-1.5">Overnight Position Digest</h4>
+                        <div id="jarvisPortfolioDigest" class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-5 py-3 border-t border-[#1A2A30] bg-[#060A0D] flex items-center justify-between text-xs text-[#4A6A70] font-mono">
+                <span><i class="fas fa-microphone mr-1 text-[#00A6B2]"></i> Voice Commands: "Read market briefing" | "Stop audio"</span>
+                <button onclick="closeJarvisModal()" class="px-3 py-1 bg-[#1A2A30] hover:bg-[#2A3A40] text-[#D6E5E3] rounded transition-colors">
+                    Close HUD
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Portfolio Trade Alert Notification Pop-up Toast Container -->
+    <div id="portfolioAlertToastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-md w-full pointer-events-none"></div>
+
+    <script src="/static/js/mimir_jarvis.js"></script>
+    <script>
+        // --- PORTFOLIO TRADE ALERT MONITOR & SOUND NOTIFIER ---
+        (function() {
+            let portfolioTickers = new Set();
+            let notifiedAlertIds = new Set(JSON.parse(sessionStorage.getItem("notified_portfolio_alerts") || "[]"));
+
+            function playPortfolioAlertChime() {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    const ctx = new AudioContext();
+                    
+                    const playTone = (freq, start, duration, gainVal = 0.2) => {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(freq, start);
+                        gain.gain.setValueAtTime(gainVal, start);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start(start);
+                        osc.stop(start + duration);
+                    };
+
+                    const now = ctx.currentTime;
+                    // Dual chord chime: D5 -> A5 -> D6
+                    playTone(587.33, now, 0.2, 0.25);
+                    playTone(880.00, now + 0.12, 0.25, 0.25);
+                    playTone(1174.66, now + 0.28, 0.45, 0.3);
+                } catch (e) {
+                    console.warn("Portfolio alert audio playback error:", e);
+                }
+            }
+
+            async function fetchPortfolioTickers() {
+                try {
+                    const res = await fetch("/api/v1/portfolio/tickers");
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    if (data.tickers && Array.isArray(data.tickers)) {
+                        portfolioTickers = new Set(data.tickers.map(t => t.toUpperCase()));
+                        window.userPortfolioTickers = portfolioTickers;
+                    }
+                } catch (e) {
+                    console.error("Error fetching portfolio tickers:", e);
+                }
+            }
+
+            function showPortfolioAlertToast(alert) {
+                const container = document.getElementById("portfolioAlertToastContainer");
+                if (!container) return;
+
+                const isBuy = alert.signal_type.toUpperCase() === "BUY";
+                const actionColor = isBuy ? "#00E676" : "#FF5252";
+                const actionBg = isBuy ? "rgba(0, 230, 118, 0.15)" : "rgba(255, 82, 82, 0.15)";
+                const borderGlow = isBuy ? "rgba(0, 230, 118, 0.5)" : "rgba(255, 82, 82, 0.5)";
+
+                const toast = document.createElement("div");
+                toast.className = "pointer-events-auto bg-[#0A161C]/95 border-2 rounded-xl p-4 shadow-2xl backdrop-blur-md transition-all duration-500 transform translate-y-4 opacity-0 font-mono";
+                toast.style.borderColor = borderGlow;
+                toast.style.boxShadow = `0 10px 30px ${actionBg}`;
+
+                toast.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00E5F2]/20 border border-[#00E5F2]/40 text-[#00E5F2] flex items-center gap-1 shadow-[0_0_8px_rgba(0,229,242,0.4)]">
+                                <i class="fas fa-briefcase text-[10px]"></i> IN YOUR PORTFOLIO
+                            </span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold" style="background: ${actionBg}; color: ${actionColor}; border: 1px solid ${actionColor}">
+                                ${alert.signal_type.toUpperCase()}
+                            </span>
+                        </div>
+                        <button onclick="this.parentElement.parentElement.remove()" class="text-[#8BA4A8] hover:text-[#D6E5E3] font-bold text-sm px-1">&times;</button>
+                    </div>
+
+                    <div class="flex justify-between items-baseline mb-2">
+                        <h4 class="text-base font-extrabold text-[#D6E5E3] tracking-wide flex items-center gap-2">
+                            ${alert.ticker}
+                            <span class="text-xs font-normal text-[#4A6A70]">Trigger: $${parseFloat(alert.trigger_price || 0).toFixed(2)}</span>
+                        </h4>
+                        <span class="text-xs font-bold text-[#00E676]">${alert.win_rate ? parseFloat(alert.win_rate).toFixed(1) + '% Win Rate' : ''}</span>
+                    </div>
+
+                    <p class="text-xs text-[#8BA4A8] line-clamp-2 mb-3 leading-relaxed">
+                        ${alert.reason || 'Trade signal alert detected for stock held in your portfolio.'}
+                    </p>
+
+                    <div class="flex items-center justify-between pt-2 border-t border-[#1A2A30]">
+                        <span class="text-[10px] text-[#4A6A70]">RSI: ${alert.rsi_value ? parseFloat(alert.rsi_value).toFixed(1) : 'N/A'}</span>
+                        <div class="flex gap-2">
+                            <button onclick="window.markAlertAsRead(${alert.id}, this)" class="px-2.5 py-1 bg-[#1A2A30] hover:bg-[#2A3A40] text-[#00E5F2] border border-[#00E5F2]/30 text-xs font-bold rounded transition-all flex items-center gap-1">
+                                <i class="fas fa-check-circle text-[10px]"></i> Mark Read
+                            </button>
+                            <a href="/alerts" class="px-3 py-1 bg-[#00A6B2] hover:bg-[#00E5F2] text-[#060A0D] text-xs font-bold rounded transition-all flex items-center gap-1">
+                                <i class="fas fa-external-link-alt text-[10px]"></i> View Alert
+                            </a>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(toast);
+
+                requestAnimationFrame(() => {
+                    toast.classList.remove("translate-y-4", "opacity-0");
+                });
+
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.classList.add("opacity-0", "translate-y-4");
+                        setTimeout(() => toast.remove(), 500);
+                    }
+                }, 12000);
+            }
+
+            async function checkPortfolioAlerts() {
+                if (portfolioTickers.size === 0) {
+                    await fetchPortfolioTickers();
+                }
+                if (portfolioTickers.size === 0) return;
+
+                try {
+                    const res = await fetch("/api/v1/alerts/pending");
+                    if (!res.ok) return;
+                    const alerts = await res.json();
+
+                    let soundPlayed = false;
+                    alerts.forEach(alert => {
+                        if (!alert || !alert.ticker || !alert.id) return;
+                        if (localStorage.getItem("read_alert_" + alert.id) === "true") return;
+                        const t = alert.ticker.toUpperCase();
+                        if (portfolioTickers.has(t) && !notifiedAlertIds.has(alert.id)) {
+                            notifiedAlertIds.add(alert.id);
+                            sessionStorage.setItem("notified_portfolio_alerts", JSON.stringify(Array.from(notifiedAlertIds)));
+                            
+                            showPortfolioAlertToast(alert);
+                            if (!soundPlayed) {
+                                playPortfolioAlertChime();
+                                soundPlayed = true;
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.error("Error checking portfolio trade alerts:", e);
+                }
+            }
+
+            async function markAlertAsRead(alertId, btnEl) {
+                try {
+                    notifiedAlertIds.add(alertId);
+                    sessionStorage.setItem("notified_portfolio_alerts", JSON.stringify(Array.from(notifiedAlertIds)));
+                    localStorage.setItem("read_alert_" + alertId, "true");
+                    
+                    if (btnEl) {
+                        const toast = btnEl.closest('.pointer-events-auto');
+                        if (toast) toast.remove();
+                    }
+                    
+                    await fetch(`/api/v1/alerts/${alertId}/read`, { method: "POST" });
+                } catch (e) {
+                    console.error("Error marking alert as read:", e);
+                }
+            }
+
+            window.checkPortfolioAlerts = checkPortfolioAlerts;
+
+            // Authentication & User Nav Pill Handling
+            async function checkAuthUser() {
+                try {
+                    const res = await fetch('/api/v1/auth/me');
+                    if (!res.ok) {
+                        if (window.location.pathname !== '/login') {
+                            window.location.href = '/login';
+                        }
+                        return;
+                    }
+                    const user = await res.json();
+                    
+                    const navUsername = document.getElementById('navUsername');
+                    const navQuota = document.getElementById('navQuota');
+                    const adminNavLink = document.getElementById('adminNavLink');
+                    
+                    if (navUsername) navUsername.textContent = user.username;
+                    if (navQuota) {
+                        if (user.role === 'admin') {
+                            navQuota.textContent = 'Unlimited';
+                            navQuota.className = 'text-[10px] text-purple-300 bg-purple-950 px-1.5 py-0.5 rounded border border-purple-800 font-bold';
+                        } else {
+                            navQuota.textContent = `${user.remaining_quota}/${user.daily_token_quota} msgs`;
+                        }
+                    }
+                    if (adminNavLink && user.role === 'admin') {
+                        adminNavLink.classList.remove('hidden');
+                    }
+                } catch (err) {
+                    console.error("Auth check failed:", err);
+                }
+            }
+
+            async function handleLogout() {
+                try {
+                    await fetch('/api/v1/auth/logout', { method: 'POST' });
+                    window.location.href = '/login';
+                } catch (err) {
+                    console.error("Logout failed:", err);
+                }
+            }
+
+            window.handleLogout = handleLogout;
+            document.addEventListener('DOMContentLoaded', checkAuthUser);
+
+            window.playPortfolioAlertChime = playPortfolioAlertChime;
+            window.markAlertAsRead = markAlertAsRead;
+
+            document.addEventListener("DOMContentLoaded", () => {
+                fetchPortfolioTickers().then(() => {
+                    checkPortfolioAlerts();
+                    setInterval(checkPortfolioAlerts, 20000);
+                });
+            });
+
+            async function openSitRepModal() {
+                document.getElementById('sitrepModal').classList.remove('hidden');
+                loadLatestSitRep();
+            }
+
+            function closeSitRepModal() {
+                document.getElementById('sitrepModal').classList.add('hidden');
+            }
+
+            async function loadLatestSitRep() {
+                const content = document.getElementById('sitrepContent');
+                content.innerHTML = `<div class="text-center py-10 text-[#4A6A70]"><i class="fas fa-spinner fa-spin text-2xl mb-2 text-[#1E88E5]"></i><p>Fetching latest Situation Report...</p></div>`;
+                try {
+                    const res = await fetch('/api/v1/sitrep/latest');
+                    const data = await res.json();
+                    renderSitRep(data);
+                } catch (err) {
+                    content.innerHTML = `<div class="p-4 bg-red-950/50 border border-red-800 text-red-300 rounded font-mono">Failed to load Sit Rep: ${err}</div>`;
+                }
+            }
+
+            async function generateFreshSitRep() {
+                const content = document.getElementById('sitrepContent');
+                content.innerHTML = `<div class="text-center py-10 text-[#4A6A70]"><i class="fas fa-spinner fa-spin text-2xl mb-2 text-[#1E88E5]"></i><p>Generating fresh Sit Rep & notifying Discord...</p></div>`;
+                try {
+                    const res = await fetch('/api/v1/sitrep/generate?report_type=ON_DEMAND', { method: 'POST' });
+                    const data = await res.json();
+                    renderSitRep(data.sitrep || data);
+                } catch (err) {
+                    content.innerHTML = `<div class="p-4 bg-red-950/50 border border-red-800 text-red-300 rounded font-mono">Failed to generate Sit Rep: ${err}</div>`;
+                }
+            }
+
+            function renderSitRep(data) {
+                const content = document.getElementById('sitrepContent');
+                if (!data || !data.full_markdown) {
+                    content.innerHTML = `<p class="text-[#4A6A70]">No Sit Rep data available.</p>`;
+                    return;
+                }
+                
+                let md = data.full_markdown
+                    .replace(/^# (.*$)/gim, '<h1 class="text-lg font-bold text-[#1E88E5] border-b border-[#1A2A30] pb-1 mb-2">$1</h1>')
+                    .replace(/^### (.*$)/gim, '<h3 class="text-sm font-bold text-white mt-4 mb-1">$1</h3>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+                    .replace(/`(.*?)`/g, '<code class="bg-[#111A20] px-1 py-0.5 rounded text-[#00A6B2]">$1</code>')
+                    .replace(/\n/g, '<br>');
+
+                content.innerHTML = `<div class="prose prose-invert max-w-none">${md}</div>`;
+            }
+
+            window.openSitRepModal = openSitRepModal;
+            window.closeSitRepModal = closeSitRepModal;
+            window.generateFreshSitRep = generateFreshSitRep;
+        })();
+    </script>
+
+    <!-- Sit Rep Modal -->
+    <div id="sitrepModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-[#1A2A30] flex items-center justify-between bg-[#060D11]">
+                <div class="flex items-center gap-3">
+                    <span class="p-2 rounded bg-[#1E88E5]/20 text-[#1E88E5] font-mono text-sm"><i class="fas fa-globe"></i></span>
+                    <div>
+                        <h2 class="text-base font-bold text-white font-mono">MIMIR Situation Report (Sit Rep)</h2>
+                        <p id="sitrepSubtitle" class="text-xs text-[#4A6A70] font-mono">Global Macro & Yield Intelligence</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="generateFreshSitRep()" class="px-3 py-1 text-xs bg-[#1E88E5] text-white hover:bg-[#1565C0] rounded font-mono transition-colors">
+                        <i class="fas fa-rotate mr-1"></i> Refresh Sit Rep
+                    </button>
+                    <button onclick="closeSitRepModal()" class="text-[#4A6A70] hover:text-white text-lg p-1">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Modal Body -->
+            <div id="sitrepContent" class="p-6 overflow-y-auto font-mono text-xs text-[#D6E5E3] space-y-4">
+                <div class="text-center py-10 text-[#4A6A70]">
+                    <i class="fas fa-spinner fa-spin text-2xl mb-2 text-[#1E88E5]"></i>
+                    <p>Compiling Sit Rep & Macro Snapshot...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Safe Power-Off / Shutdown Modal -->
+    <div id="shutdownModal" class="hidden fixed inset-0 bg-black/85 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+        <div class="bg-[#0A161C] border border-red-500/40 rounded-xl max-w-lg w-full overflow-hidden shadow-[0_0_40px_rgba(239,68,68,0.25)]">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-[#1A2A30] flex items-center justify-between bg-[#060D11]">
+                <div class="flex items-center gap-3">
+                    <span class="p-2 rounded bg-red-500/20 text-red-400 font-mono text-base"><i class="fas fa-power-off"></i></span>
+                    <div>
+                        <h2 class="text-base font-bold text-white font-mono tracking-wide">Turn Off MIMIR Safely</h2>
+                        <p class="text-[11px] text-[#4A6A70] font-mono">Clean process termination & resource release</p>
+                    </div>
+                </div>
+                <button onclick="closeShutdownModal()" class="text-[#4A6A70] hover:text-white text-lg p-1">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <!-- Modal Content (Initial Confirmation State) -->
+            <div id="shutdownConfirmState" class="p-6 font-mono text-xs space-y-4">
+                <p class="text-[#D6E5E3]">
+                    Are you ready to turn off MIMIR? Clicking below will safely terminate:
+                </p>
+                <div class="space-y-2 bg-[#060D11] border border-[#1A2A30] rounded-lg p-3 text-[11px]">
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Disconnect MetaTrader 5 terminal cleanly</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Stop Live Price & Profit Ratchet daemons</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Halt AI pipelines, analytical engines & scrapers</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Close Cloudflare HTTPS tunnel & console windows</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Release all RAM and CPU cores to prevent PC freezing</span>
+                    </div>
+                </div>
+                <div class="text-[11px] text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded p-2.5">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    Closing windows manually with "X" leaves orphaned python zombie processes that peg your CPU. Always use this OFF button!
+                </div>
+                <div class="flex items-center justify-end gap-3 pt-2">
+                    <button onclick="closeShutdownModal()" class="px-4 py-2 rounded border border-[#1A2A30] text-[#D6E5E3] hover:bg-[#111A20] transition-colors">
+                        Cancel
+                    </button>
+                    <button id="btnExecuteShutdown" onclick="executeMimirShutdown()" class="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white font-bold flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)]">
+                        <i class="fas fa-power-off"></i> Turn Off MIMIR
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Content (Progress State) -->
+            <div id="shutdownProgressState" class="hidden p-8 font-mono text-center space-y-5">
+                <div class="relative w-16 h-16 mx-auto flex items-center justify-center">
+                    <div class="absolute inset-0 rounded-full border-4 border-red-500/20 border-t-red-500 animate-spin"></div>
+                    <i class="fas fa-power-off text-2xl text-red-400 animate-pulse"></i>
+                </div>
+                <div>
+                    <h3 id="shutdownStatusTitle" class="text-sm font-bold text-white uppercase tracking-wider mb-1">Powering Down All Engines...</h3>
+                    <p id="shutdownStatusDesc" class="text-xs text-[#4A6A70]">Disconnecting MT5 and stopping background workers...</p>
+                </div>
+                <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-3 text-[11px] text-left space-y-1.5 max-w-sm mx-auto">
+                    <div id="step-mt5" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Disconnecting MetaTrader 5 terminal...
+                    </div>
+                    <div id="step-daemons" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Halting live price & ratchet daemons...
+                    </div>
+                    <div id="step-subprocesses" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Killing background pipelines & scrapers...
+                    </div>
+                    <div id="step-server" class="text-[#4A6A70] flex items-center gap-2">
+                        <i class="fas fa-circle-notch fa-spin"></i> Shutting down application server...
+                    </div>
+                </div>
+                <div id="shutdownCompleteNotice" class="hidden p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs">
+                    <i class="fas fa-check-circle mr-1"></i> All MIMIR systems are completely OFF. Safe to close this browser tab.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openShutdownModal() {
+            document.getElementById('shutdownModal').classList.remove('hidden');
+            document.getElementById('shutdownConfirmState').classList.remove('hidden');
+            document.getElementById('shutdownProgressState').classList.add('hidden');
+        }
+
+        function closeShutdownModal() {
+            document.getElementById('shutdownModal').classList.add('hidden');
+        }
+
+        async function executeMimirShutdown() {
+            const confirmState = document.getElementById('shutdownConfirmState');
+            const progressState = document.getElementById('shutdownProgressState');
+            confirmState.classList.add('hidden');
+            progressState.classList.remove('hidden');
+
+            const stepMt5 = document.getElementById('step-mt5');
+            const stepDaemons = document.getElementById('step-daemons');
+            const stepSubprocesses = document.getElementById('step-subprocesses');
+            const stepServer = document.getElementById('step-server');
+            const statusTitle = document.getElementById('shutdownStatusTitle');
+            const statusDesc = document.getElementById('shutdownStatusDesc');
+            const completeNotice = document.getElementById('shutdownCompleteNotice');
+
+            try {
+                const response = await fetch('/api/v1/system/shutdown', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                stepMt5.className = 'text-emerald-400 flex items-center gap-2';
+                stepMt5.innerHTML = '<i class="fas fa-check"></i> MetaTrader 5 terminal session closed';
+                
+                stepDaemons.className = 'text-emerald-400 flex items-center gap-2';
+                stepDaemons.innerHTML = '<i class="fas fa-check"></i> Pricing daemons terminated';
+
+                stepSubprocesses.className = 'text-emerald-400 flex items-center gap-2';
+                stepSubprocesses.innerHTML = '<i class="fas fa-check"></i> AI worker pipelines halted';
+
+                stepServer.className = 'text-emerald-400 flex items-center gap-2';
+                stepServer.innerHTML = '<i class="fas fa-check"></i> Web server shutdown scheduled';
+
+                statusTitle.textContent = 'MIMIR is OFF';
+                statusTitle.className = 'text-sm font-bold text-emerald-400 uppercase tracking-wider mb-1';
+                statusDesc.textContent = 'All background daemons, consoles, and server stopped.';
+                completeNotice.classList.remove('hidden');
+
+            } catch (e) {
+                // If fetch fails because server already dropped connection, shutdown was successful!
+                stepMt5.className = 'text-emerald-400 flex items-center gap-2';
+                stepMt5.innerHTML = '<i class="fas fa-check"></i> MetaTrader 5 terminal session closed';
+                stepDaemons.className = 'text-emerald-400 flex items-center gap-2';
+                stepDaemons.innerHTML = '<i class="fas fa-check"></i> Pricing daemons terminated';
+                stepSubprocesses.className = 'text-emerald-400 flex items-center gap-2';
+                stepSubprocesses.innerHTML = '<i class="fas fa-check"></i> Background pipelines halted';
+                stepServer.className = 'text-emerald-400 flex items-center gap-2';
+                stepServer.innerHTML = '<i class="fas fa-check"></i> Server stopped';
+
+                statusTitle.textContent = 'MIMIR is OFF';
+                statusTitle.className = 'text-sm font-bold text-emerald-400 uppercase tracking-wider mb-1';
+                statusDesc.textContent = 'Connection closed. All background tasks stopped.';
+                completeNotice.classList.remove('hidden');
+            }
+        }
+
+        window.openShutdownModal = openShutdownModal;
+        window.closeShutdownModal = closeShutdownModal;
+        window.executeMimirShutdown = executeMimirShutdown;
+    </script>
+
     {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,74 +1,73 @@
-from .cointegration import calculate_z_score
-from ..scrapers.niche_sources import scrape_niche_sentiment
+# backend/app/analytics/guerilla_hybrid.py
+"""
+DEPRECATED / COMPATIBILITY LAYER:
+Guerilla Quant has been completely superseded by the Stat-Arb Auxiliary Power Unit (APU)
+in backend/app/analytics/stat_arb_apu.py.
 
-# Cache to avoid calling DeepSeek on every request during testing
-_sentiment_cache = None
+All pair evaluations now run through the Online Kalman Filter, Ornstein-Uhlenbeck half-life,
+ADF stationarity, and DeepSeek sentiment circuit-breakers in StatArbAPU.
+"""
 
-def get_hybrid_signals():
+from typing import List, Dict, Any
+from .stat_arb_apu import StatArbAPU, APU_PAIRS
+from ..database import get_db_connection
+from ..config import get_settings
+
+settings = get_settings()
+
+# Backwards compatibility export
+NICHE_ASSETS_DATA = [
+    ("CORN", "Teucrium Corn ETF", "COMMODITY", "NYSEARCA"),
+    ("WEAT", "Teucrium Wheat ETF", "COMMODITY", "NYSEARCA"),
+    ("SOYB", "Teucrium Soybean ETF", "COMMODITY", "NYSEARCA"),
+    ("BDRY", "Breakwave Dry Bulk Shipping ETF", "COMMODITY", "NYSEARCA"),
+    ("SBLK", "Star Bulk Carriers", "EQUITY", "NASDAQ"),
+    ("GOGL", "Golden Ocean Group", "EQUITY", "NASDAQ"),
+    ("URA", "Global X Uranium ETF", "EQUITY", "NYSEARCA"),
+    ("NLR", "VanEck Uranium+Nuclear Energy ETF", "EQUITY", "NYSEARCA"),
+    ("GDX", "VanEck Gold Miners ETF", "EQUITY", "NYSEARCA"),
+    ("GDXJ", "VanEck Junior Gold Miners ETF", "EQUITY", "NYSEARCA"),
+    ("COPX", "Global X Copper Miners ETF", "EQUITY", "NYSEARCA"),
+    ("LIT", "Global X Lithium & Battery Tech ETF", "EQUITY", "NYSEARCA"),
+    ("XLE", "Energy Select Sector SPDR", "EQUITY", "NYSEARCA"),
+    ("XOP", "SPDR S&P Oil & Gas E&P ETF", "EQUITY", "NYSEARCA"),
+    ("AAPL", "Apple Inc.", "EQUITY", "NASDAQ"),
+    ("MSFT", "Microsoft Corp.", "EQUITY", "NASDAQ"),
+    ("GOOG", "Alphabet Inc. Class C", "EQUITY", "NASDAQ"),
+    ("GOOGL", "Alphabet Inc. Class A", "EQUITY", "NASDAQ"),
+    ("GS", "Goldman Sachs Group Inc.", "EQUITY", "NYSE"),
+    ("MS", "Morgan Stanley", "EQUITY", "NYSE"),
+    ("KO", "Coca-Cola Co.", "EQUITY", "NYSE"),
+    ("PEP", "PepsiCo Inc.", "EQUITY", "NASDAQ"),
+    ("CVX", "Chevron Corp.", "EQUITY", "NYSE"),
+    ("XOM", "Exxon Mobil Corp.", "EQUITY", "NYSE"),
+]
+
+
+def _ensure_niche_assets(conn=None):
+    """Ensure all standard niche tickers exist in mimir_niche_assets."""
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+    try:
+        cur = conn.cursor()
+        for ticker, name, asset_class, exchange in NICHE_ASSETS_DATA:
+            cur.execute(f"""
+                INSERT INTO {settings.mimir_schema}.mimir_niche_assets (ticker, name, asset_class, exchange)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ticker) DO NOTHING
+            """, (ticker, name, asset_class, exchange))
+        conn.commit()
+        cur.close()
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def get_hybrid_signals() -> List[Dict[str, Any]]:
     """
-    Scans predefined niche pairs for stat-arb opportunities,
-    and overlays LLM-derived sentiment from niche sources to determine Conviction.
+    Seamless compatibility layer: delegates directly to the institutional
+    Stat-Arb APU master scan (Kalman filter, OU half-life, ADF, and DeepSeek circuit-breaker).
     """
-    global _sentiment_cache
-    
-    pairs = [
-        ("CORN", "WEAT"),
-        ("BDRY", "SBLK"),
-        ("URA", "NLR")
-    ]
-    
-    # Fetch sentiment once and cache it for the session
-    if _sentiment_cache is None:
-        try:
-            _sentiment_cache = scrape_niche_sentiment()
-        except Exception as e:
-            print(f"Failed to scrape niche sentiment: {e}")
-            _sentiment_cache = {}
-
-    opportunities = []
-    for t1, t2 in pairs:
-        res = calculate_z_score(t1, t2)
-        if not res:
-            continue
-            
-        # Get sentiment for the individual tickers if available
-        s1 = _sentiment_cache.get(t1, 0.0)
-        s2 = _sentiment_cache.get(t2, 0.0)
-        
-        # Calculate a combined sentiment filter score
-        # If we are Short T1 / Long T2, we want Sentiment T1 to be negative and Sentiment T2 to be positive.
-        # This implies (s2 - s1) should be positive for a Short T1/Long T2 trade.
-        sentiment_delta = s2 - s1 
-        
-        z_score = res["z_score"]
-        signal = res["signal"]
-        
-        conviction = "LOW"
-        
-        if signal.startswith("SHORT"):
-            # Z-Score > 2.0. We want T1 to drop and T2 to rise.
-            # So sentiment_delta (S2 - S1) should be > 0
-            if sentiment_delta > 0.2:
-                conviction = "HIGH (Math + Sentiment Aligned)"
-            elif sentiment_delta < -0.2:
-                conviction = "WARNING (Sentiment Contradicts Math)"
-            else:
-                conviction = "MEDIUM (Math Only)"
-                
-        elif signal.startswith("LONG"):
-            # Z-Score < -2.0. We want T1 to rise and T2 to drop.
-            # So sentiment_delta (S2 - S1) should be < 0
-            if sentiment_delta < -0.2:
-                conviction = "HIGH (Math + Sentiment Aligned)"
-            elif sentiment_delta > 0.2:
-                conviction = "WARNING (Sentiment Contradicts Math)"
-            else:
-                conviction = "MEDIUM (Math Only)"
-                
-        res["sentiment_t1"] = round(s1, 2)
-        res["sentiment_t2"] = round(s2, 2)
-        res["conviction"] = conviction
-        
-        opportunities.append(res)
-        
-    return opportunities
+    return StatArbAPU.run_master_scan()

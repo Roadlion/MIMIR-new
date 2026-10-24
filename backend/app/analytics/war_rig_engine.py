@@ -1,0 +1,1099 @@
+# backend/app/analytics/war_rig_engine.py
+"""
+War Rig Transmission Engine (Unified Alpha Shaft)
+=================================================
+Unifies all alpha signals into a single crankshaft where Macro & Sector Inflows,
+Catalysts (Pre-Earnings Beats + Supply Chain Spillovers), and Microstructure Asymmetry
+work in tandem to drive a single composite conviction score (>= 75%).
+
+Design Philosophy:
+- No independent standalone engines firing disparate signals.
+- All cylinders drive the SAME crankshaft.
+- Cylinder 1: Macro & Sector Transmission (Max 25 pts)
+- Cylinder 2: Catalyst V8 Twin-Turbo (Max 50 pts)
+    - Turbo A: Pre-Earnings Beat Anticipation (0-30 pts)
+    - Turbo B: Supply Chain Spillover & High-Impact Catalyst (0-30 pts)
+    - Synergy: +15 pts bonus when both turbos fire together (capped at 50 pts)
+- Cylinder 3: Microstructure & Asymmetry Gate (Max 25 pts + Hard 2.5:1 R/R Gate)
+- Minimum Conviction Threshold: 75% for order emission.
+- Output: Standardized 'WAR_RIG_CONVERGENCE' trade signal.
+"""
+
+import math
+import logging
+from datetime import datetime, timedelta, timezone, date
+from typing import Dict, List, Optional, Any, Tuple
+import pandas as pd
+import numpy as np
+
+from ..database import get_db_connection
+from ..config import get_settings
+from .technical_analysis import analyze_technical_indicators
+from .paper_trader import is_us_stock
+from ..services.macro_tracker import is_buy_blocked_by_macro
+from ..services.sector_rotation_service import get_ticker_sector_tailwinds
+from ..services.discord_notifier import send_trade_alert as _discord_alert
+
+# Bong Strats Quantitative Indicators
+try:
+    from bong_strats.indicators import (
+        compute_volatility_regime,
+        compute_bollinger_features,
+        compute_ou_features,
+        OUCalibrator
+    )
+except ImportError:
+    import sys
+    from pathlib import Path
+    root_dir = Path(__file__).resolve().parents[3]
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from bong_strats.indicators import (
+        compute_volatility_regime,
+        compute_bollinger_features,
+        compute_ou_features,
+        OUCalibrator
+    )
+
+settings = get_settings()
+logger = logging.getLogger(__name__)
+
+WAR_RIG_CONVICTION_THRESHOLD = 75.0
+MINIMUM_RR_RATIO = 2.50
+
+
+def get_ticker_historical_prices(
+    ticker: str,
+    as_of_date: Optional[date] = None,
+    days: int = 90,
+    conn = None
+) -> pd.DataFrame:
+    """
+    Fetches daily OHLCV bars strictly <= as_of_date (Zero Look-Ahead Bias).
+    Aggregates from v_mimir_daily_ohlcv.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+    cur = conn.cursor()
+
+    end_d = as_of_date if as_of_date is not None else datetime.now(timezone.utc).date()
+    start_d = end_d - timedelta(days=days)
+
+    sql = f"""
+        SELECT date, open, high, low, close, volume
+        FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+        WHERE ticker = %s 
+          AND date >= %s 
+          AND date <= %s
+        ORDER BY date ASC
+    """
+    try:
+        cur.execute(sql, (ticker.strip().upper(), start_d, end_d))
+        rows = cur.fetchall()
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
+    except Exception as e:
+        logger.warning(f"[WAR_RIG] Error fetching prices for {ticker}: {e}")
+        return pd.DataFrame()
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+
+def calculate_war_rig_execution_bounds(
+    df_prices: pd.DataFrame
+) -> Tuple[float, float, float, float]:
+    """
+    Computes institutional asymmetric execution bounds:
+    - Trigger: Last close
+    - Stop Loss: 1.5x ATR downside (tight invalidation, 4.0% - 6.5%)
+    - Target: 3.0x ATR upside (home run projection, 12.0% - 25.0%)
+    - Guaranteed minimum R/R >= 2.5:1
+    Returns: (trigger_price, target_price, stop_loss, risk_reward_ratio)
+    """
+    if df_prices.empty or len(df_prices) < 14:
+        last_close = float(df_prices.iloc[-1]['close']) if not df_prices.empty else 100.0
+        sl = round(last_close * 0.95, 2)
+        tp = round(last_close * 1.15, 2)
+        rr = (tp - last_close) / max(0.01, (last_close - sl))
+        return last_close, tp, sl, rr
+
+    last_close = float(df_prices.iloc[-1]['close'])
+
+    high = df_prices['high']
+    low = df_prices['low']
+    close = df_prices['close']
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = float(tr.rolling(14).mean().iloc[-1]) if len(tr) >= 14 else last_close * 0.03
+    if math.isnan(atr) or atr <= 0:
+        atr = last_close * 0.03
+
+    # Institutional Asymmetry: 1.5x ATR SL, 3.0x ATR TP
+    sl_dist = max(0.038 * last_close, min(0.065 * last_close, 1.5 * atr))
+    tp_dist = max(0.120 * last_close, min(0.250 * last_close, 3.0 * atr))
+    tp_dist = max(tp_dist, sl_dist * MINIMUM_RR_RATIO)
+
+    stop_loss = round(last_close - sl_dist, 2)
+    target_price = round(last_close + tp_dist, 2)
+    rr = round((target_price - last_close) / max(0.01, (last_close - stop_loss)), 2)
+
+    return round(last_close, 2), target_price, stop_loss, rr
+
+
+class WarRigEngine:
+    """
+    Unified Single-Shaft War Rig Alpha Transmission.
+    Evaluates candidate tickers by converging:
+    - Cylinder 1: Macro & Sector Inflows (25%)
+    - Cylinder 2: Catalyst V8 Twin-Turbo (50%)
+    - Cylinder 3: Microstructure Invalidation & Asymmetry Gate (25%)
+    """
+
+    def __init__(self, conn=None):
+        self.conn = conn
+
+    def evaluate_cylinder_1_macro_sector(
+        self,
+        ticker: str,
+        as_of_date: Optional[date] = None,
+        df_prices: Optional[pd.DataFrame] = None,
+        conn = None
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Cylinder 1: Macro & Sector Inflow (Max 25 pts).
+        - Macro check: Blocks trade or cuts points if Fed/CPI liquidity shock active.
+        - Sector check: Rewards Stealth Accumulation (+25 pts) and Markup (+20 pts).
+          Penalizes Distribution (0 pts) and Outflows (-5 pts).
+        """
+        db = conn or self.conn
+        score = 0.0
+        details = {}
+        eval_date = as_of_date if as_of_date is not None else datetime.now(timezone.utc).date()
+
+        # 1. Sector Rotation Matrix Check
+        try:
+            sector_info = get_ticker_sector_tailwinds(ticker, conn=db)
+            phase = sector_info.get("phase", "UNKNOWN")
+            rs_5d = float(sector_info.get("rs_5d", 0.0))
+            sector_name = sector_info.get("sector_name", "General Market")
+            sector_etf = sector_info.get("sector_etf", "SPY")
+
+            details["sector_name"] = sector_name
+            details["sector_etf"] = sector_etf
+            details["sector_phase"] = phase
+            details["rs_vs_spy_5d"] = rs_5d
+
+            if phase == "STEALTH_ACCUMULATION":
+                score = 25.0
+                details["sector_thesis"] = f"Leading Accumulation (+{rs_5d:.1f}% RS vs SPY). Institutions quietly building positions."
+            elif phase == "MARKUP":
+                score = 20.0
+                details["sector_thesis"] = f"Strong Sector Momentum (+{rs_5d:.1f}% RS vs SPY). Full institutional trend established."
+            elif phase == "ACCUMULATION":
+                score = 18.0
+                details["sector_thesis"] = f"Steady Sector Accumulation (+{rs_5d:.1f}% RS vs SPY). Institutional inflows intact."
+            elif phase == "CONSOLIDATION":
+                score = 12.0
+                details["sector_thesis"] = f"Neutral Sector Base ({rs_5d:+.1f}% RS vs SPY). Stable sector foundation."
+            elif phase == "IMPROVING":
+                score = 8.0
+                details["sector_thesis"] = f"Mild Sector Lag ({rs_5d:+.1f}% RS vs SPY). Sector consolidating."
+            elif phase == "DISTRIBUTION":
+                score = 0.0
+                details["sector_thesis"] = f"Institutional Distribution ({rs_5d:+.1f}% RS). Heavy supply overhead."
+            else:
+                score = 0.0
+                details["sector_thesis"] = f"Sector Outflow / Markdown ({rs_5d:+.1f}% RS). Capital flowing into leaders."
+
+            # Bonus for exceptional sector relative strength (> +2.0% vs SPY)
+            if rs_5d >= 2.0 and score > 0:
+                score = min(25.0, score + 3.0)
+
+            # Bonus for idiosyncratic ticker outperformance (5D return >= +3.0%)
+            if df_prices is not None and len(df_prices) >= 6:
+                c_now = float(df_prices['close'].iloc[-1])
+                c_5d_ago = float(df_prices['close'].iloc[-6])
+                stock_5d = ((c_now / c_5d_ago) - 1.0) * 100.0
+                if stock_5d >= 3.0 and score > 0:
+                    score = min(25.0, score + 3.0)
+                    details["sector_thesis"] += f" (+{stock_5d:.1f}% Ticker Leader Outperformance)"
+
+            # Catalyst Overdrive Safety Floor (Idiosyncratic Alpha Protection)
+            # If the ticker has an impending Tier 1 Pre-Earnings Beat (2-14d),
+            # ensure minor tracking noise doesn't zero out idiosyncratic alpha (guarantees 15.0 pts if rs_5d > -2.5%)
+            if score < 15.0 and rs_5d > -2.5:
+                try:
+                    c_cur = db.cursor()
+                    c_cur.execute(f"""
+                        SELECT 1 FROM {settings.mimir_schema}.mimir_earnings_calendar
+                        WHERE ticker = %s 
+                          AND earnings_date >= %s + INTERVAL '2 days'
+                          AND earnings_date <= %s + INTERVAL '14 days'
+                        LIMIT 1
+                    """, (ticker.strip().upper(), eval_date, eval_date))
+                    if c_cur.fetchone():
+                        score = 15.0
+                        details["sector_thesis"] += " (Catalyst Overdrive: Pre-Earnings Alpha Floor 15pts Applied)"
+                    c_cur.close()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.warning(f"[WAR_RIG] Cylinder 1 error for {ticker}: {e}")
+            score = 10.0
+            details["sector_thesis"] = "Sector data unavailable (defaulted to neutral 10pts)."
+            sector_name = "General Market"
+
+        # 2. Macro Regime Check (e.g. rate-sensitive sectors under Fed hawkishness)
+        try:
+            macro_blocked, macro_reason = is_buy_blocked_by_macro(ticker_sector=sector_name, conn=db)
+            if macro_blocked:
+                details["macro_status"] = "BLOCKED"
+                details["macro_reason"] = macro_reason
+                logger.info(f"[WAR_RIG] {ticker} Cylinder 1: Macro blocked ({macro_reason})")
+                return 0.0, details
+            else:
+                details["macro_status"] = "CLEAR"
+                details["macro_reason"] = macro_reason
+        except Exception as e:
+            details["macro_status"] = "ERROR"
+            details["macro_reason"] = str(e)
+
+        return score, details
+
+    def evaluate_cylinder_2_catalysts(
+        self,
+        ticker: str,
+        as_of_date: Optional[date] = None,
+        df_prices: Optional[pd.DataFrame] = None,
+        conn = None
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Cylinder 2: Catalyst V8 Multi-Chamber Engine (Max 50 pts).
+        - Turbo A: Pre-Earnings Beat Anticipation (0 - 38 pts standalone, up to 28 in combo)
+        - Turbo B: Supply Chain Spillover / High-Magnitude News (0 - 38 pts standalone, up to 28 in combo)
+        - Turbo C: Institutional Breakout & Relative Strength Flow (0 - 35 pts standalone, up to 28 in combo)
+        - Twin-Chamber Synergy Bonus: +15 pts when multiple chambers fire together (capped at 50 pts total).
+        """
+        db = conn or self.conn
+        close_conn = False
+        if db is None:
+            db = get_db_connection()
+            close_conn = True
+
+        cur = db.cursor()
+        turbo_a_score = 0.0
+        turbo_b_score = 0.0
+        turbo_c_score = 0.0
+        details = {
+            "turbo_a_active": False,
+            "turbo_b_active": False,
+            "turbo_c_active": False,
+            "pre_earnings": {},
+            "spillover": {},
+            "headlines": [],
+            "breakout_flow": {}
+        }
+
+        eval_date = as_of_date if as_of_date is not None else datetime.now(timezone.utc).date()
+
+        try:
+            # ── TURBO A: Pre-Earnings Beat Engine ────────────────────────────
+            cur.execute(f"""
+                SELECT earnings_date, earnings_time, company_name
+                FROM {settings.mimir_schema}.mimir_earnings_calendar
+                WHERE ticker = %s 
+                  AND earnings_date >= %s + INTERVAL '2 days'
+                  AND earnings_date <= %s + INTERVAL '14 days'
+                ORDER BY earnings_date ASC
+                LIMIT 1
+            """, (ticker.strip().upper(), eval_date, eval_date))
+            earn_row = cur.fetchone()
+
+            if earn_row:
+                if isinstance(earn_row, dict):
+                    earn_date = earn_row.get("earnings_date")
+                    earn_time = earn_row.get("earnings_time")
+                    comp_name = earn_row.get("company_name")
+                else:
+                    earn_date, earn_time, comp_name = earn_row
+                if isinstance(earn_date, str):
+                    earn_date = datetime.strptime(earn_date[:10], '%Y-%m-%d').date()
+                elif hasattr(earn_date, "date"):
+                    earn_date = earn_date.date()
+                days_until = (earn_date - eval_date).days
+
+                # Fetch 7-day pre-earnings sentiment leading into print
+                cur.execute(f"""
+                    SELECT AVG(si.sentiment_score), AVG(si.confidence), COUNT(*)
+                    FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                    JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                    WHERE si.ticker = %s
+                      AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s - INTERVAL '7 days'
+                      AND (a.published_ts AT TIME ZONE 'UTC')::date <= %s
+                """, (ticker.strip().upper(), eval_date, eval_date))
+                sent_row = cur.fetchone()
+                avg_sent = float(sent_row[0]) if sent_row and sent_row[0] is not None else 0.0
+                avg_conf = float(sent_row[1]) if sent_row and sent_row[1] is not None else 0.50
+                art_count = int(sent_row[2]) if sent_row and sent_row[2] is not None else 0
+
+                # Fundamentals check (EPS growth)
+                cur.execute(f"""
+                    SELECT eps_growth, operating_margin, valuation_status
+                    FROM {settings.mimir_schema}.mimir_asset_fundamentals
+                    WHERE ticker = %s
+                """, (ticker.strip().upper(),))
+                fund_row = cur.fetchone()
+                eps_growth = float(fund_row[0]) if fund_row and fund_row[0] is not None else None
+                valuation = str(fund_row[2]) if fund_row and fund_row[2] is not None else "FAIRLY_VALUED"
+
+                # Turbo A Score Calculation:
+                # Base for entering the sweet spot window
+                if 3 <= days_until <= 10:
+                    turbo_a_score = 18.0
+                elif 2 <= days_until <= 14:
+                    turbo_a_score = 12.0
+
+                # Positive sentiment impulse into print
+                if avg_sent >= 0.35:
+                    turbo_a_score += min(10.0, avg_sent * 15.0)
+                elif avg_sent > 0.0:
+                    turbo_a_score += 5.0
+
+                # Fundamental growth confirmation
+                if eps_growth is not None and eps_growth > 0.50:
+                    turbo_a_score += 10.0
+                elif eps_growth is not None and eps_growth > 0.10:
+                    turbo_a_score += 6.0
+
+                if valuation != "OVERVALUED":
+                    turbo_a_score += 2.0
+
+                details["turbo_a_active"] = True
+                details["pre_earnings"] = {
+                    "earnings_date": earn_date.strftime('%Y-%m-%d'),
+                    "earnings_time": earn_time or "TNS",
+                    "days_until": days_until,
+                    "avg_sentiment": round(avg_sent, 2),
+                    "confidence": round(avg_conf, 2),
+                    "eps_growth": eps_growth,
+                    "valuation": valuation
+                }
+
+            # ── TURBO B: Supply Chain Spillover & High-Magnitude News ────────
+            # 1. Check for supply chain spillover sentiment
+            cur.execute(f"""
+                SELECT si.spillover_source_asset, AVG(si.sentiment_score), AVG(si.confidence),
+                       STRING_AGG(DISTINCT a.title, ' | ')
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                WHERE si.ticker = %s
+                  AND si.is_spillover = TRUE
+                  AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s - INTERVAL '7 days'
+                  AND (a.published_ts AT TIME ZONE 'UTC')::date <= %s
+                GROUP BY si.spillover_source_asset
+                ORDER BY AVG(si.sentiment_score) DESC
+                LIMIT 1
+            """, (ticker.strip().upper(), eval_date, eval_date))
+            spill_row = cur.fetchone()
+
+            if spill_row:
+                if isinstance(spill_row, dict):
+                    source_asset = spill_row.get("spillover_source_asset")
+                    spill_score = spill_row.get("avg") or spill_row.get("sentiment_score") or 0.0
+                    spill_conf = spill_row.get("confidence") or 0.50
+                    spill_titles = spill_row.get("string_agg") or ""
+                else:
+                    source_asset, spill_score, spill_conf, spill_titles = spill_row
+
+                if spill_score is not None and float(spill_score) >= 0.12:
+                    turbo_b_score = min(28.0, 16.0 + float(spill_score) * 20.0)
+                    details["turbo_b_active"] = True
+                    details["spillover"] = {
+                        "source_asset": source_asset,
+                        "spillover_score": round(float(spill_score), 2),
+                        "spillover_confidence": round(float(spill_conf), 2),
+                        "headlines": spill_titles[:150] if spill_titles else ""
+                    }
+
+            # 2. Check for Direct High-Magnitude Catalyst Articles (Tier 1 earnings/contract/guidance)
+            cur.execute(f"""
+                SELECT a.title, si.sentiment_score, si.confidence, si.magnitude, si.reasoning
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                WHERE si.ticker = %s
+                  AND si.magnitude IN ('HIGH', 'MEDIUM')
+                  AND si.sentiment_score >= 0.35
+                  AND (a.published_ts AT TIME ZONE 'UTC')::date >= %s - INTERVAL '5 days'
+                  AND (a.published_ts AT TIME ZONE 'UTC')::date <= %s
+                ORDER BY si.confidence DESC, si.sentiment_score DESC
+                LIMIT 3
+            """, (ticker.strip().upper(), eval_date, eval_date))
+            mag_rows = cur.fetchall()
+
+            if mag_rows:
+                high_mag_boost = 0.0
+                for row in mag_rows:
+                    if isinstance(row, dict):
+                        title = row.get("title", "")
+                        score = row.get("sentiment_score", 0.0)
+                        conf = row.get("confidence", 0.5)
+                        mag = row.get("magnitude", "MEDIUM")
+                        reasoning = row.get("reasoning", "")
+                    else:
+                        title, score, conf, mag, reasoning = row
+                    details["headlines"].append(str(title)[:120])
+                    mag_weight = 14.0 if mag == 'HIGH' else 8.0
+                    art_score = float(score) * 16.0 + mag_weight * float(conf)
+                    high_mag_boost = max(high_mag_boost, art_score)
+
+                # Combine or upgrade turbo_b_score
+                turbo_b_score = max(turbo_b_score, min(30.0, high_mag_boost))
+                details["turbo_b_active"] = True
+
+            # ── TURBO C: Institutional Breakout & Relative Strength Flow ────────
+            # Detects massive institutional volume expansion and market outperformance
+            # even when direct scheduled earnings or news are absent.
+            if df_prices is not None and len(df_prices) >= 20:
+                try:
+                    c_now = float(df_prices['close'].iloc[-1])
+                    v_now = float(df_prices['volume'].iloc[-1])
+                    v_prior_avg = float(df_prices['volume'].iloc[-21:-1].mean()) if len(df_prices) >= 21 else float(df_prices['volume'].mean())
+                    vol_surge = v_now / max(1.0, v_prior_avg)
+
+                    # 5-day return of stock
+                    ret_5d = ((c_now / float(df_prices['close'].iloc[-6])) - 1.0) * 100.0 if len(df_prices) >= 6 else 0.0
+
+                    # 20-day high breakout
+                    high_20d_prior = float(df_prices['high'].iloc[-21:-1].max()) if len(df_prices) >= 21 else c_now
+                    is_breakout = (c_now >= high_20d_prior * 0.99)  # Breaking out at or within 1% of 20D high
+
+                    # Moving averages alignment
+                    sma20 = float(df_prices['close'].rolling(20).mean().iloc[-1])
+                    sma50 = float(df_prices['close'].rolling(50).mean().iloc[-1]) if len(df_prices) >= 50 else sma20
+                    above_smas = (c_now >= sma20) and (c_now >= sma50)
+
+                    # Bong Strats Quant Safety Check (no blow-off exhaustion, no extreme overextension)
+                    try:
+                        v_regimes = compute_volatility_regime(df_prices)
+                        curr_regime = v_regimes.iloc[-1] if not v_regimes.empty else "STABLE"
+                    except Exception:
+                        curr_regime = "STABLE"
+
+                    is_safe_flow = (curr_regime != "EXHAUSTION")
+
+                    # Qualify Turbo C: Needs strong volume (>= 1.4x) AND strong 5D return (>= 3.0%) AND above SMAs AND safe regime
+                    if vol_surge >= 1.40 and ret_5d >= 3.0 and above_smas and is_safe_flow:
+                        tc_score = 0.0
+                        # Volume expansion score (up to 12 pts)
+                        if vol_surge >= 1.80:
+                            tc_score += 12.0
+                        elif vol_surge >= 1.40:
+                            tc_score += 8.0
+
+                        # Momentum velocity score (up to 12 pts)
+                        if ret_5d >= 6.0:
+                            tc_score += 12.0
+                        elif ret_5d >= 3.0:
+                            tc_score += 8.0
+
+                        # Structural breakout score (up to 8 pts)
+                        if is_breakout:
+                            tc_score += 8.0
+                        else:
+                            tc_score += 4.0
+
+                        turbo_c_score = min(30.0, tc_score)
+                        details["turbo_c_active"] = True
+                        details["breakout_flow"] = {
+                            "volume_ratio": round(vol_surge, 2),
+                            "ret_5d": round(ret_5d, 1),
+                            "rs_5d": round(ret_5d, 1),
+                            "breakout_level": round(high_20d_prior, 2),
+                            "is_breakout": is_breakout
+                        }
+                except Exception as c_err:
+                    logger.warning(f"[WAR_RIG] Turbo C calculation error for {ticker}: {c_err}")
+
+            # ── MULTI-TURBO SUPERCHARGING SYNERGY & STANDALONE OVERDRIVE ──────
+            active_count = sum([
+                1 if details["turbo_a_active"] else 0,
+                1 if details["turbo_b_active"] else 0,
+                1 if details["turbo_c_active"] else 0,
+            ])
+
+            synergy_bonus = 0.0
+            if active_count >= 2:
+                synergy_bonus = 15.0
+                details["twin_turbo_synergy"] = True
+                total_cylinder_2 = min(50.0, turbo_a_score + turbo_b_score + turbo_c_score + synergy_bonus)
+            elif active_count == 1:
+                details["twin_turbo_synergy"] = False
+                # Standalone Overdrive Scaling:
+                # If a single chamber is firing with top-tier conviction, scale it up to 38.0 pts
+                # so that monster setups (like pre-earnings beats with +1,300% EPS) reach conviction threshold
+                single_score = max(turbo_a_score, turbo_b_score, turbo_c_score)
+                total_cylinder_2 = min(38.0, single_score * 1.25)
+            else:
+                details["twin_turbo_synergy"] = False
+                total_cylinder_2 = 0.0
+
+            details["turbo_a_score"] = round(turbo_a_score, 1)
+            details["turbo_b_score"] = round(turbo_b_score, 1)
+            details["turbo_c_score"] = round(turbo_c_score, 1)
+            details["synergy_bonus"] = round(synergy_bonus, 1)
+
+            return total_cylinder_2, details
+
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.error(f"[WAR_RIG] Cylinder 2 error for {ticker}: {e}")
+            return 0.0, details
+        finally:
+            cur.close()
+            if close_conn:
+                db.close()
+
+    def evaluate_cylinder_3_microstructure(
+        self,
+        ticker: str,
+        df_prices: pd.DataFrame
+    ) -> Tuple[float, bool, Dict[str, Any]]:
+        """
+        Cylinder 3: Microstructure & Hard Asymmetry Gate (Max 28 pts + Gatekeeper).
+        - Price Trend: Above 20-day SMA (+10 pts), Above 50-day SMA (+5 pts)
+        - RSI Sweet Spot: 42 <= RSI <= 65 (+8 pts), 35 <= RSI < 42 (+5 pts)
+        - Volume Expansion: Volume ratio >= 1.2x (+7 pts), >= 1.0x (+4 pts)
+        - Bong Strats Quant Features:
+            - Volatility Regime: SQUEEZE (+4 pts coiling), EXHAUSTION (-8 pts blow-off penalty)
+            - Wyckoff Institutional Absorption: +5 pts (Heavy sell volume absorbed by buyers)
+            - Ornstein-Uhlenbeck SDE Mean-Reversion:
+                - Prime Discount Pocket (-1.8 <= Z <= -0.5): +4 pts
+                - Overextended Risk (Z > 2.2): -8 pts penalty
+        - Asymmetry Gate: Target/Stop R/R >= 2.5:1 and upside >= 10.0%. If not met, REJECT immediately!
+        """
+        score = 0.0
+        details = {}
+
+        if df_prices.empty or len(df_prices) < 20:
+            return 0.0, False, {"error": "Insufficient price bars (<20 days)"}
+
+        current_price = float(df_prices.iloc[-1]['close'])
+        sma20 = float(df_prices['close'].rolling(20).mean().iloc[-1])
+        sma50 = float(df_prices['close'].rolling(50).mean().iloc[-1]) if len(df_prices) >= 50 else sma20
+
+        # Technical Indicators
+        techs = analyze_technical_indicators(df_prices)
+        rsi = float(techs.get("rsi", 50.0))
+        vol_ratio = float(techs.get("volume_ratio", 1.0))
+
+        # 1. Base Trend Quality (Up to 10 pts)
+        if current_price >= sma20:
+            score += 10.0
+            trend_note = "Bullish structure (Above 20-day SMA)"
+        elif current_price >= sma50:
+            score += 5.0
+            trend_note = "Consolidating on 50-day SMA base"
+        else:
+            trend_note = "Below key moving averages (downward drift)"
+
+        # 2. Bong Strats: Volatility Regime (+4 Squeeze / -8 Exhaustion)
+        try:
+            vol_regimes = compute_volatility_regime(df_prices)
+            current_regime = vol_regimes.iloc[-1] if not vol_regimes.empty else "STABLE"
+        except Exception:
+            current_regime = "STABLE"
+
+        # 3. RSI Health (Up to 8 pts)
+        if 42.0 <= rsi <= 65.0:
+            score += 8.0
+            rsi_note = f"Optimal momentum launchpad (RSI: {rsi:.1f})"
+        elif 35.0 <= rsi < 42.0:
+            score += 5.0
+            rsi_note = f"Oversold stabilization (RSI: {rsi:.1f})"
+        elif 65.0 < rsi <= 72.0:
+            score += 5.0
+            rsi_note = f"Active momentum but elevated (RSI: {rsi:.1f})"
+        elif 72.0 < rsi <= 78.0 and vol_ratio >= 1.40 and current_regime != "EXHAUSTION":
+            score += 5.0
+            rsi_note = f"Institutional breakout momentum (RSI: {rsi:.1f}, Vol: {vol_ratio:.1f}x)"
+        else:
+            rsi_note = f"Suboptimal RSI ({rsi:.1f}) — overextended or weak"
+
+        # 4. Volume Expansion (Up to 7 pts)
+        if vol_ratio >= 1.20:
+            score += 7.0
+            vol_note = f"Institutional volume expansion ({vol_ratio:.2f}x 20D avg)"
+        elif vol_ratio >= 1.00:
+            score += 4.0
+            vol_note = f"Normal volume turnover ({vol_ratio:.2f}x 20D avg)"
+        else:
+            vol_note = f"Light volume ({vol_ratio:.2f}x 20D avg)"
+
+        # Apply Volatility Regime points
+        if current_regime == "SQUEEZE":
+            score += 4.0
+            regime_note = "Bollinger Squeeze (Volatility Coiling)"
+        elif current_regime == "EXHAUSTION":
+            score -= 8.0
+            regime_note = "Volatility Exhaustion (Blow-off Risk)"
+        elif current_regime == "EXPANDING":
+            score += 2.0
+            regime_note = "Volatility Expanding"
+        else:
+            regime_note = "Stable Volatility"
+
+        # 5. Bong Strats: Wyckoff Seller Absorption (+5 pts)
+        try:
+            if len(df_prices) >= 22:
+                prior_vol = df_prices["volume"].shift(1).rolling(20, min_periods=10).mean()
+                prev_bar = df_prices.iloc[-2]
+                curr_bar = df_prices.iloc[-1]
+                prev_avg = prior_vol.iloc[-2]
+
+                is_vol_surge = (pd.notna(prev_avg) and prev_avg > 0 and float(prev_bar["volume"]) >= prev_avg * 1.5)
+                bearish_surge = is_vol_surge and (float(prev_bar["close"]) < float(prev_bar["open"]))
+                seller_exhausted = bearish_surge and (float(curr_bar["low"]) >= float(prev_bar["low"])) and (float(curr_bar["close"]) > float(curr_bar["open"]))
+            else:
+                seller_exhausted = False
+        except Exception:
+            seller_exhausted = False
+
+        if seller_exhausted:
+            score += 5.0
+            wyckoff_note = "Wyckoff Seller Absorption Confirmed"
+        else:
+            wyckoff_note = "Normal Volume Distribution"
+
+        # 6. Bong Strats: Ornstein-Uhlenbeck Mean-Reversion Feature (+4 Discount / -8 Overextended)
+        try:
+            ou_df = compute_ou_features(df_prices.copy(), lookback=min(40, len(df_prices) - 1))
+            ou_z = float(ou_df["ou_zscore"].iloc[-1]) if pd.notna(ou_df["ou_zscore"].iloc[-1]) else 0.0
+        except Exception:
+            ou_z = 0.0
+
+        if -1.8 <= ou_z <= -0.5:
+            score += 4.0
+            ou_note = f"OU Mean-Reversion Pocket (Z={ou_z:.2f})"
+        elif ou_z > 2.2:
+            # During an active Stage 2 institutional breakout expansion with high volume,
+            # high positive Z-score reflects momentum acceleration, not mean-reversion exhaustion.
+            # Do NOT penalize unless volume is drying up or regime is already in EXHAUSTION.
+            if current_regime == "EXPANDING" and vol_ratio >= 1.40:
+                ou_note = f"OU Breakout Expansion (Z={ou_z:.2f}, Ignored Penalty)"
+            else:
+                score -= 8.0
+                ou_note = f"OU Overextended (Z={ou_z:.2f})"
+        else:
+            ou_note = f"OU Neutral (Z={ou_z:.2f})"
+
+        # Cap score between 0.0 and 28.0 (headroom for exceptional quantitative confluence)
+        final_score = max(0.0, min(28.0, score))
+
+        # Asymmetry Bounds Calculation
+        trigger_price, target_price, stop_loss, rr_ratio = calculate_war_rig_execution_bounds(df_prices)
+        upside_pct = round(((target_price / trigger_price) - 1.0) * 100.0, 1)
+        downside_pct = round((1.0 - (stop_loss / trigger_price)) * 100.0, 1)
+
+        # HARD ASYMMETRY GATEKEEPER
+        is_asymmetric = (rr_ratio >= MINIMUM_RR_RATIO) and (upside_pct >= 10.0)
+
+        details = {
+            "current_price": trigger_price,
+            "target_price": target_price,
+            "stop_loss": stop_loss,
+            "rr_ratio": rr_ratio,
+            "upside_pct": upside_pct,
+            "downside_pct": downside_pct,
+            "rsi": round(rsi, 1),
+            "vol_ratio": round(vol_ratio, 2),
+            "sma20": round(sma20, 2),
+            "sma50": round(sma50, 2),
+            "trend_note": trend_note,
+            "rsi_note": rsi_note,
+            "vol_note": vol_note,
+            "vol_regime": current_regime,
+            "regime_note": regime_note,
+            "seller_exhausted": seller_exhausted,
+            "wyckoff_note": wyckoff_note,
+            "ou_zscore": round(ou_z, 2),
+            "ou_note": ou_note,
+            "passes_asymmetry_gate": is_asymmetric
+        }
+
+        return final_score, is_asymmetric, details
+
+    def evaluate_war_rig_candidate(
+        self,
+        ticker: str,
+        as_of_date: Optional[date] = None,
+        conn = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        The Central Crankshaft Transmission:
+        Evaluates ticker through all 3 cylinders in lockstep.
+        Requires:
+        1. Asymmetry Gate == True (R/R >= 2.5:1)
+        2. Composite Conviction >= 75.0%
+        Returns validated signal dictionary or None.
+        """
+        db = conn or self.conn
+        if not is_us_stock(ticker):
+            return None
+
+        # Fetch historical daily prices strictly <= as_of_date
+        df_prices = get_ticker_historical_prices(ticker, as_of_date=as_of_date, days=90, conn=db)
+        if df_prices.empty or len(df_prices) < 20:
+            return None
+
+        # Cylinder 1: Macro & Sector Inflow (Max 25 pts)
+        c1_score, c1_details = self.evaluate_cylinder_1_macro_sector(ticker, as_of_date=as_of_date, df_prices=df_prices, conn=db)
+        if c1_details.get("macro_status") == "BLOCKED":
+            return None
+
+        # Cylinder 2: Catalyst V8 Multi-Chamber (Max 50 pts)
+        c2_score, c2_details = self.evaluate_cylinder_2_catalysts(ticker, as_of_date=as_of_date, df_prices=df_prices, conn=db)
+        # Must have at least one catalyst turbo firing (A, B, or C)
+        if not c2_details.get("turbo_a_active") and not c2_details.get("turbo_b_active") and not c2_details.get("turbo_c_active"):
+            return None
+
+        # Cylinder 3: Microstructure & Asymmetry Gate (Max 28 pts)
+        c3_score, passes_asymmetry, c3_details = self.evaluate_cylinder_3_microstructure(ticker, df_prices)
+        if not passes_asymmetry:
+            return None
+
+        # Crankshaft Convergence
+        composite_conviction = c1_score + c2_score + c3_score
+
+        if composite_conviction < WAR_RIG_CONVICTION_THRESHOLD:
+            return None
+
+        # Build Institutional Investment Thesis
+        c_date = as_of_date.strftime('%Y-%m-%d') if as_of_date else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        trigger_p = c3_details["current_price"]
+        target_p = c3_details["target_price"]
+        stop_p = c3_details["stop_loss"]
+        rr = c3_details["rr_ratio"]
+
+        catalyst_desc = []
+        if c2_details.get("turbo_a_active"):
+            pe = c2_details["pre_earnings"]
+            catalyst_desc.append(f"Pre-Earnings Beat Momentum (Reporting {pe['earnings_date']} — {pe['days_until']}d out, Sentiment: +{pe['avg_sentiment']:.2f})")
+        if c2_details.get("turbo_b_active"):
+            if c2_details.get("spillover"):
+                sp = c2_details["spillover"]
+                catalyst_desc.append(f"Supply Chain Spillover (+{sp['spillover_score']:.2f} from {sp['source_asset']})")
+            elif c2_details.get("headlines"):
+                catalyst_desc.append(f"High-Impact Catalyst: {c2_details['headlines'][0][:80]}")
+        if c2_details.get("turbo_c_active"):
+            bf = c2_details["breakout_flow"]
+            catalyst_desc.append(f"Institutional Breakout Flow ({bf['volume_ratio']}x Vol Surge, +{bf['rs_5d']:.1f}% 5D Momentum)")
+
+        micro_notes = [c3_details['trend_note'], c3_details['rsi_note'], c3_details['vol_note']]
+        if c3_details.get('vol_regime') in ('SQUEEZE', 'EXHAUSTION'):
+            micro_notes.append(c3_details['regime_note'])
+        if c3_details.get('seller_exhausted'):
+            micro_notes.append(c3_details['wyckoff_note'])
+        if abs(c3_details.get('ou_zscore', 0.0)) >= 0.5:
+            micro_notes.append(c3_details['ou_note'])
+
+        thesis = (
+            f"[WAR RIG ALPHA TRANSMISSION] {ticker} — Composite Conviction: {composite_conviction:.1f}%\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚡ CYLINDER 1 (Macro & Sector): [{c1_details.get('sector_phase', 'NEUTRAL')}] {c1_details.get('sector_thesis', '')}\n"
+            f"🔥 CYLINDER 2 (Catalyst V8): {' & '.join(catalyst_desc)}\n"
+            f"🎯 CYLINDER 3 (Microstructure): {' | '.join(micro_notes)}\n"
+            f"⚖️ ASYMMETRY GATE: Entry ${trigger_p:.2f} | Target ${target_p:.2f} (+{c3_details['upside_pct']}%) | Stop ${stop_p:.2f} (-{c3_details['downside_pct']}%) | R/R: {rr:.2f}:1\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+
+        holding_period = "Pre-Earnings / Catalyst Run (5-14 Days Swing)"
+        if c2_details.get("turbo_a_active"):
+            holding_period = f"Pre-Earnings Window (Hold into {c2_details['pre_earnings']['earnings_date']} report)"
+
+        headline = f"War Rig Convergence: {ticker} (Conviction: {composite_conviction:.0f}%, R/R: {rr:.1f}:1)"
+        reason = f"WAR_RIG_CONVERGENCE: Sector [{c1_details.get('sector_phase')}] + Catalyst V8 + {rr:.1f}:1 Asymmetry"
+
+        # Nitrous Bridge Payload Hook
+        nitrous_input = {
+            "ticker": ticker,
+            "trigger_price": trigger_p,
+            "target_price": target_p,
+            "stop_loss": stop_p,
+            "conviction_score": round(composite_conviction / 100.0, 2),
+            "risk_reward_ratio": rr,
+            "holding_period": holding_period,
+            "catalyst_type": "WAR_RIG_CONVERGENCE",
+            "earnings_date": c2_details.get("pre_earnings", {}).get("earnings_date"),
+            "days_until_earnings": c2_details.get("pre_earnings", {}).get("days_until"),
+            "investment_thesis": thesis,
+            "evaluation_date": c_date
+        }
+
+        return {
+            "ticker": ticker,
+            "signal_type": "BUY",
+            "catalyst_type": "WAR_RIG_CONVERGENCE",
+            "trigger_price": trigger_p,
+            "target_price": target_p,
+            "stop_loss": stop_p,
+            "conviction_score": round(composite_conviction / 100.0, 2),
+            "raw_conviction_pct": composite_conviction,
+            "risk_reward_ratio": rr,
+            "holding_period": holding_period,
+            "headline": headline,
+            "reason": reason,
+            "investment_thesis": thesis,
+            "cylinder_1_score": c1_score,
+            "cylinder_2_score": c2_score,
+            "cylinder_3_score": c3_score,
+            "cylinder_details": {
+                "c1_score": c1_score,
+                "c1": c1_details,
+                "c2_score": c2_score,
+                "c2": c2_details,
+                "c3_score": c3_score,
+                "c3": c3_details,
+            },
+            "evaluation_date": c_date,
+            "nitrous_payload": nitrous_input
+        }
+
+
+def get_war_rig_nitrous_options(signal: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Passes a War Rig signal to the Nitrous Express Bridge
+    to calculate Mode A and Mode B options configurations.
+    """
+    from .war_rig_nitrous import get_nitrous_bridge
+    bridge = get_nitrous_bridge()
+    return bridge.generate_nitrous_deployment(signal)
+
+
+def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
+    """
+    Scans the MIMIR universe through the War Rig single-shaft transmission.
+    Inserts newly generated WAR_RIG_CONVERGENCE signals into mimir_trade_signals.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    cur = conn.cursor()
+    war_rig = WarRigEngine(conn=conn)
+    generated_signals = []
+
+    try:
+        from ..routers.prices import DEFAULT_TICKERS
+
+        # Universe assembly: active tickers with upcoming earnings, recent catalysts, or top liquidity
+        candidate_tickers = set([t.strip().upper() for t in DEFAULT_TICKERS if t])
+
+        # 1. Add top institutional liquid equities from daily OHLCV (dollar volume >= $25M)
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ticker
+                FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                WHERE date >= CURRENT_DATE - INTERVAL '4 days'
+                  AND close >= 5.0
+                  AND (close * volume) >= 25000000
+                LIMIT 100
+            """)
+            for r in cur.fetchall():
+                if r[0]:
+                    candidate_tickers.add(r[0].strip().upper())
+        except Exception as l_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"[WAR_RIG] Liquid universe fetch warning: {l_err}")
+
+        # 2. Add dynamically tracked portfolio and alert tickers
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ticker
+                FROM {settings.mimir_schema}.mimir_dynamic_tickers
+                WHERE ticker IS NOT NULL
+            """)
+            for r in cur.fetchall():
+                if r[0]:
+                    candidate_tickers.add(r[0].strip().upper())
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        # 3. Add upcoming earnings tickers in the next 14 days
+        cur.execute(f"""
+            SELECT DISTINCT ticker
+            FROM {settings.mimir_schema}.mimir_earnings_calendar
+            WHERE earnings_date >= CURRENT_DATE + INTERVAL '2 days'
+              AND earnings_date <= CURRENT_DATE + INTERVAL '14 days'
+              AND ticker IS NOT NULL
+        """)
+        for r in cur.fetchall():
+            if r[0]:
+                candidate_tickers.add(r[0].strip().upper())
+
+        # 4. Add recent positive catalyst tickers (last 7 days)
+        cur.execute(f"""
+            SELECT DISTINCT si.ticker
+            FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+            JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+            WHERE (a.published_ts AT TIME ZONE 'UTC')::date >= CURRENT_DATE - INTERVAL '7 days'
+              AND si.sentiment_score >= 0.35
+              AND si.ticker IS NOT NULL
+        """)
+        for r in cur.fetchall():
+            if r[0]:
+                candidate_tickers.add(r[0].strip().upper())
+
+        # 5. Dynamic Catalyst Velocity Inflow: High news velocity in the last 2 hours (>= 3 articles, avg sentiment >= 0.35)
+        try:
+            cur.execute(f"""
+                SELECT si.ticker, COUNT(DISTINCT si.article_id) as article_count, AVG(si.sentiment_score) as avg_sent
+                FROM {settings.mimir_schema}.mimir_sentiment_impacts si
+                JOIN {settings.mimir_schema}.mimir_raw_articles a ON si.article_id = a.id
+                WHERE a.published_ts >= NOW() - INTERVAL '2 hours'
+                  AND si.ticker IS NOT NULL
+                GROUP BY si.ticker
+                HAVING COUNT(DISTINCT si.article_id) >= 3 AND AVG(si.sentiment_score) >= 0.35
+            """)
+            velocity_rows = cur.fetchall()
+            for r in velocity_rows:
+                if r[0]:
+                    t_cand = r[0].strip().upper()
+                    candidate_tickers.add(t_cand)
+                    logger.info(f"[WAR_RIG] Dynamic Velocity Inflow: Injected {t_cand} ({r[1]} articles in 2h, avg sentiment {float(r[2]):.2f})")
+        except Exception as v_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"[WAR_RIG] Catalyst velocity candidate query error: {v_err}")
+
+        logger.info(f"[WAR_RIG] Scanning universe of {len(candidate_tickers)} candidates through the unified crankshaft...")
+
+        for ticker in candidate_tickers:
+            # Check duplicate signals in last 24 hours
+            cur.execute(f"""
+                SELECT 1 FROM {settings.mimir_schema}.mimir_trade_signals
+                WHERE ticker = %s 
+                  AND catalyst_type = 'WAR_RIG_CONVERGENCE'
+                  AND (status = 'PENDING' OR created_at >= NOW() - INTERVAL '24 hours')
+                LIMIT 1
+            """, (ticker,))
+            if cur.fetchone():
+                continue
+
+            sig = war_rig.evaluate_war_rig_candidate(ticker, conn=conn)
+            if sig:
+                # Insert into database
+                cur.execute(f"""
+                    INSERT INTO {settings.mimir_schema}.mimir_trade_signals
+                    (ticker, signal_type, catalyst_type, trigger_price, target_price, stop_loss,
+                     holding_period, headline, investment_thesis, conviction_score, sentiment_score, reason, status, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW())
+                    RETURNING id
+                """, (
+                    sig["ticker"], sig["signal_type"], sig["catalyst_type"],
+                    sig["trigger_price"], sig["target_price"], sig["stop_loss"],
+                    sig["holding_period"], sig["headline"], sig["investment_thesis"],
+                    sig["conviction_score"], sig["cylinder_2_score"] / 50.0, sig["reason"]
+                ))
+                sig_id_row = cur.fetchone()
+                new_signal_id = sig_id_row[0] if sig_id_row else None
+                conn.commit()
+
+                # Dispatch Discord Notification
+                try:
+                    _discord_alert(
+                        ticker=sig["ticker"],
+                        signal_type=sig["signal_type"],
+                        trigger_price=sig["trigger_price"],
+                        target_price=sig["target_price"],
+                        stop_loss=sig["stop_loss"],
+                        sentiment_score=sig.get("cylinder_2_score", 0.0) / 50.0,
+                        catalyst_type=sig["catalyst_type"],
+                        headline=sig["headline"],
+                        reason=sig["reason"],
+                        holding_period=sig["holding_period"],
+                        conviction_score=sig["conviction_score"],
+                        investment_thesis=sig.get("investment_thesis"),
+                        cylinder_details=sig.get("cylinder_details"),
+                    )
+                except Exception as d_err:
+                    logger.warning(f"[WAR_RIG] Discord notify warning: {d_err}")
+
+                # Dispatch Personalized Co-Pilot alerts for each user's IRL portfolio
+                try:
+                    from ..services.copilot_allocator import dispatch_copilot_signals
+                    dispatch_copilot_signals(signal=sig, signal_id=new_signal_id, conn=conn)
+                except Exception as cp_err:
+                    logger.warning(f"[WAR_RIG] Co-Pilot dispatch warning: {cp_err}")
+
+                # Automatically trigger MT5 Paper Trade execution for this signal
+                try:
+                    from .paper_trader import execute_single_paper_trade
+                    paper_trade_res = execute_single_paper_trade(
+                        signal_id=new_signal_id,
+                        ticker=sig["ticker"],
+                        signal_type=sig["signal_type"],
+                        trigger_price=sig["trigger_price"],
+                        target_price=sig["target_price"],
+                        stop_loss=sig["stop_loss"],
+                        conviction_score=sig["conviction_score"],
+                        catalyst_type=sig["catalyst_type"],
+                        reason=sig["reason"],
+                        conn=conn
+                    )
+                    sig["paper_trade"] = paper_trade_res
+                    logger.info(f"[WAR_RIG] MT5 Paper Trade result for {sig['ticker']}: {paper_trade_res.get('message')}")
+                except Exception as pt_err:
+                    logger.warning(f"[WAR_RIG] MT5 Paper Trade dispatch failed for {sig['ticker']}: {pt_err}")
+
+                generated_signals.append(sig)
+                logger.info(f"[WAR_RIG] Generated War Rig Signal: {sig['ticker']} ({sig['raw_conviction_pct']:.0f}% Conviction | {sig['risk_reward_ratio']:.1f}:1 R/R)")
+                if len(generated_signals) >= top_n:
+                    break
+
+        return generated_signals
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[WAR_RIG] Error during war rig scan: {e}")
+        return generated_signals
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+        try:
+            from ..services.process_manager import trim_process_memory
+            trim_process_memory()
+        except Exception:
+            pass

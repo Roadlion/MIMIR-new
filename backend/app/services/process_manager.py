@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 PID_FILE = PROJECT_ROOT / ".mimir_pids.json"
 
-# Exact console window titles used by MIMIR background daemons
+# Exact console window titles used by MIMIR launchers
 MIMIR_CONSOLE_TITLES = [
+    "MIMIR Server Launcher*",
     "MIMIR Cloudflare HTTPS Tunnel*",
     "MIMIR - MT5 Price Fetcher*",
     "MIMIR - Live Price Daemon*"

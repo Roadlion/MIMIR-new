@@ -164,7 +164,6 @@ def ensure_database_integrity(tables=None, auto_repair=True) -> dict:
         return report
 
     target_tables = tables or CORE_TABLES
-
     for tbl in target_tables:
         report["checked"] += 1
         ok = verify_table(tbl, schema=settings.mimir_schema, auto_repair=auto_repair)

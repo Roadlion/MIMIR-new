@@ -37,6 +37,91 @@ a:hover {
     color: #4DD0D6;
 }
 
+/* ==================== NAVBAR DROPDOWNS ==================== */
+.nav-link {
+    color: #D6E5E3;
+    padding: 0.375rem 0.625rem;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.nav-link:hover {
+    color: #00A6B2;
+    background: rgba(0, 166, 178, 0.06);
+}
+
+.nav-dropdown {
+    position: relative;
+}
+.nav-dropdown-trigger {
+    background: none;
+    border: none;
+    color: #D6E5E3;
+    font-size: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 0.375rem 0.625rem;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+    white-space: nowrap;
+}
+.nav-dropdown-trigger:hover {
+    color: #00A6B2;
+    background: rgba(0, 166, 178, 0.06);
+}
+
+.nav-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 180px;
+    background: #0D1418;
+    border: 1px solid #1A2A30;
+    border-radius: 6px;
+    padding: 0.375rem 0;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+/* Desktop Hover Behavior */
+@media (min-width: 1024px) {
+    .nav-dropdown-menu {
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(4px);
+        transition: opacity 0.15s, visibility 0.15s, transform 0.15s;
+    }
+    .nav-dropdown:hover .nav-dropdown-menu {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+}
+
+/* Mobile Default overrides - toggled by JS .hidden class */
+@media (max-width: 1023px) {
+    .nav-dropdown-menu {
+        position: relative;
+        box-shadow: none;
+        border: none;
+        background: transparent;
+        padding-left: 1rem;
+        border-left: 1px solid #1A2A30;
+        margin-top: 0.25rem;
+    }
+}
+
+.nav-dropdown-menu a {
+    display: block;
+    padding: 0.5rem 0.875rem;
+    color: #8A9E9B;
+    font-size: 0.8125rem;
+    transition: color 0.1s, background 0.1s;
+}
+.nav-dropdown-menu a:hover {
+    color: #00A6B2;
+    background: rgba(0, 166, 178, 0.06);
+}
+
 .card {
     background: #111A20;
     border: 1px solid #1A2A30;
@@ -1053,3 +1138,159 @@ a:hover {
     box-shadow: 0 0 8px rgba(0, 166, 178, 0.3);
 }
 
+/* ==================== TASTEFUL MICRO-ANIMATIONS & NAV POLISH ==================== */
+.nav-link.active,
+.nav-dropdown-trigger.active {
+    color: #00A6B2 !important;
+    background: rgba(0, 166, 178, 0.12) !important;
+    border-bottom: 2px solid #00A6B2;
+}
+
+/* Ambient Pulse for Status Indicators */
+@keyframes statusPulse {
+    0% { transform: scale(0.95); opacity: 0.75; box-shadow: 0 0 0 0 rgba(0, 166, 178, 0.5); }
+    70% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 6px rgba(0, 166, 178, 0); }
+    100% { transform: scale(0.95); opacity: 0.75; box-shadow: 0 0 0 0 rgba(0, 166, 178, 0); }
+}
+.animate-status-pulse {
+    animation: statusPulse 2.5s infinite ease-in-out;
+}
+
+/* Card Elevation & Border Glow */
+.hover-card-elevate {
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-card-elevate:hover {
+    transform: translateY(-2px);
+    border-color: rgba(0, 166, 178, 0.4);
+    box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 166, 178, 0.15);
+}
+
+/* Typing Dots Animation for AI Oracle */
+.typing-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #00A6B2;
+    animation: pulseDot 1.4s infinite ease-in-out both;
+}
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes pulseDot {
+    0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+    40% { transform: scale(1.0); opacity: 1; }
+}
+
+/* Watchlist Preset Chips */
+.wl-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    background: #0D1418;
+    border: 1px solid #1A2A30;
+    color: #8A9E9B;
+    transition: all 0.15s ease;
+    cursor: pointer;
+}
+.wl-chip:hover {
+    border-color: #00A6B2;
+    color: #00A6B2;
+    background: rgba(0, 166, 178, 0.08);
+}
+
+/* =============================================
+   FINANCE ASSET PAGE COMPONENT STYLES
+   ============================================= */
+
+/* Price Movement Timeline */
+.price-movement-timeline .timeline-event:last-child {
+    border-left-color: transparent;
+}
+
+/* Sentiment Badge Pills */
+.sentiment-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    border: 1px solid;
+}
+.sentiment-pill.bullish { color: #10B981; background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); }
+.sentiment-pill.bearish { color: #FF5252; background: rgba(255, 82, 82, 0.1); border-color: rgba(255, 82, 82, 0.3); }
+.sentiment-pill.neutral { color: #FFD740; background: rgba(255, 215, 64, 0.1); border-color: rgba(255, 215, 64, 0.3); }
+
+/* Regime Badge Indicators */
+.regime-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Finance Card Skeleton Loading */
+.finance-skeleton {
+    background: linear-gradient(90deg, #111A20 25%, #1A2A30 50%, #111A20 75%);
+    background-size: 200% 100%;
+    animation: financeShimmer 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+@keyframes financeShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Financial Statement Tab Transition */
+#fin-body-rows tr {
+    animation: finRowFadeIn 0.2s ease-out;
+}
+@keyframes finRowFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Earnings Quarter Picker */
+#earnings-quarter-picker span:hover {
+    border-color: #00A6B2 !important;
+    color: #00E5F2 !important;
+}
+
+/* Peer Card Hover */
+#peers-container a:hover {
+    background: rgba(0, 166, 178, 0.04);
+    border-radius: 4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    margin-left: -4px;
+    margin-right: -4px;
+}
+
+/* Enhanced Story Card */
+#stories-grid .glass-card {
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#stories-grid .glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 166, 178, 0.2);
+}
+
+/* Price Movement Event Dots */
+.price-movement-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    position: absolute;
+    left: -7px;
+    top: 2px;
+    box-shadow: 0 0 8px rgba(0, 166, 178, 0.3);
+}

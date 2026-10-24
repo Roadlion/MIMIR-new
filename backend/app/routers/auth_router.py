@@ -1,21 +1,21 @@
 # backend/app/routers/auth_router.py
-from fastapi import APIRouter, HTTPException, Depends, Response, status
+from fastapi import APIRouter, HTTPException, Depends, Response, Request
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date
+from datetime import datetime, date
+
 from ..database import get_db_connection_dict
 from ..config import get_settings
 from ..auth import (
-    hash_password,
-    verify_password,
-    create_access_token,
-    get_current_user,
-    get_admin_user
+    hash_password, verify_password, create_access_token,
+    get_current_user, get_admin_user
 )
 
 router = APIRouter()
 settings = get_settings()
 schema = settings.mimir_schema
+
+# --- REQUEST / RESPONSE SCHEMAS ---
 
 class LoginRequest(BaseModel):
     username: str

@@ -1,5 +1,5 @@
 // MIMIR Frontend
-console.log('🌳 MIMIR frontend loaded. The tree watches.');
+console.log('MIMIR frontend loaded. The tree watches.');
 
 function updateClock() {
     const el = document.getElementById('clock');
@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Disable button
             refreshBtn.disabled = true;
             refreshBtn.classList.add('opacity-50', 'cursor-not-allowed');
-            refreshBtn.textContent = '⏳ Running...';
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Running...';
 
             // Show panel
             if (progressPanel) {
@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             eventSource.close();
                             refreshBtn.disabled = false;
                             refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                            refreshBtn.textContent = '↻ Refresh';
+                            refreshBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Refresh';
                             // Reload page to reflect new data
                             setTimeout(() => {
                                 window.location.reload();
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             eventSource.close();
                             refreshBtn.disabled = false;
                             refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                            refreshBtn.textContent = '↻ Refresh';
+                            refreshBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Refresh';
                             
                             if (stepName) {
                                 stepName.textContent = 'Pipeline Failure';
@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 eventSource.close();
                 refreshBtn.disabled = false;
                 refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                refreshBtn.textContent = '↻ Refresh';
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Refresh';
                 
                 if (stepName) {
                     stepName.textContent = 'Stream Connection Lost';
@@ -155,9 +155,54 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load sliding ticker data
     fetchTickerData();
-    // Refresh every 2 minutes (120000ms)
-    setInterval(fetchTickerData, 120000);
+    
+    // Setup Real-Time Server-Sent Events (SSE) for prices
+    const priceSource = new EventSource('/api/v1/prices/stream');
+    priceSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'price_ticks' && Array.isArray(data.ticks)) {
+                // 1. Instantly update sliding marquee track items in-place (0ms latency, zero HTTP requests)
+                updateTickerTrack(data.ticks);
+                
+                // 2. Dispatch global event for Watchlist, Portfolio, and Dashboard cards
+                window.dispatchEvent(new CustomEvent('mimir:price_update', { detail: data.ticks }));
+            } else if (data.type === 'price_update') {
+                fetchTickerData();
+            }
+        } catch (e) {
+            // ping or parse error, ignore
+        }
+    };
+    priceSource.onerror = function() {
+        console.warn("[Prices] Stream disconnected, attempting to reconnect...");
+    };
 });
+
+function updateTickerTrack(ticks) {
+    const track = document.getElementById('ticker-track');
+    if (!track || !Array.isArray(ticks)) return;
+    
+    ticks.forEach(t => {
+        const items = track.querySelectorAll(`[data-ticker="${t.ticker}"]`);
+        items.forEach(item => {
+            const priceEl = item.querySelector('.ticker-price');
+            const changeEl = item.querySelector('.ticker-change');
+            if (priceEl && changeEl) {
+                const isCurrency = !t.ticker.startsWith('^') && !t.ticker.endsWith('=X');
+                const priceFormatted = Number(t.price).toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 4
+                });
+                priceEl.textContent = `${isCurrency ? '$' : ''}${priceFormatted}`;
+                
+                const isUp = t.change_percent >= 0;
+                changeEl.className = `ticker-change ${isUp ? 'up' : 'down'}`;
+                changeEl.innerHTML = `${isUp ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>'} ${Math.abs(t.change_percent).toFixed(2)}%`;
+            }
+        });
+    });
+}
 
 async function fetchTickerData() {
     const track = document.getElementById('ticker-track');
@@ -171,7 +216,7 @@ async function fetchTickerData() {
             const renderItems = (items) => {
                 return items.map(item => {
                     const changeClass = item.change_percent >= 0 ? 'up' : 'down';
-                    const changeSign = item.change_percent >= 0 ? '▲' : '▼';
+                    const changeSign = item.change_percent >= 0 ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>';
                     const isCurrency = !item.ticker.startsWith('^') && !item.ticker.endsWith('=X');
                     const priceFormatted = Number(item.current_price).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
@@ -179,7 +224,7 @@ async function fetchTickerData() {
                     });
                     const changeFormatted = Math.abs(item.change_percent).toFixed(2);
                     return `
-                        <a href="/asset/${item.ticker}" class="ticker-item hover:opacity-80 transition-opacity">
+                        <a href="/asset/${item.ticker}" data-ticker="${item.ticker}" class="ticker-item hover:opacity-80 transition-opacity">
                             <span class="ticker-symbol">${item.ticker}</span>
                             <span class="ticker-price">${isCurrency ? '$' : ''}${priceFormatted}</span>
                             <span class="ticker-change ${changeClass}">${changeSign} ${changeFormatted}%</span>

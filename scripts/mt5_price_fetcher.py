@@ -62,46 +62,7 @@ def is_mt5_candidate(symbol: str) -> bool:
     return True
 
 def get_db_tickers():
-    core = [
-        "NVDA", "AAPL", "GOOGL", "MSFT", "AMZN", 
-        "AVGO", "META", "TSLA", "MU", "BRK.B", 
-        "LLY", "JPM", "WMT", "AMD", "V", 
-        "JNJ", "XOM", "INTC", "MA", "AMAT", 
-        "CSCO", "LRCX", "ABBV", "CAT", "BAC", 
-        "COST", "UNH", "GE", "ORCL", "CVX", 
-        "MS", "KO", "PG", "HD", "GS", 
-        "PLTR", "NFLX", "KLAC", "MRK", "DELL", 
-        "PANW", "GEV", "TXN", "AXP", "LIN", 
-        "ANET", "C", "CRWD", "IBM", "TMUS", "BTCUSD"
-    ]
-    try:
-        conn = get_db_connection()
-        try:
-            cur = conn.cursor()
-            
-            # Get from dynamic tickers
-            cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_dynamic_tickers WHERE ticker IS NOT NULL")
-            dynamic = [r[0] for r in cur.fetchall()]
-            
-            # Get from recent sentiment impacts (last 7 days)
-            cur.execute(f"""
-                SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_sentiment_impacts 
-                WHERE ticker IS NOT NULL AND created_at >= NOW() - INTERVAL '7 days'
-            """)
-            sentiment = [r[0] for r in cur.fetchall()]
-            
-            # Get from portfolio
-            cur.execute(f"SELECT DISTINCT ticker FROM {settings.mimir_schema}.mimir_portfolio WHERE ticker IS NOT NULL")
-            portfolio = [r[0] for r in cur.fetchall()]
-            
-            # Merge and filter valid candidates
-            all_tickers = [tk.strip().upper() for tk in set(dynamic + sentiment + portfolio) if is_mt5_candidate(tk)]
-            return list(set(all_tickers + core))
-        finally:
-            conn.close()
-    except Exception as e:
-        print(f"[MT5_FETCHER] Database offline, using core tickers: {e}")
-        return core
+
 
 def resolve_broker_symbol(symbol: str) -> str:
     """Tries exact symbol name and broker variations (.US suffix, hash prefix, dot removal)."""
