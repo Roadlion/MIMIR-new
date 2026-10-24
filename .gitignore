@@ -16,6 +16,8 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+ehthumbs.db
+.mimir_pids.json
 
 # Claude
 .claude/

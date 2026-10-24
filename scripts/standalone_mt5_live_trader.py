@@ -34,8 +34,10 @@ except ImportError:
     print("[CRITICAL] MetaTrader5 package not installed. Run: pip install MetaTrader5")
     sys.exit(1)
 
-from backend.app.analytics.user_strategies import USER_STRATEGY_REGISTRY
-from backend.app.analytics.user_strategies.static_strategies import BACKTEST_STRATEGY_REGISTRY
+from backend.app.analytics.user_strategies import (
+    USER_STRATEGY_REGISTRY,
+    BACKTEST_STRATEGY_REGISTRY,
+)
 from backend.app.analytics.user_strategies.indicators import (
     VolatilityModel,
     compute_bollinger_features,

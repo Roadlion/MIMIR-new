@@ -1,0 +1,148 @@
+import os
+import sys
+import signal
+import collections
+from datetime import datetime, timedelta
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+# Fix path to load backend module
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+import psycopg2
+import psycopg2.extensions
+import select
+from backend.app.database import get_db_connection
+from backend.app.config import get_settings
+from backend.app.services.process_manager import record_pid, apply_low_process_priority, trim_process_memory
+from backend.app.analytics.stat_arb_apu import StatArbAPU
+
+# Record PID and set below-normal CPU priority for gaming friendliness
+record_pid("live_daemon", os.getpid())
+apply_low_process_priority()
+
+_running = True
+
+def handle_signal(sig, frame):
+    global _running
+    _running = False
+    print("\n[STOPPING] Live Price Daemon received exit signal. Cleaning up...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, handle_signal)
+
+settings = get_settings()
+
+# Python In-Memory sliding window cache (max 100 minutes per ticker)
+# Using a deque provides O(1) append/pop efficiency, perfect for sliding time-series windows
+price_cache = collections.defaultdict(lambda: collections.deque(maxlen=100))
+
+def process_new_ticks():
+    """Fetches the latest minute data, updates the sliding window cache, and triggers event-driven analytics."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # Fetch the most recent minute tick for all tickers
+        cur.execute(f"""
+            SELECT ticker, timestamp, open, high, low, close, volume 
+            FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+            WHERE timestamp >= NOW() - INTERVAL '2 minutes'
+        """)
+        rows = cur.fetchall()
+        
+        updated_tickers = []
+        for row in rows:
+            ticker, ts, o, h, l, c, v = row
+            tick_data = {'timestamp': ts, 'open': float(o), 'high': float(h), 'low': float(l), 'close': float(c), 'volume': float(v)}
+            
+            # Avoid duplicate inserts into the sliding window
+            if len(price_cache[ticker]) == 0 or price_cache[ticker][-1]['timestamp'] < ts:
+                price_cache[ticker].append(tick_data)
+                updated_tickers.append(ticker)
+        
+        if not updated_tickers:
+            return
+            
+        print(f"[LIVE DAEMON] Updated sliding window cache for {len(updated_tickers)} tickers.")
+        print(f"[LIVE DAEMON] Triggering event-driven analytics pipelines...")
+        
+        # 1. Event-Driven Statistical Arbitrage APU:
+        # Scheduled on its proper M15/H1 cadence in background_worker.py (every 10m).
+        # Bypassed here on the 1-minute tick to eliminate recurring CPU matrix spikes during gaming.
+        pass
+            
+        # 2. Event-Driven Technical Alerts: DEPRECATED
+        # Standalone 1-min technical breakouts have been eliminated to prevent knife-catching.
+        # Technicals now act strictly as microstructure invalidation gates within WarRigEngine.
+        pass
+            
+        # 3. Trigger Event-Driven Sentiment Validation
+        try:
+            from backend.app.analytics.signal_fusion import validate_sentiment_with_price
+            validate_sentiment_with_price(price_cache)
+        except Exception as e:
+            print(f"[LIVE DAEMON] Error triggering Sentiment Validation: {e}")
+            
+        # 4. Trigger Event-Driven Portfolio Stop-Losses
+        try:
+            from backend.app.routers.portfolio import evaluate_tick_stoploss
+            evaluate_tick_stoploss(price_cache)
+        except Exception as e:
+            print(f"[LIVE DAEMON] Error triggering Portfolio Stop-Losses: {e}")
+
+        # 5. User Custom Strategies (DEACTIVATED: prevent unvetted rogue market execution and signal spam)
+        # Standalone technical loops (Dual Hedge, Mean Reversion, Bollinger Bands) are disabled.
+        # Only the unified War Rig Transmission Engine is authorized for trading.
+        pass
+        
+    finally:
+        conn.close()
+
+def listen_to_price_updates():
+    """Listens to the PostgreSQL price_updates channel and fires process_new_ticks() instantly."""
+    print("[LIVE DAEMON] Initialized Python In-Memory Sliding Window Cache (100min capacity).")
+
+    while _running:
+        try:
+            conn = get_db_connection()._conn
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            cur = conn.cursor()
+            cur.execute("LISTEN price_updates;")
+            print("[LIVE DAEMON] Listening for MT5 price_updates...")
+
+            while _running:
+                # 1-second timeout polling so exit signals are processed promptly
+                r, _, _ = select.select([conn], [], [], 1)
+                if not _running:
+                    break
+                if r:
+                    conn.poll()
+                    while conn.notifies and _running:
+                        conn.notifies.pop(0)
+                        process_new_ticks()
+        except (KeyboardInterrupt, SystemExit):
+            break
+        except Exception as e:
+            if not _running:
+                break
+            print(f"[LIVE DAEMON] Database connection offline or failed ({e}). Retrying in 10s...")
+            import time
+            time.sleep(10)
+        finally:
+            try:
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
+
+if __name__ == "__main__":
+    listen_to_price_updates()
