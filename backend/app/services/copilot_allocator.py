@@ -100,7 +100,50 @@ def get_user_portfolio_state(user_id: int, conn=None) -> Dict[str, Any]:
             max_pos_pct = float(urow[3] or 10.0)
             max_sec_pct = float(urow[4] or 25.0)
 
-        # 2. Fetch open positions
+        # 2. Fetch logged real-life portfolio holdings from mimir_portfolio (purchases and sales)
+        invested_value = 0.0
+        sector_breakdown: Dict[str, float] = {}
+        positions = []
+        already_tracked_tickers = set()
+
+        try:
+            from ..routers.portfolio import get_portfolio
+            user_portfolio = get_portfolio({"id": user_id})
+            if user_portfolio and "holdings" in user_portfolio:
+                for t_sym, h_data in user_portfolio["holdings"].items():
+                    qty = float(h_data.get("quantity", 0.0))
+                    if qty > 0.0001:
+                        avg_buy = float(h_data.get("avg_buy_price", 0.0))
+                        curr_p = float(h_data.get("current_price", 0.0))
+                        val = float(h_data.get("current_value", 0.0))
+                        if val <= 0.0:
+                            val = qty * (curr_p if curr_p > 0 else avg_buy)
+
+                        tw = get_ticker_sector_tailwinds(t_sym, conn=conn)
+                        sec = tw.get("sector_name") or tw.get("sector") or "General"
+
+                        invested_value += val
+                        sector_breakdown[sec] = sector_breakdown.get(sec, 0.0) + val
+                        already_tracked_tickers.add(t_sym.upper())
+
+                        positions.append({
+                            "position_id": f"port_{t_sym}",
+                            "ticker": t_sym.upper(),
+                            "shares": qty,
+                            "entry_price": avg_buy,
+                            "current_price": curr_p,
+                            "current_value": val,
+                            "stop_loss": round(avg_buy * 0.95, 2),
+                            "target_price": round(avg_buy * 1.15, 2),
+                            "current_ratchet_level": None,
+                            "holding_period_days": 10,
+                            "sector": sec,
+                            "entry_time": None
+                        })
+        except Exception as e:
+            logger.warning(f"[COPILOT] Error fetching logged mimir_portfolio for user {user_id}: {e}")
+
+        # 3. Merge any additional positions from mimir_user_positions
         cur.execute(f"""
             SELECT id, ticker, shares, entry_price, current_stop_loss, target_price,
                    current_ratchet_level, holding_period_days, sector, entry_time
@@ -109,14 +152,10 @@ def get_user_portfolio_state(user_id: int, conn=None) -> Dict[str, Any]:
         """, (user_id,))
         pos_rows = cur.fetchall()
 
-        invested_value = 0.0
-        sector_breakdown: Dict[str, float] = {}
-        positions = []
-
         for p in pos_rows:
             if isinstance(p, dict):
                 pid = p["id"]
-                ticker = p["ticker"]
+                ticker = p["ticker"].upper()
                 shares = float(p["shares"])
                 entry_price = float(p["entry_price"])
                 sl = float(p["current_stop_loss"])
@@ -127,30 +166,47 @@ def get_user_portfolio_state(user_id: int, conn=None) -> Dict[str, Any]:
                 entry_dt = p["entry_time"]
             else:
                 pid, ticker, shares, entry_price, sl, tp, ratchet, hold_days, sec, entry_dt = (
-                    p[0], p[1], float(p[2]), float(p[3]), float(p[4]),
+                    p[0], p[1].upper(), float(p[2]), float(p[3]), float(p[4]),
                     float(p[5]) if p[5] else None, float(p[6]) if p[6] else None,
                     int(p[7] or 7), p[8] or "UNKNOWN", p[9]
                 )
 
             val = shares * entry_price
-            invested_value += val
-            sector_breakdown[sec] = sector_breakdown.get(sec, 0.0) + val
 
-            positions.append({
-                "position_id": pid,
-                "ticker": ticker,
-                "shares": shares,
-                "entry_price": entry_price,
-                "current_value": val,
-                "stop_loss": sl,
-                "target_price": tp,
-                "current_ratchet_level": ratchet,
-                "holding_period_days": hold_days,
-                "sector": sec,
-                "entry_time": entry_dt
-            })
+            if ticker in already_tracked_tickers:
+                for existing in positions:
+                    if existing["ticker"] == ticker:
+                        existing["stop_loss"] = sl
+                        if tp: existing["target_price"] = tp
+                        if ratchet: existing["current_ratchet_level"] = ratchet
+                        if hold_days: existing["holding_period_days"] = hold_days
+            else:
+                invested_value += val
+                sector_breakdown[sec] = sector_breakdown.get(sec, 0.0) + val
+                already_tracked_tickers.add(ticker)
+                positions.append({
+                    "position_id": pid,
+                    "ticker": ticker,
+                    "shares": shares,
+                    "entry_price": entry_price,
+                    "current_value": val,
+                    "stop_loss": sl,
+                    "target_price": tp,
+                    "current_ratchet_level": ratchet,
+                    "holding_period_days": hold_days,
+                    "sector": sec,
+                    "entry_time": entry_dt
+                })
 
-        total_equity = dry_powder + invested_value
+        total_equity = round(dry_powder + invested_value, 2)
+
+        # Synchronize total_budget in mimir_users
+        cur.execute(f"""
+            UPDATE {_SCHEMA}.mimir_users
+            SET total_budget = %s
+            WHERE id = %s
+        """, (total_equity, user_id))
+        conn.commit()
 
         # Calculate sector percentages
         sector_weights = {}

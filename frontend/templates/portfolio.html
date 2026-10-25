@@ -2451,6 +2451,18 @@
     });
 
     // ── Co-Pilot Web UI Management ──────────────────────────────────────────
+    let currentLoggedHoldingsValue = 0.0;
+
+    function updateTotalCapitalPreview() {
+        const dryInput = document.getElementById("cfgDryPowder");
+        const previewEl = document.getElementById("cfgTotalCapPreview");
+        const dryVal = parseFloat(dryInput ? dryInput.value : 0) || 0.0;
+        const total = currentLoggedHoldingsValue + dryVal;
+        if (previewEl) {
+            previewEl.textContent = `$${total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        }
+    }
+
     async function loadCopilotConfig() {
         try {
             const res = await fetch('/api/v1/copilot/me');
@@ -2459,19 +2471,25 @@
             const data = json.data;
             if (!data) return;
 
+            currentLoggedHoldingsValue = parseFloat(data.holdings_value || (data.portfolio_summary && data.portfolio_summary.invested_value) || 0.0);
+            const dryPowder = parseFloat(data.dry_powder || 0.0);
+            const totalBudget = currentLoggedHoldingsValue + dryPowder;
+            const holdingsCount = data.holdings_count || (data.portfolio_summary && data.portfolio_summary.open_positions && data.portfolio_summary.open_positions.length) || 0;
+
             const dpEl = document.getElementById("cpDryPowder");
             const tbEl = document.getElementById("cpTotalBudget");
             const rpEl = document.getElementById("cpRiskPct");
             const mpEl = document.getElementById("cpMaxPos");
             const msEl = document.getElementById("cpMaxSector");
 
-            if (dpEl) dpEl.textContent = `$${parseFloat(data.dry_powder || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-            if (tbEl) tbEl.textContent = `$${parseFloat(data.total_budget || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            if (dpEl) dpEl.textContent = `$${dryPowder.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            if (tbEl) tbEl.textContent = `$${totalBudget.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             if (rpEl) rpEl.textContent = `${parseFloat(data.risk_per_trade_pct || 1.0).toFixed(1)}%`;
             if (mpEl) mpEl.textContent = `${parseFloat(data.max_position_pct || 10.0).toFixed(1)}%`;
             if (msEl) msEl.textContent = `${parseFloat(data.max_sector_pct || 25.0).toFixed(1)}%`;
 
-            const inBudget = document.getElementById("cfgTotalBudget");
+            const hValEl = document.getElementById("cfgHoldingsVal");
+            const hCntEl = document.getElementById("cfgHoldingsCount");
             const inDry = document.getElementById("cfgDryPowder");
             const inRisk = document.getElementById("cfgRiskPct");
             const inMaxPos = document.getElementById("cfgMaxPosPct");
@@ -2479,8 +2497,11 @@
             const inWebhook = document.getElementById("cfgWebhook");
             const inDiscordId = document.getElementById("cfgDiscordId");
 
-            if (inBudget) inBudget.value = data.total_budget;
-            if (inDry) inDry.value = data.dry_powder;
+            if (hValEl) hValEl.textContent = `$${currentLoggedHoldingsValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            if (hCntEl) hCntEl.textContent = `${holdingsCount} stock${holdingsCount === 1 ? '' : 's'} held`;
+            if (inDry) inDry.value = dryPowder;
+            updateTotalCapitalPreview();
+
             if (inRisk) inRisk.value = data.risk_per_trade_pct;
             if (inMaxPos) inMaxPos.value = data.max_position_pct;
             if (inMaxSec) inMaxSec.value = data.max_sector_pct;
@@ -2502,20 +2523,17 @@
         if (m) m.classList.add("hidden");
     }
 
-    function syncDryPowder() {
-        const b = document.getElementById("cfgTotalBudget");
-        const d = document.getElementById("cfgDryPowder");
-        if (b && d && b.value) d.value = b.value;
-    }
-
     async function handleSaveCopilotConfig(e) {
         e.preventDefault();
         const btn = document.getElementById("saveCopilotBtn");
         if (btn) btn.disabled = true;
 
+        const dryPowder = parseFloat(document.getElementById("cfgDryPowder").value) || 0;
+        const totalBudget = currentLoggedHoldingsValue + dryPowder;
+
         const payload = {
-            total_budget: parseFloat(document.getElementById("cfgTotalBudget").value) || 0,
-            dry_powder: parseFloat(document.getElementById("cfgDryPowder").value) || 0,
+            total_budget: totalBudget,
+            dry_powder: dryPowder,
             risk_per_trade_pct: parseFloat(document.getElementById("cfgRiskPct").value) || 1.0,
             max_position_pct: parseFloat(document.getElementById("cfgMaxPosPct").value) || 10.0,
             max_sector_pct: parseFloat(document.getElementById("cfgMaxSectorPct").value) || 25.0,
@@ -2545,7 +2563,7 @@
 
     window.openCopilotModal = openCopilotModal;
     window.closeCopilotModal = closeCopilotModal;
-    window.syncDryPowder = syncDryPowder;
+    window.updateTotalCapitalPreview = updateTotalCapitalPreview;
     window.handleSaveCopilotConfig = handleSaveCopilotConfig;
     document.addEventListener("DOMContentLoaded", loadCopilotConfig);
 </script>
@@ -2567,21 +2585,47 @@
         </div>
 
         <form id="copilotForm" onsubmit="handleSaveCopilotConfig(event)" class="space-y-4">
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="block text-[#8BA4A8] mb-1 font-semibold">Total Portfolio Capital ($)</label>
-                    <input type="number" step="0.01" id="cfgTotalBudget" required
-                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none"
-                        placeholder="e.g. 15000">
+            <!-- Dynamic Capital Composition Card -->
+            <div class="bg-[#111C21] border border-[#1A2A30] p-3.5 rounded-lg space-y-3">
+                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2">
+                    <span class="text-[11px] text-[#4A6A70] uppercase font-bold tracking-wider">
+                        <i class="fas fa-layer-group text-[#00E5F2] mr-1"></i> Live Capital Composition
+                    </span>
+                    <span class="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        <i class="fas fa-link mr-1"></i> Auto-Synced with Portfolio
+                    </span>
                 </div>
-                <div>
-                    <div class="flex items-center justify-between mb-1">
-                        <label class="block text-[#8BA4A8] font-semibold">Dry Powder (Cash $)</label>
-                        <button type="button" onclick="syncDryPowder()" class="text-[10px] text-[#00E5F2] hover:underline">Match Budget</button>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono">
+                    <!-- 1. Active Stock Holdings -->
+                    <div class="bg-[#0A161C] p-2.5 rounded border border-[#1A2A30]">
+                        <span class="text-[10px] text-[#4A6A70] uppercase block">Logged Stock Holdings</span>
+                        <div class="flex items-baseline gap-1 mt-1">
+                            <span id="cfgHoldingsVal" class="text-base font-bold text-[#D6E5E3]">$0.00</span>
+                        </div>
+                        <span id="cfgHoldingsCount" class="text-[10px] text-[#00A6B2] block mt-0.5">0 stocks held</span>
                     </div>
-                    <input type="number" step="0.01" id="cfgDryPowder" required
-                        class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-[#00A6B2] rounded px-3 py-2 text-emerald-400 font-mono text-sm font-bold focus:outline-none"
-                        placeholder="e.g. 10000">
+
+                    <!-- 2. Dry Powder Input -->
+                    <div class="bg-[#0A161C] p-2.5 rounded border border-emerald-500/40">
+                        <span class="text-[10px] text-emerald-400 uppercase font-semibold block flex items-center justify-between">
+                            <span>Dry Powder (Cash)</span>
+                            <i class="fas fa-wallet text-[9px]"></i>
+                        </span>
+                        <input type="number" step="0.01" id="cfgDryPowder" required oninput="updateTotalCapitalPreview()"
+                            class="w-full bg-[#111C21] border border-[#1A2A30] focus:border-emerald-400 rounded px-2 py-1 text-emerald-400 font-mono text-base font-bold focus:outline-none mt-1"
+                            placeholder="e.g. 10200">
+                        <span class="text-[9px] text-[#4A6A70] block mt-0.5">Dime! cash reserve</span>
+                    </div>
+
+                    <!-- 3. Total Portfolio Capital (Auto Computed) -->
+                    <div class="bg-[#0A161C] p-2.5 rounded border border-[#00A6B2]/40 shadow-[0_0_12px_rgba(0,166,178,0.08)]">
+                        <span class="text-[10px] text-[#00E5F2] uppercase font-semibold block">Total Portfolio Capital</span>
+                        <div class="flex items-baseline gap-1 mt-1">
+                            <span id="cfgTotalCapPreview" class="text-base font-bold text-[#00E5F2]">$0.00</span>
+                        </div>
+                        <span class="text-[9px] text-[#4A6A70] block mt-0.5">= Stock Assets + Cash</span>
+                    </div>
                 </div>
             </div>
 
