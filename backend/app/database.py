@@ -116,4 +116,3 @@ def get_db_connection_dict():
             pass
         conn = pool.getconn()
     return _PoolProxy(conn, pool)
-

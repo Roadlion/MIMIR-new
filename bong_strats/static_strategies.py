@@ -9,16 +9,19 @@ Includes:
 
 import json
 import os
+import numpy as np
 import pandas as pd
 
 from .base_strategy import StaticStrategy
 from .indicators import (
     OUCalibrator,
     VolatilityModel,
+    compute_adf_stat,
     compute_atr,
     compute_bollinger_features,
     compute_ou_features,
     compute_volatility_regime,
+    KalmanPairEstimator,
 )
 
 
@@ -720,6 +723,265 @@ class VolumeExhaustionReversalStrategy(StaticStrategy):
         return signals
 
 
+class PairStatArbitrageStrategy(StaticStrategy):
+    """Market-neutral, rolling hedge-ratio pairs strategy for backtesting.
+
+    ``data`` must contain ``close`` for the traded (primary) leg and
+    ``hedge_close`` for the hedge leg.  A rolling OLS fit on log prices builds
+    a residual spread.  The strategy enters when that spread is unusually far
+    from its own recent mean and exits on convergence, a wider stop, or a
+    maximum holding period.  It returns dollar-neutral-ish *leg positions*,
+    not a single-instrument signal, and is therefore deliberately excluded
+    from the live strategy registry.
+    """
+
+    name = "pair_stat_arbitrage"
+    param_space = {
+        "lookback": (40, 252),
+        "entry_zscore": (1.5, 3.5),
+        "exit_zscore": (0.0, 1.0),
+        "stop_zscore": (2.5, 5.0),
+        "max_holding_bars": (5, 150),
+        "min_correlation": (0.5, 0.95),
+        "orderflow_lookback": (5, 100),
+        "orderflow_threshold": (0.0, 0.75),
+        "rebalance_on_drift": (0.0, 0.2),
+        "max_adf_stat": (-4.0, -1.8),
+    }
+
+    def __init__(
+        self,
+        lookback: int = 60,
+        entry_zscore: float = 2.0,
+        exit_zscore: float = 0.5,
+        stop_zscore: float = 3.5,
+        max_holding_bars: int = 30,
+        min_correlation: float = 0.7,
+        orderflow_lookback: int = 20,
+        orderflow_threshold: float = 0.05,
+        rebalance_on_drift: float = 0.0,
+        max_adf_stat: float = -2.2,
+        use_dynamic_half_life: bool = True,
+        scale_in: bool = True,
+        estimator: str = "ols",
+        mode: str = "backtest",
+    ):
+        self.lookback = int(lookback)
+        self.entry_zscore = float(entry_zscore)
+        self.exit_zscore = float(exit_zscore)
+        self.stop_zscore = float(stop_zscore)
+        self.max_holding_bars = int(max_holding_bars)
+        self.min_correlation = float(min_correlation)
+        self.orderflow_lookback = int(orderflow_lookback)
+        self.orderflow_threshold = float(orderflow_threshold)
+        self.rebalance_on_drift = float(rebalance_on_drift)
+        self.max_adf_stat = float(max_adf_stat)
+        self.use_dynamic_half_life = bool(use_dynamic_half_life)
+        self.scale_in = bool(scale_in)
+        self.estimator = str(estimator).lower()
+        self.mode = mode
+
+    @property
+    def state(self) -> str:
+        return "BACKTEST_ONLY"
+
+    @property
+    def net_position(self) -> float:
+        return 0.0
+
+    def tick(self, price: float, features: dict) -> list:
+        raise NotImplementedError(
+            "PairStatArbitrageStrategy needs two aligned price series; use generate_pair_positions()."
+        )
+
+    def generate_signals(self, data: pd.DataFrame) -> pd.Series:
+        """Compatibility view: primary-leg positions only.
+
+        Backtests must call :meth:`generate_pair_positions` to account for
+        both legs and their transaction costs.
+        """
+        return self.generate_pair_positions(data)["primary_position"]
+
+    def generate_pair_positions(self, data: pd.DataFrame) -> pd.DataFrame:
+        required = {"close", "hedge_close", "volume", "hedge_volume"}
+        missing = required.difference(data.columns)
+        if missing:
+            raise ValueError(
+                "Pair stat-arbitrage requires aligned 'close' and 'hedge_close' columns "
+                f"(missing: {', '.join(sorted(missing))})."
+            )
+        if self.lookback < 20:
+            raise ValueError("lookback must be at least 20 bars.")
+        if not 0 <= self.exit_zscore < self.entry_zscore < self.stop_zscore:
+            raise ValueError("Require 0 <= exit_zscore < entry_zscore < stop_zscore.")
+        if self.orderflow_lookback < 2:
+            raise ValueError("orderflow_lookback must be at least 2 bars.")
+
+        prices = data[["close", "hedge_close"]].astype(float).replace([np.inf, -np.inf], np.nan)
+        valid = (prices["close"] > 0) & (prices["hedge_close"] > 0)
+        primary_log = np.log(prices["close"].where(valid))
+        hedge_log = np.log(prices["hedge_close"].where(valid))
+
+        if "macro_beta" in data.columns and "macro_alpha" in data.columns:
+            beta = data["macro_beta"].astype(float)
+            alpha = data["macro_alpha"].astype(float)
+            spread_mean = data.get("macro_spread_mean", pd.Series(0.0, index=data.index)).astype(float)
+            spread_std = data.get("macro_spread_std", pd.Series(1.0, index=data.index)).astype(float).replace(0, np.nan)
+            correlation = data.get("macro_correlation", pd.Series(1.0, index=data.index)).astype(float)
+            spread = primary_log - alpha - beta * hedge_log
+            zscore = (spread - spread_mean).div(spread_std)
+        elif self.estimator == "kalman":
+            k_alpha, k_beta, k_spread, k_std, k_z = KalmanPairEstimator().fit_series(
+                primary_log.values, hedge_log.values
+            )
+            beta = pd.Series(k_beta, index=data.index)
+            alpha = pd.Series(k_alpha, index=data.index)
+            spread = pd.Series(k_spread, index=data.index)
+            spread_std = pd.Series(k_std, index=data.index)
+            zscore = pd.Series(k_z, index=data.index)
+            correlation = primary_log.rolling(self.lookback, min_periods=self.lookback).corr(hedge_log)
+        else:
+            # beta is the rolling OLS slope of primary log-price on hedge log-price.
+            hedge_var = hedge_log.rolling(self.lookback, min_periods=self.lookback).var()
+            beta = primary_log.rolling(self.lookback, min_periods=self.lookback).cov(hedge_log).div(hedge_var)
+            alpha = primary_log.rolling(self.lookback, min_periods=self.lookback).mean() - beta * hedge_log.rolling(self.lookback, min_periods=self.lookback).mean()
+            spread = primary_log - alpha - beta * hedge_log
+            spread_mean = spread.rolling(self.lookback, min_periods=self.lookback).mean()
+            spread_std = spread.rolling(self.lookback, min_periods=self.lookback).std().replace(0, np.nan)
+            zscore = (spread - spread_mean).div(spread_std)
+            correlation = primary_log.rolling(self.lookback, min_periods=self.lookback).corr(hedge_log)
+
+        # Microstructure signed volume imbalance proxy
+        def signed_volume_imbalance(close_col: str, volume_col: str, prefix: str) -> pd.Series:
+            close = data[close_col].astype(float)
+            volume = data[volume_col].astype(float).clip(lower=0).fillna(0.0)
+            high = data.get(f"{prefix}high", close).astype(float)
+            low = data.get(f"{prefix}low", close).astype(float)
+            bar_range = (high - low).replace(0, np.nan)
+            close_location = ((2.0 * close - high - low) / bar_range).clip(-1.0, 1.0)
+            fallback_direction = np.sign(close.diff()).fillna(0.0)
+            signed_volume = volume * close_location.fillna(fallback_direction)
+            return signed_volume.rolling(
+                self.orderflow_lookback, min_periods=self.orderflow_lookback
+            ).sum().div(
+                volume.rolling(self.orderflow_lookback, min_periods=self.orderflow_lookback)
+                .sum().replace(0, np.nan)
+            )
+
+        primary_orderflow = signed_volume_imbalance("close", "volume", "")
+        hedge_orderflow = signed_volume_imbalance("hedge_close", "hedge_volume", "hedge_")
+        relative_orderflow = primary_orderflow - hedge_orderflow
+
+        macro_adf = data.get("macro_adf_stat", pd.Series(np.nan, index=data.index))
+        macro_hl = data.get("macro_half_life", pd.Series(np.nan, index=data.index))
+
+        primary_position = pd.Series(0.0, index=data.index)
+        hedge_position = pd.Series(0.0, index=data.index)
+        active_hedge_ratios = pd.Series(0.0, index=data.index)
+        signal_reasons = pd.Series("", index=data.index)
+        position = 0.0
+        active_beta = 0.0
+        bars_held = 0
+        trade_max_bars = self.max_holding_bars
+
+        scale_step = 0.6  # additional zscore required to scale into full size
+
+        for i in range(len(data)):
+            z = zscore.iloc[i]
+            hedge_ratio = beta.iloc[i]
+            corr = correlation.iloc[i]
+            flow = relative_orderflow.iloc[i]
+            ready = pd.notna(z) and pd.notna(hedge_ratio) and pd.notna(corr) and hedge_ratio > 0
+
+            # ADF stationarity check: reject entry if spread is non-stationary
+            adf_val = macro_adf.iloc[i] if i < len(macro_adf) else np.nan
+            is_stationary = (adf_val <= self.max_adf_stat) if pd.notna(adf_val) else True
+
+            # Dynamic half-life max holding duration
+            hl_val = macro_hl.iloc[i] if i < len(macro_hl) else np.nan
+
+            if abs(position) > 1e-6:
+                bars_held += 1
+                exit_trigger = None
+
+                if not ready:
+                    exit_trigger = "REGIME_INVALID"
+                elif abs(z) >= self.stop_zscore:
+                    exit_trigger = "STOP_LOSS"
+                elif bars_held >= trade_max_bars:
+                    exit_trigger = "HALF_LIFE_EXPIRED" if trade_max_bars != self.max_holding_bars else "MAX_HOLDING"
+                # Full target reversion: cross 0.0 line
+                elif (position > 0 and z >= 0.0) or (position < 0 and z <= 0.0):
+                    exit_trigger = "TARGET_REVERSION"
+
+                if exit_trigger is not None:
+                    position = 0.0
+                    bars_held = 0
+                    signal_reasons.iloc[i] = exit_trigger
+                    active_beta = 0.0
+                else:
+                    # Partial take-profit when reaching exit_zscore (e.g. 0.5)
+                    if self.scale_in and abs(position) > 0.55 and abs(z) <= self.exit_zscore:
+                        position = np.sign(position) * 0.5
+                        signal_reasons.iloc[i] = "PARTIAL_TP_50%"
+
+                    # Scale-in: add remaining 50% if divergence extends further
+                    elif self.scale_in and abs(position) <= 0.55:
+                        if position < 0 and z >= (self.entry_zscore + scale_step) and flow <= -self.orderflow_threshold:
+                            position = -1.0
+                            signal_reasons.iloc[i] = "SCALE_IN_SHORT_L2"
+                        elif position > 0 and z <= -(self.entry_zscore + scale_step) and flow >= self.orderflow_threshold:
+                            position = 1.0
+                            signal_reasons.iloc[i] = "SCALE_IN_LONG_L2"
+
+                    # Hedge ratio drift rebalancing
+                    if self.rebalance_on_drift > 0 and ready and active_beta > 0:
+                        drift = abs(hedge_ratio - active_beta) / active_beta
+                        if drift >= self.rebalance_on_drift:
+                            active_beta = hedge_ratio
+                            signal_reasons.iloc[i] = f"DRIFT_REBALANCE({drift:.1%})"
+
+            elif ready and corr >= self.min_correlation and pd.notna(flow) and is_stationary:
+                # Calculate trade max bars from half-life if available
+                if self.use_dynamic_half_life and pd.notna(hl_val) and hl_val > 1:
+                    trade_max_bars = int(np.clip(2.5 * hl_val, 12, self.max_holding_bars))
+                else:
+                    trade_max_bars = self.max_holding_bars
+
+                # Level 1 Entry
+                init_size = 0.5 if self.scale_in else 1.0
+                if z >= self.entry_zscore and flow <= -self.orderflow_threshold:
+                    position = -init_size  # short rich primary, long hedge
+                    active_beta = hedge_ratio
+                    bars_held = 0
+                    signal_reasons.iloc[i] = "ENTRY_SHORT_L1" if self.scale_in else "ENTRY_SHORT_SPREAD"
+                elif z <= -self.entry_zscore and flow >= self.orderflow_threshold:
+                    position = init_size   # long cheap primary, short hedge
+                    active_beta = hedge_ratio
+                    bars_held = 0
+                    signal_reasons.iloc[i] = "ENTRY_LONG_L1" if self.scale_in else "ENTRY_LONG_SPREAD"
+
+            primary_position.iloc[i] = position
+            hedge_position.iloc[i] = -position * active_beta if abs(position) > 1e-6 and ready else 0.0
+            active_hedge_ratios.iloc[i] = active_beta
+
+        return pd.DataFrame(
+            {
+                "primary_position": primary_position,
+                "hedge_position": hedge_position,
+                "hedge_ratio": beta,
+                "active_hedge_ratio": active_hedge_ratios,
+                "spread_zscore": zscore,
+                "rolling_correlation": correlation,
+                "primary_orderflow_proxy": primary_orderflow,
+                "hedge_orderflow_proxy": hedge_orderflow,
+                "relative_orderflow_proxy": relative_orderflow,
+                "signal_reason": signal_reasons,
+            },
+            index=data.index,
+        )
+
+
 USER_STRATEGY_REGISTRY = {
     "dual_hedge": DualHedgeStrategy,
     "mean_reversion": MeanReversionStrategy,
@@ -730,4 +992,5 @@ USER_STRATEGY_REGISTRY = {
 # cannot accidentally activate direct MT5 order execution.
 BACKTEST_STRATEGY_REGISTRY = {
     "volume_exhaustion_reversal": VolumeExhaustionReversalStrategy,
+    "pair_stat_arbitrage": PairStatArbitrageStrategy,
 }

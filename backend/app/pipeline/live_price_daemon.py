@@ -109,35 +109,40 @@ def process_new_ticks():
 
 def listen_to_price_updates():
     """Listens to the PostgreSQL price_updates channel and fires process_new_ticks() instantly."""
-    conn = get_db_connection()._conn
-    conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-    cur = conn.cursor()
-    cur.execute("LISTEN price_updates;")
     print("[LIVE DAEMON] Initialized Python In-Memory Sliding Window Cache (100min capacity).")
-    print("[LIVE DAEMON] Listening for MT5 price_updates...")
 
-    try:
-        while _running:
-            # 1-second timeout polling so exit signals are processed promptly
-            r, _, _ = select.select([conn], [], [], 1)
+    while _running:
+        try:
+            conn = get_db_connection()._conn
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            cur = conn.cursor()
+            cur.execute("LISTEN price_updates;")
+            print("[LIVE DAEMON] Listening for MT5 price_updates...")
+
+            while _running:
+                # 1-second timeout polling so exit signals are processed promptly
+                r, _, _ = select.select([conn], [], [], 1)
+                if not _running:
+                    break
+                if r:
+                    conn.poll()
+                    while conn.notifies and _running:
+                        conn.notifies.pop(0)
+                        process_new_ticks()
+        except (KeyboardInterrupt, SystemExit):
+            break
+        except Exception as e:
             if not _running:
                 break
-            if r:
-                conn.poll()
-                while conn.notifies and _running:
-                    conn.notifies.pop(0)
-                    process_new_ticks()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    except Exception as e:
-        print(f"[LIVE DAEMON ERROR] {e}")
-    finally:
-        print("[LIVE DAEMON] Closing database listener connection...")
-        try:
-            cur.close()
-            conn.close()
-        except Exception:
-            pass
+            print(f"[LIVE DAEMON] Database connection offline or failed ({e}). Retrying in 10s...")
+            import time
+            time.sleep(10)
+        finally:
+            try:
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     listen_to_price_updates()

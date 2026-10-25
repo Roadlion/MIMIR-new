@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     mode: str = Field(default="standalone", alias="MIMIR_MODE")
     mimir_disable_gpu: bool = Field(default=True, alias="MIMIR_DISABLE_GPU")
     mimir_gamer_mode: bool = Field(default=False, alias="MIMIR_GAMER_MODE")
+    admin_key: str = Field(default="mimir-quantum-market-reactor-secret-key-2025", alias="ADMIN_KEY")
     
     class Config:
         env_file = ".env"

@@ -1,7 +1,13 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-from ddgs import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        DDGS = None
 from .newsapi_scraper import fetch_newsapi_articles
 from ..config import get_settings
 
@@ -23,6 +29,8 @@ def fetch_page_content(url, max_chars=3000):
 
 def search_ddg(query, num_results=3):
     results = []
+    if DDGS is None:
+        return results
     try:
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=num_results):

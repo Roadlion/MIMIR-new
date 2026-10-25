@@ -15,8 +15,12 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 :: --- 3. Pre-Startup Cleanup: Purge any lingering zombie processes ---
-".venv\Scripts\python.exe" scripts\clean_shutdown.py --quiet >nul 2>&1
-".venv\Scripts\python.exe" scripts\ensure_db_integrity.py
+if exist "scripts\clean_shutdown.py" (
+    ".venv\Scripts\python.exe" scripts\clean_shutdown.py --quiet >nul 2>&1
+)
+if exist "scripts\ensure_db_integrity.py" (
+    ".venv\Scripts\python.exe" scripts\ensure_db_integrity.py
+)
 
 :: --- 4. Force Zero-VRAM / Gamer Mode Environment Flags ---
 set MIMIR_DISABLE_GPU=1
@@ -39,11 +43,15 @@ echo ===================================================
 echo.
 
 :: --- 5. Start Background Daemons with BELOW_NORMAL Priority Minimized ---
-echo [1/2] Starting MT5 Price Fetcher (low priority, minimized)...
-start "MIMIR - MT5 Price Fetcher" /belownormal /min .venv\Scripts\python.exe scripts\mt5_price_fetcher.py
+if exist "scripts\mt5_price_fetcher.py" (
+    echo [1/2] Starting MT5 Price Fetcher (low priority, minimized)...
+    start "MIMIR - MT5 Price Fetcher" /belownormal /min .venv\Scripts\python.exe scripts\mt5_price_fetcher.py
+)
 
-echo [2/2] Starting Live Price & Profit Ratchet Daemon (low priority, minimized)...
-start "MIMIR - Live Price Daemon" /belownormal /min .venv\Scripts\python.exe backend\app\pipeline\live_price_daemon.py
+if exist "backend\app\pipeline\live_price_daemon.py" (
+    echo [2/2] Starting Live Price & Profit Ratchet Daemon (low priority, minimized)...
+    start "MIMIR - Live Price Daemon" /belownormal /min .venv\Scripts\python.exe backend\app\pipeline\live_price_daemon.py
+)
 
 :: --- 6. Start Uvicorn Server in Headless Production Mode (NO --reload, below-normal priority) ---
 echo Starting backend server (Listening on 0.0.0.0:8000)...

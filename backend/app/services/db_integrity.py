@@ -130,12 +130,28 @@ def verify_table(table_name: str, schema: str = "yggdrasil", auto_repair: bool =
         return True
 
 
+def is_database_reachable() -> bool:
+    """Quick 2-second pre-check to see if the PostgreSQL server is reachable."""
+    try:
+        conn = psycopg2.connect(
+            host=settings.db_host,
+            port=settings.db_port,
+            dbname=settings.db_name,
+            user=settings.db_user,
+            password=settings.db_password,
+            connect_timeout=2,
+        )
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def ensure_database_integrity(tables=None, auto_repair=True) -> dict:
     """
     Scans specified (or all core) tables.
     Returns status report. Auto-repairs any damaged tables encountered.
     """
-    target_tables = tables or CORE_TABLES
     report = {
         "checked": 0,
         "healthy": [],
@@ -143,6 +159,11 @@ def ensure_database_integrity(tables=None, auto_repair=True) -> dict:
         "failed": []
     }
 
+    if not is_database_reachable():
+        logger.info(f"[DB_INTEGRITY] Database at {settings.db_host}:{settings.db_port} is not reachable. Skipping integrity check.")
+        return report
+
+    target_tables = tables or CORE_TABLES
     for tbl in target_tables:
         report["checked"] += 1
         ok = verify_table(tbl, schema=settings.mimir_schema, auto_repair=auto_repair)

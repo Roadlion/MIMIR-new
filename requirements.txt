@@ -1,0 +1,24 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+psycopg2-binary
+python-dotenv
+requests
+urllib3
+certifi
+redis
+pandas
+numpy
+scipy
+scikit-learn
+jinja2
+yfinance
+curl_cffi
+beautifulsoup4
+lxml
+psutil
+python-docx
+feedparser
+edge-tts
+MetaTrader5; sys_platform == 'win32'

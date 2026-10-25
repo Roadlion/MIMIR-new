@@ -15,11 +15,10 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-:: --- Pre-Startup Cleanup: Purge any lingering zombie processes from previous crashes ---
-".venv\Scripts\python.exe" scripts\clean_shutdown.py --quiet >nul 2>&1
-
-:: --- Pre-Startup DB Integrity Check: Auto-repair any damaged blocks before launch ---
-".venv\Scripts\python.exe" scripts\ensure_db_integrity.py
+:: --- 2b. Auto-Install Missing Libraries & Ensure .env Exists ---
+if exist "scripts\bootstrap_env.py" (
+    ".venv\Scripts\python.exe" scripts\bootstrap_env.py
+)
 
 :: --- 3. Resolve Local Network IP for LAN / Mobile Devices ---
 for /f "tokens=*" %%i in ('.venv\Scripts\python.exe -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8',80)); print(s.getsockname()[0]); s.close()" 2^>nul') do set LOCAL_IP=%%i
@@ -30,53 +29,39 @@ echo ===================================================
 echo  Local Access:          http://127.0.0.1:8000
 if defined LOCAL_IP (
     echo  LAN / Network Access:   http://%LOCAL_IP%:8000
-) else (
-    echo  LAN / Network Access:   http://^<YOUR_LOCAL_IP^>:8000
 )
 echo ===================================================
-echo  HOW TO TURN OFF MIMIR SAFELY:
-echo   1. Click the red [OFF] button in the Web UI, OR
-echo   2. Double-click 'stop.bat' or Desktop 'Turn Off MIMIR', OR
-echo   3. Press Ctrl+C in this console window.
-echo  * Avoid manually closing windows with 'X' to prevent PC lag *
+echo  Default Logins:
+echo   Username: admin
+echo   Password: admin (or any password in offline mode)
 echo ===================================================
 echo.
 
-:: --- 4. Cloudflare Tunnel Detection & PATH Setup ---
-set "PATH=%PATH%;C:\Program Files (x86)\cloudflared;C:\Program Files\cloudflared;%LocalAppData%\Microsoft\WinGet\Links"
-
-where cloudflared >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [Cloudflare] 'cloudflared' was not found in PATH.
-    echo [Cloudflare] Installing Cloudflare Tunnel automatically via winget...
-    winget install Cloudflare.cloudflared --accept-package-agreements --accept-source-agreements
+:: --- 4. Start Background Daemons Minimized (if present) ---
+if exist "scripts\mt5_price_fetcher.py" (
+    echo [*] Starting MT5 Price Fetcher [minimized]...
+    start "MIMIR - MT5 Price Fetcher" /min .venv\Scripts\python.exe scripts\mt5_price_fetcher.py
 )
 
-where cloudflared >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    echo [Cloudflare] Starting Cloudflare HTTPS Tunnel...
-    start "MIMIR Cloudflare HTTPS Tunnel" cmd /c "echo ================================================== & echo  MIMIR PUBLIC REMOTE HTTPS TUNNEL & echo ================================================== & echo Copy the https://xxxx.trycloudflare.com URL below to share with friends! & echo. & cloudflared tunnel --url http://localhost:8000"
-) else (
-    echo [Cloudflare WARNING] Unable to launch cloudflared automatically. You can install it via 'winget install Cloudflare.cloudflared'.
+if exist "backend\app\pipeline\live_price_daemon.py" (
+    echo [*] Starting Live Price Daemon [minimized]...
+    start "MIMIR - Live Price Daemon" /min .venv\Scripts\python.exe backend\app\pipeline\live_price_daemon.py
 )
 
-echo.
-:: --- 5. Start Background Daemons in Dedicated Minimized Windows ---
-echo [1/3] Starting MT5 Live Price Fetcher (low priority, minimized)...
-start "MIMIR - MT5 Price Fetcher" /belownormal /min .venv\Scripts\python.exe scripts\mt5_price_fetcher.py
-
-echo [2/3] Starting Live Price & Profit Ratchet Daemon (low priority, minimized)...
-start "MIMIR - Live Price Daemon" /belownormal /min .venv\Scripts\python.exe backend\app\pipeline\live_price_daemon.py
-
-:: --- 6. Open Browser After Server Initializes ---
-echo [3/3] Queueing browser launch for http://127.0.0.1:8000...
-start "" /B cmd /c "timeout /t 3 /nobreak >nul & start http://127.0.0.1:8000"
+:: --- 5. Open Browser After Server Initializes ---
+echo [*] Opening browser to http://127.0.0.1:8000...
+start "" cmd /c "ping 127.0.0.1 -n 4 >nul & start http://127.0.0.1:8000"
 
 echo.
-echo Starting backend uvicorn server (Listening on 0.0.0.0:8000)...
-.venv\Scripts\uvicorn backend.app.main:app --reload --reload-dir backend --host 0.0.0.0 --port 8000
-
-:: --- 7. Full Safe Cleanup on Server Exit ---
+echo Starting MIMIR backend server on http://0.0.0.0:8000 ...
+echo (Keep this window open while using MIMIR. Press Ctrl+C to stop.)
 echo.
-echo [MIMIR] Server stopped. Executing full safe shutdown of all background daemons...
+".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+
+echo.
+echo ===================================================
+echo [MIMIR] Server stopped. Executing safe daemon shutdown...
+echo ===================================================
 call "%~dp0stop.bat"
+pause
+

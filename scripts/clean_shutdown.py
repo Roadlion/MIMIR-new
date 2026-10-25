@@ -40,7 +40,7 @@ def main():
     if not quiet:
         print("[3/4] Terminating MIMIR daemons, pipelines, and worker processes...")
 
-    report = stop_all_processes(skip_current=False)
+    report = stop_all_processes(skip_current=False, include_launcher=not quiet)
 
     if not quiet:
         tracked_count = len(report.get("tracked_pids_stopped", []))
@@ -49,7 +49,7 @@ def main():
         print(f"  - Lingering / orphan processes purged: {orphan_count}")
         print("[4/4] Closing any remaining MIMIR console windows...")
 
-    close_mimir_console_windows()
+    close_mimir_console_windows(include_launcher=not quiet)
 
     if not quiet:
         print("\n===================================================")

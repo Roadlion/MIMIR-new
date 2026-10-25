@@ -43,6 +43,7 @@ build/
 .DS_Store
 Thumbs.db
 ehthumbs.db
+.mimir_pids.json
 
 # AI / Tooling
 .claude/
@@ -61,5 +62,3 @@ frontend/static/img/logos/
 # Scratch dumps & debug logs
 scratch_*.csv
 *.log
-
-
