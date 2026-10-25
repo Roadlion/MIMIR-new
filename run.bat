@@ -75,22 +75,22 @@ if %ERRORLEVEL% EQU 0 (
 echo.
 :: --- 5. Start Background Daemons in Dedicated Minimized Windows ---
 if exist "scripts\mt5_price_fetcher.py" (
-    echo [1/3] Starting MT5 Live Price Fetcher (minimized)...
+    echo [1/3] Starting MT5 Live Price Fetcher [minimized]...
     start "MIMIR - MT5 Price Fetcher" /min .venv\Scripts\python.exe scripts\mt5_price_fetcher.py
 )
 
 if exist "backend\app\pipeline\live_price_daemon.py" (
-    echo [2/3] Starting Live Price ^& Profit Ratchet Daemon (minimized)...
+    echo [2/3] Starting Live Price and Profit Ratchet Daemon [minimized]...
     start "MIMIR - Live Price Daemon" /min .venv\Scripts\python.exe backend\app\pipeline\live_price_daemon.py
 )
 
 :: --- 6. Open Browser After Server Initializes ---
 echo [3/3] Queueing browser launch for http://127.0.0.1:8000...
-start "" /B cmd /c "timeout /t 3 /nobreak >nul & start http://127.0.0.1:8000"
+start "" /B cmd /c "ping 127.0.0.1 -n 4 >nul & start http://127.0.0.1:8000"
 
 echo.
 echo Starting backend uvicorn server (Listening on 0.0.0.0:8000)...
-".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --reload --reload-dir backend --host 0.0.0.0 --port 8000
+".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 
 :: --- 7. Full Safe Cleanup on Server Exit ---
 echo.
@@ -98,3 +98,4 @@ echo [MIMIR] Server stopped. Executing full safe shutdown of all background daem
 if exist "%~dp0stop.bat" (
     call "%~dp0stop.bat"
 )
+pause

@@ -209,11 +209,12 @@ def find_mimir_processes(exclude_pids: Optional[set] = None) -> List[psutil.Proc
     return found
 
 
-def close_mimir_console_windows():
+def close_mimir_console_windows(include_launcher: bool = True):
     """Safely closes ONLY cmd.exe console windows matching MIMIR specific titles."""
     if sys.platform != "win32":
         return
-    for title in MIMIR_CONSOLE_TITLES:
+    titles = MIMIR_CONSOLE_TITLES if include_launcher else [t for t in MIMIR_CONSOLE_TITLES if 'Server Launcher' not in t]
+    for title in titles:
         try:
             cmd = f'taskkill /FI "IMAGENAME eq cmd.exe" /FI "WINDOWTITLE eq {title}" /F >nul 2>&1'
             subprocess.run(cmd, shell=True)
