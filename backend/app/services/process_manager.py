@@ -222,7 +222,7 @@ def close_mimir_console_windows(include_launcher: bool = True):
             pass
 
 
-def stop_all_processes(skip_current: bool = True) -> Dict[str, Any]:
+def stop_all_processes(skip_current: bool = True, include_launcher: bool = True) -> Dict[str, Any]:
     """
     Comprehensive clean termination of all MIMIR daemons, processes, and tunnels.
     Returns status report.
@@ -288,7 +288,7 @@ def stop_all_processes(skip_current: bool = True) -> Dict[str, Any]:
             pass
 
     # 5. Targeted Windows console cleanup (ONLY cmd.exe with MIMIR titles)
-    close_mimir_console_windows()
+    close_mimir_console_windows(include_launcher=include_launcher)
     report["windows_closed"] = True
 
     clear_pid_file()

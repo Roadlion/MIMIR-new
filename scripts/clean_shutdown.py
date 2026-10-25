@@ -40,7 +40,7 @@ def main():
     if not quiet:
         print("[3/4] Terminating MIMIR daemons, pipelines, and worker processes...")
 
-    report = stop_all_processes(skip_current=False)
+    report = stop_all_processes(skip_current=False, include_launcher=not quiet)
 
     if not quiet:
         tracked_count = len(report.get("tracked_pids_stopped", []))
