@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 PID_FILE = PROJECT_ROOT / ".mimir_pids.json"
 
-# Exact console window titles used by MIMIR launchers
+# Exact console window titles used by MIMIR launchers & daemons
 MIMIR_CONSOLE_TITLES = [
     "MIMIR Server Launcher*",
     "MIMIR Cloudflare HTTPS Tunnel*",
@@ -61,39 +61,46 @@ def save_pids(pids: Dict[str, int]) -> None:
         with open(PID_FILE, "w", encoding="utf-8") as f:
             json.dump(pids, f, indent=2)
     except Exception as e:
-        logger.warning(f"Failed to write PID file: {e}")
+        logger.warning(f"Failed to save PID file: {e}")
 
 
 def record_pid(name: str, pid: int) -> None:
+    """Records a running daemon PID to the tracking file."""
     pids = load_pids()
     pids[name] = pid
     save_pids(pids)
+    logger.info(f"[PROCESS_MGR] Registered {name} with PID {pid}")
+
+
+def remove_pid(name: str) -> None:
+    """Removes a daemon PID from the tracking file."""
+    pids = load_pids()
+    if name in pids:
+        del pids[name]
+        save_pids(pids)
+        logger.info(f"[PROCESS_MGR] Deregistered {name}")
 
 
 def clear_pid_file() -> None:
-    if PID_FILE.exists():
-        try:
+    """Cleans up the PID file on complete shutdown."""
+    try:
+        if PID_FILE.exists():
             PID_FILE.unlink()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 
 def get_current_ancestor_pids() -> Set[int]:
-    """Returns the set of PIDs containing the current process and all its ancestors."""
-    pids = set()
+    """Returns a set containing current process PID and all of its ancestor PIDs."""
+    ancestors = set()
     try:
-        curr = psutil.Process(os.getpid())
-        pids.add(curr.pid)
-        p = curr.parent()
+        p = psutil.Process(os.getpid())
         while p:
-            pids.add(p.pid)
-            try:
-                p = p.parent()
-            except Exception:
-                break
+            ancestors.add(p.pid)
+            p = p.parent()
     except Exception:
-        pids.add(os.getpid())
-    return pids
+        pass
+    return ancestors
 
 
 def disconnect_mt5():
@@ -300,33 +307,18 @@ def get_system_status() -> Dict[str, Any]:
     tracked = load_pids()
     mimir_procs = find_mimir_processes()
 
-    server_running = False
-    mt5_running = False
-    live_daemon_running = False
-    cloudflared_running = False
-
-    for p in mimir_procs + ([psutil.Process(os.getpid())] if psutil.pid_exists(os.getpid()) else []):
-        try:
-            cmd = " ".join(p.cmdline()).lower()
-            name = p.name().lower()
-            if "backend.app.main:app" in cmd or "uvicorn" in cmd:
-                server_running = True
-            if "mt5_price_fetcher.py" in cmd:
-                mt5_running = True
-            if "live_price_daemon.py" in cmd:
-                live_daemon_running = True
-            if "cloudflared" in name or "cloudflared" in cmd:
-                cloudflared_running = True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+    running_daemons = {}
+    for name, pid in tracked.items():
+        running_daemons[name] = {
+            "pid": pid,
+            "running": psutil.pid_exists(pid)
+        }
 
     return {
-        "server": server_running,
-        "mt5_fetcher": mt5_running,
-        "live_price_daemon": live_daemon_running,
-        "cloudflared": cloudflared_running,
-        "total_active_processes": len(mimir_procs) + (1 if server_running else 0),
-        "tracked_pids": tracked
+        "status": "online" if running_daemons else "offline",
+        "tracked_daemons": running_daemons,
+        "total_active_mimir_processes": len(mimir_procs),
+        "timestamp": time.time()
     }
 
 
@@ -354,31 +346,39 @@ def schedule_server_exit(delay: float = 1.0):
     t.start()
 
 
-def apply_low_process_priority(pid: Optional[int] = None):
+def apply_low_process_priority(pid: Optional[int] = None, force: bool = False):
     """
-    Sets the target process (or current process) to BELOW_NORMAL_PRIORITY_CLASS on Windows.
-    This ensures that games running in the foreground receive 100% of CPU time,
-    preventing micro-stutters and 1% low frame drops.
+    Sets the target process (or current process) to BELOW_NORMAL_PRIORITY_CLASS
+    ONLY when explicit Gamer Mode is active (MIMIR_GAMER_MODE=1) or force=True.
+    In normal web dashboard mode, preserves standard OS priority for maximum responsiveness.
     """
     try:
+        gamer_mode = os.environ.get("MIMIR_GAMER_MODE") == "1"
         proc = psutil.Process(pid or os.getpid())
         if sys.platform == "win32":
-            proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-            logger.info(f"[PROCESS_MGR] Process {proc.pid} priority set to BELOW_NORMAL (Gaming Mode Optimized).")
+            if gamer_mode or force:
+                proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                logger.info(f"[PROCESS_MGR] Process {proc.pid} priority set to BELOW_NORMAL (Gaming Mode Active).")
+            else:
+                proc.nice(psutil.NORMAL_PRIORITY_CLASS)
+                logger.info(f"[PROCESS_MGR] Process {proc.pid} priority set to NORMAL (Maximum Responsiveness).")
         else:
-            proc.nice(10)
+            proc.nice(10 if (gamer_mode or force) else 0)
     except Exception as e:
-        logger.warning(f"[PROCESS_MGR] Could not set below-normal process priority: {e}")
+        logger.debug(f"[PROCESS_MGR] Process priority note: {e}")
 
 
-def trim_process_memory():
+def trim_process_memory(force_empty_working_set: bool = False):
     """
-    Trims the active working set of the current process back to the Windows OS kernel.
-    Calls garbage collection and Windows EmptyWorkingSet API to immediately free unused RAM.
+    Collects unreferenced Python memory via gc.collect().
+    Avoids aggressive Windows EmptyWorkingSet disk paging in normal mode to prevent
+    painful hard page faults, SSD churn, and web UI micro-stutters.
     """
     import gc
     gc.collect()
-    if sys.platform == "win32":
+
+    gamer_mode = os.environ.get("MIMIR_GAMER_MODE") == "1"
+    if sys.platform == "win32" and (gamer_mode or force_empty_working_set):
         try:
             import ctypes
             ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())

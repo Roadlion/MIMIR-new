@@ -1,4 +1,4 @@
-# bong_strats/registry.py
+# backend/app/analytics/user_strategies/registry.py
 """
 Dynamic Strategy Auto-Discovery and Registry System for MIMIR.
 
@@ -8,7 +8,7 @@ placed anywhere in:
   - `bong_strats/strategies/`
   - `backend/app/analytics/user_strategies/`
 
-No manual edits to static dictionaries or monolithic files are ever required.
+Supports automatic hot-reloading when strategy files are modified on disk.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List, Tuple, Type
 
 from .base_strategy import Strategy, StaticStrategy
 from .quick_strategy import QuickStrategy
@@ -69,18 +69,38 @@ _EXCLUDED_FILE_NAMES = {
     "pair_screener.py",
 }
 
+_MODULE_MTIMES: Dict[str, float] = {}
+
 
 def _load_module_from_path(file_path: Path):
-    """Dynamically import a python module from file path."""
+    """
+    Dynamically imports or reloads a Python module from file path.
+    Detects if the file timestamp changed on disk and reloads it automatically.
+    """
     mod_name = f"bong_dynamic_{file_path.stem}"
+    try:
+        mtime = file_path.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+
     if mod_name in sys.modules:
-        return sys.modules[mod_name]
+        if _MODULE_MTIMES.get(mod_name) == mtime:
+            return sys.modules[mod_name]
+        try:
+            # File on disk changed! Reload in-memory so edits take effect immediately
+            mod = importlib.reload(sys.modules[mod_name])
+            _MODULE_MTIMES[mod_name] = mtime
+            return mod
+        except Exception:
+            sys.modules.pop(mod_name, None)
+
     try:
         spec = importlib.util.spec_from_file_location(mod_name, str(file_path))
         if spec and spec.loader:
             module = importlib.util.module_from_spec(spec)
             sys.modules[mod_name] = module
             spec.loader.exec_module(module)
+            _MODULE_MTIMES[mod_name] = mtime
             return module
     except Exception as exc:
         print(f"[STRATEGY REGISTRY WARNING] Failed to load strategy file {file_path.name}: {exc}")
@@ -95,10 +115,10 @@ def discover_strategies() -> Tuple[Dict[str, Type[Strategy]], Dict[str, Type[Str
     user_strats: Dict[str, Type[Strategy]] = dict(_BUILTIN_USER_STRATEGIES)
     backtest_strats: Dict[str, Type[Strategy]] = dict(_BUILTIN_BACKTEST_STRATEGIES)
 
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
     scan_dirs = [
-        Path(__file__).resolve().parent,                       # bong_strats/
-        Path(__file__).resolve().parent / "strategies",        # bong_strats/strategies/
+        project_root / "bong_strats",
+        project_root / "bong_strats" / "strategies",
         project_root / "backend" / "app" / "analytics" / "user_strategies",
     ]
 
@@ -142,7 +162,7 @@ FULL_STRATEGY_REGISTRY = {**USER_STRATEGY_REGISTRY, **BACKTEST_STRATEGY_REGISTRY
 
 
 def reload_registries():
-    """Forces rescanning of strategy directories."""
+    """Forces rescanning of strategy directories and reloads modified modules."""
     global USER_STRATEGY_REGISTRY, BACKTEST_STRATEGY_REGISTRY, FULL_STRATEGY_REGISTRY
     USER_STRATEGY_REGISTRY, BACKTEST_STRATEGY_REGISTRY = discover_strategies()
     FULL_STRATEGY_REGISTRY = {**USER_STRATEGY_REGISTRY, **BACKTEST_STRATEGY_REGISTRY}
