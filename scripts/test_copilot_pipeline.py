@@ -172,7 +172,7 @@ def run_tests():
         assert buy_res["remaining_dry_powder"] == expected_remaining_powder, "Dry powder not deducted correctly"
 
         user1_post_state = get_user_portfolio_state(1, conn=conn)
-        assert len(user1_post_state["open_positions"]) == 1, "Position not recorded in open positions"
+        assert len(user1_post_state["open_positions"]) == len(user1_pre_state["open_positions"]) + 1, "Position not added to open positions"
         assert user1_post_state["dry_powder"] == expected_remaining_powder
         print(f"  ✅ Executed BUY: 4 shares of LMT @ $550.00 (Cost: $2,200.00)")
         print(f"  ✅ Dry powder accurately reduced: ${initial_powder:,.2f} ➔ ${user1_post_state['dry_powder']:,.2f}")
@@ -216,7 +216,7 @@ def run_tests():
         assert sell_res["new_dry_powder"] == expected_final_powder, "Restored dry powder mismatch"
 
         user1_final_state = get_user_portfolio_state(1, conn=conn)
-        assert len(user1_final_state["open_positions"]) == 0, "Closed position should no longer be open"
+        assert len(user1_final_state["open_positions"]) == len(user1_pre_state["open_positions"]), "Closed position should no longer be open"
         assert user1_final_state["dry_powder"] == expected_final_powder
         print(f"  ✅ Executed SELL: 4 shares of LMT @ ${sell_p:.2f}")
         print(f"  ✅ Realized P&L: +${sell_res['realized_pnl']:,.2f} (+{sell_res['return_pct']:.1f}%)")

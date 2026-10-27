@@ -60,6 +60,8 @@ echo.
 
 echo.
 echo ===================================================
-echo [MIMIR] Server stopped.
+echo [MIMIR] Server stopped. Executing safe daemon shutdown...
 echo ===================================================
+call "%~dp0stop.bat"
 pause
+

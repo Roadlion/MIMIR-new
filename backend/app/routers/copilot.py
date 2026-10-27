@@ -69,19 +69,26 @@ def get_my_copilot_config(request: Request):
             if not u:
                 raise HTTPException(status_code=404, detail="User not found")
 
+            state = get_user_portfolio_state(user_id, conn=conn)
+            holdings_val = float(state.get("invested_value") or 0.0)
+            dry_powder = float(u[5] or 0.0)
+            total_cap = round(holdings_val + dry_powder, 2)
+
             u_dict = {
                 "id": u[0],
                 "username": u[1],
                 "discord_id": u[2] or "",
                 "discord_webhook_trades": u[3] or "",
-                "total_budget": float(u[4] or 0.0),
-                "dry_powder": float(u[5] or 0.0),
+                "total_budget": total_cap,
+                "dry_powder": dry_powder,
+                "holdings_value": holdings_val,
+                "holdings_count": len(state.get("open_positions", [])),
                 "risk_per_trade_pct": float(u[6] or 1.0),
                 "max_position_pct": float(u[7] or 10.0),
                 "max_sector_pct": float(u[8] or 25.0),
-                "is_copilot_active": bool(u[9])
+                "is_copilot_active": bool(u[9]),
+                "portfolio_summary": state
             }
-            u_dict["portfolio_summary"] = get_user_portfolio_state(user_id, conn=conn)
             return {"status": "success", "data": u_dict}
 
 
@@ -90,6 +97,10 @@ def update_my_copilot_config(payload: MyConfigUpdate, request: Request):
     """Updates Co-Pilot configuration directly from the Web UI."""
     user_id = _resolve_user_id(request, payload.user_id)
     with get_db_connection() as conn:
+        # 1. Fetch current live holdings value from actual logged portfolio
+        state = get_user_portfolio_state(user_id, conn=conn)
+        holdings_val = float(state.get("invested_value") or 0.0)
+
         with conn.cursor() as cur:
             updates = []
             values = []
@@ -99,12 +110,18 @@ def update_my_copilot_config(payload: MyConfigUpdate, request: Request):
             if payload.discord_webhook_trades is not None:
                 updates.append("discord_webhook_trades = %s")
                 values.append(payload.discord_webhook_trades.strip())
-            if payload.total_budget is not None:
-                updates.append("total_budget = %s")
-                values.append(payload.total_budget)
+            
+            # If dry_powder is updated, total_budget is automatically (holdings + dry_powder)
             if payload.dry_powder is not None:
                 updates.append("dry_powder = %s")
                 values.append(payload.dry_powder)
+                computed_budget = round(holdings_val + payload.dry_powder, 2)
+                updates.append("total_budget = %s")
+                values.append(computed_budget)
+            elif payload.total_budget is not None:
+                updates.append("total_budget = %s")
+                values.append(payload.total_budget)
+
             if payload.risk_per_trade_pct is not None:
                 updates.append("risk_per_trade_pct = %s")
                 values.append(payload.risk_per_trade_pct)
