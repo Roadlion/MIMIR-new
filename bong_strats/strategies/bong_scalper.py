@@ -34,6 +34,21 @@ class BongScalperStrategy(StaticStrategy):
     def net_position(self) -> float:
         return self._pos
 
+    def tick(self, price: float, features: dict) -> list:
+        # Live tick execution state machine
+        actions = []
+        rsi = features.get("rsi", 50.0)
+        z = features.get("zscore", 0.0)
+        if self._pos == 0.0 and rsi < 30:
+            self._pos = 1.0
+            self._state = "LONG"
+            actions.append("OPEN_LONG")
+        elif self._pos > 0.0 and rsi > 70:
+            self._pos = 0.0
+            self._state = "FLAT"
+            actions.append("CLOSE_LONG")
+        return actions
+
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
         if len(data) < self.slow_ema:
             return pd.Series(0.0, index=data.index)
