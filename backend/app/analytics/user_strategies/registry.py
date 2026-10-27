@@ -115,7 +115,12 @@ def discover_strategies() -> Tuple[Dict[str, Type[Strategy]], Dict[str, Type[Str
     user_strats: Dict[str, Type[Strategy]] = dict(_BUILTIN_USER_STRATEGIES)
     backtest_strats: Dict[str, Type[Strategy]] = dict(_BUILTIN_BACKTEST_STRATEGIES)
 
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    curr = Path(__file__).resolve().parent
+    while curr.parent != curr:
+        if (curr / "run.bat").exists() or (curr / ".git").exists() or (curr / "bong_strats").exists():
+            break
+        curr = curr.parent
+    project_root = curr
     scan_dirs = [
         project_root / "bong_strats",
         project_root / "bong_strats" / "strategies",

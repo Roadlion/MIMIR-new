@@ -323,3 +323,48 @@ def api_export_paper_trades(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+
+
+# --- Strategy Orchestrator Endpoints ---
+class StrategyActionPayload(BaseModel):
+    strategy_id: str
+
+class StrategyTogglePayload(BaseModel):
+    strategy_id: str
+    is_enabled: bool
+
+@router.get("/strategies")
+def api_get_strategies():
+    """Returns the full strategy catalog and currently active strategies."""
+    from ..analytics.strategy_orchestrator import get_strategy_catalog
+    try:
+        return get_strategy_catalog()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading strategies: {str(e)}")
+
+@router.post("/strategies/add")
+def api_add_strategy(payload: StrategyActionPayload):
+    """Adds a strategy to the active running list."""
+    from ..analytics.strategy_orchestrator import add_active_strategy
+    try:
+        return add_active_strategy(payload.strategy_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding strategy: {str(e)}")
+
+@router.post("/strategies/remove")
+def api_remove_strategy(payload: StrategyActionPayload):
+    """Removes a strategy from the active running list."""
+    from ..analytics.strategy_orchestrator import remove_active_strategy
+    try:
+        return remove_active_strategy(payload.strategy_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error removing strategy: {str(e)}")
+
+@router.post("/strategies/toggle")
+def api_toggle_strategy(payload: StrategyTogglePayload):
+    """Toggles a strategy on or off."""
+    from ..analytics.strategy_orchestrator import toggle_active_strategy
+    try:
+        return toggle_active_strategy(payload.strategy_id, payload.is_enabled)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error toggling strategy: {str(e)}")
