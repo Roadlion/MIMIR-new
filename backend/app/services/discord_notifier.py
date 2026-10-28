@@ -16,6 +16,7 @@ Setup:
 
 import requests
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from ..config import get_settings
 
@@ -609,7 +610,8 @@ def send_stat_arb_alert(
     # 1. Anti-Spam Check: don't alert the same pair more than once every 2 hours
     last_sent = _RECENT_STAT_ARB_ALERTS.get(pair_key)
     if last_sent and (now_utc - last_sent) < timedelta(hours=2):
-        logger.info(f"[DISCORD] Stat-Arb alert for {pair_key} suppressed (sent {fmtTime(last_sent)} ago).")
+        mins = int((now_utc - last_sent).total_seconds() // 60)
+        logger.info(f"[DISCORD] Stat-Arb alert for {pair_key} suppressed (sent {mins}m ago).")
         return False
 
     # Color: Gold for High Conviction, Cyan for Confirmed, Purple for Medium
