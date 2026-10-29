@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 
 from backend.app.database import get_db_connection
-from backend.app.analytics.user_strategies.registry import list_strategies, FULL_STRATEGY_REGISTRY
+from backend.app.analytics.user_strategies.registry import list_strategies, reload_registries, FULL_STRATEGY_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -174,25 +174,57 @@ def run_strategy_simulation(
     Executes a backtest across single assets or multi-ticker baskets.
     Returns BacktestResponse compatible metrics, chart, and trades.
     """
-    list_strategies()  # Rescan directories
+    reg = reload_registries()  # Rescan directories & get fresh registry
     
     # 1. Resolve Strategy Class
-    strat_cls = FULL_STRATEGY_REGISTRY.get(strategy_id.strip().lower())
-    if not strat_cls:
-        raise ValueError(f"Strategy '{strategy_id}' not found in registry.")
+    clean_id = strategy_id.strip().lower()
+    if clean_id in ("stat_arb", "pair_stat_arbitrage", "stat_arb_apu"):
+        clean_id = "stat_arb"
+    elif clean_id in ("war_rig", "war_rig_engine"):
+        clean_id = "war_rig"
 
-    # 2. Parse Tickers
+    strat_cls = reg.get(clean_id)
+    if not strat_cls:
+        # Fallback search by prefix or stem
+        for k, v in reg.items():
+            if clean_id in k or k in clean_id:
+                strat_cls = v
+                break
+                
+    if not strat_cls:
+        raise ValueError(f"Strategy '{strategy_id}' not found in registry. Available: {', '.join(reg.keys())}")
+
+    # 2. Parse Tickers & Pre-load Candles
     raw_tokens = [t.strip().upper() for t in tickers_str.replace(";", ",").split(",") if t.strip()]
     if not raw_tokens:
         raw_tokens = ["XAUUSD"]
 
-    ticker_results = []
-    combined_dates = set()
-
+    loaded_dfs: Dict[str, pd.DataFrame] = {}
     for ticker in raw_tokens:
-        df = load_candles(ticker, timeframe=timeframe, limit=1000, start_date=start_date, end_date=end_date)
-        if df is None or len(df) < 15:
-            continue
+        df_cand = load_candles(ticker, timeframe=timeframe, limit=1000, start_date=start_date, end_date=end_date)
+        if df_cand is not None and len(df_cand) >= 15:
+            loaded_dfs[ticker] = df_cand
+
+    ticker_results = []
+    valid_tickers = list(loaded_dfs.keys())
+
+    for idx_t, ticker in enumerate(valid_tickers):
+        df = loaded_dfs[ticker].copy()
+
+        # Populate hedge_close / hedge_volume for Pair Stat-Arb strategies
+        if "hedge_close" not in df.columns or "hedge_volume" not in df.columns:
+            if len(valid_tickers) > 1:
+                hedge_ticker = valid_tickers[(idx_t + 1) % len(valid_tickers)]
+                hedge_df = loaded_dfs[hedge_ticker]
+                min_rows = min(len(df), len(hedge_df))
+                df = df.tail(min_rows).reset_index(drop=True)
+                h_slice = hedge_df.tail(min_rows).reset_index(drop=True)
+                df["hedge_close"] = h_slice["close"].values
+                df["hedge_volume"] = h_slice["volume"].values
+            else:
+                # Single-ticker fallback: synthetic slower equilibrium leg for stat-arb spread
+                df["hedge_close"] = df["close"].rolling(24, min_periods=1).mean()
+                df["hedge_volume"] = df["volume"].rolling(24, min_periods=1).mean()
 
         strat_instance = strat_cls(**(custom_params or {})) if custom_params else strat_cls()
         

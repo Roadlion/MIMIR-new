@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Tuple, Type
 
 from .base_strategy import Strategy, StaticStrategy
 from .quick_strategy import QuickStrategy
+from .war_rig_strategy import WarRigStrategy
 
 # Base built-in static strategies
 from .static_strategies import (
@@ -35,6 +36,8 @@ from .static_strategies import (
 
 # Core initial registries
 _BUILTIN_USER_STRATEGIES: Dict[str, Type[Strategy]] = {
+    "war_rig": WarRigStrategy,
+    "stat_arb": PairStatArbitrageStrategy,
     "dual_hedge": DualHedgeStrategy,
     "mean_reversion": MeanReversionStrategy,
     "bollinger_bands": BollingerBandStrategy,
@@ -169,8 +172,13 @@ FULL_STRATEGY_REGISTRY = {**USER_STRATEGY_REGISTRY, **BACKTEST_STRATEGY_REGISTRY
 def reload_registries():
     """Forces rescanning of strategy directories and reloads modified modules."""
     global USER_STRATEGY_REGISTRY, BACKTEST_STRATEGY_REGISTRY, FULL_STRATEGY_REGISTRY
-    USER_STRATEGY_REGISTRY, BACKTEST_STRATEGY_REGISTRY = discover_strategies()
-    FULL_STRATEGY_REGISTRY = {**USER_STRATEGY_REGISTRY, **BACKTEST_STRATEGY_REGISTRY}
+    u_strats, b_strats = discover_strategies()
+    USER_STRATEGY_REGISTRY.clear()
+    USER_STRATEGY_REGISTRY.update(u_strats)
+    BACKTEST_STRATEGY_REGISTRY.clear()
+    BACKTEST_STRATEGY_REGISTRY.update(b_strats)
+    FULL_STRATEGY_REGISTRY.clear()
+    FULL_STRATEGY_REGISTRY.update({**u_strats, **b_strats})
     return FULL_STRATEGY_REGISTRY
 
 
