@@ -447,23 +447,48 @@
                 <!-- Rebalancing returns chart panel -->
                 <div class="glass-panel p-5 rounded-xl border border-[#1A2A30]">
                     <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono mb-4">Cumulative Return Performance</h3>
-                    <div style="position: relative; height: 320px; width: 100%;">
+                    <div style="position: relative; height: 280px; width: 100%;">
                         <canvas id="performanceChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Per-Asset Price & Buy/Sell Signal Execution Chart -->
+                <div id="assetSignalsPanel" class="hidden glass-panel p-5 rounded-xl border border-[#1A2A30] space-y-3">
+                    <div class="flex flex-wrap justify-between items-center gap-2">
+                        <div>
+                            <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono">
+                                <i class="fas fa-crosshairs text-[#00E5F2] mr-1.5"></i> Asset Price & Buy / Sell Signal Executions
+                            </h3>
+                            <p class="text-[10px] text-[#4A6A70] font-mono mt-0.5">
+                                <span class="text-[#00E676] font-bold">&#9650; BUY Entry/Cover</span> &bull;
+                                <span class="text-[#FF5252] font-bold">&#9660; SELL Exit/Short</span> &bull;
+                                Hover markers to inspect position PnL &amp; exit reason
+                            </p>
+                        </div>
+                        <div id="assetChartTabs" class="flex flex-wrap gap-1.5 font-mono text-[11px]">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div style="position: relative; height: 290px; width: 100%;">
+                        <canvas id="assetSignalChart"></canvas>
                     </div>
                 </div>
 
                 <!-- Trade Execution log -->
                 <div class="glass-panel p-5 rounded-xl border border-[#1A2A30] space-y-4">
-                    <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono">Recent Executed Positions</h3>
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xs font-bold text-[#D6E5E3] uppercase tracking-wider font-mono">Recent Executed Positions &amp; Realized PnL</h3>
+                        <span id="tradeLogSummaryStats" class="text-[10px] font-mono text-[#8BA4A8]"></span>
+                    </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left font-mono text-xs text-[#8BA4A8]">
                             <thead>
                                 <tr class="border-b border-[#1A2A30] text-[#4A6A70] uppercase">
-                                    <th class="pb-2">Date</th>
+                                    <th class="pb-2">Entry &rarr; Exit Time</th>
                                     <th class="pb-2">Ticker</th>
-                                    <th class="pb-2">Action</th>
-                                    <th class="pb-2 text-right">Weight</th>
-                                    <th class="pb-2 text-right">Asset Price</th>
+                                    <th class="pb-2">Action &amp; Trigger</th>
+                                    <th class="pb-2 text-right">Entry &rarr; Exit Price</th>
+                                    <th class="pb-2 text-right">Position PnL</th>
                                 </tr>
                             </thead>
                             <tbody id="tradeLogTableBody">
@@ -906,6 +931,10 @@
             // Render Chart
             renderChart(data.chart);
 
+            // Render Per-Asset Buy/Sell Signal Chart
+            currentAssetCharts = data.asset_charts || {};
+            setupAssetSignalTabs(currentAssetCharts);
+
             // Render Trades
             allTrades = data.trades || [];
             currentTradesPage = 1;
@@ -918,12 +947,12 @@
 
             if (data.ticker_breakdown && data.ticker_breakdown.length > 1) {
                 basketPanel.classList.remove('hidden');
-                basketSummaryPill.innerText = `${data.ticker_breakdown.length} Assets in Basket`;
+                basketSummaryPill.innerText = `${data.ticker_breakdown.length} Assets in Basket (Click to View Signals)`;
                 basketGrid.innerHTML = data.ticker_breakdown.map(b => {
                     const isPos = b.pnl_pct >= 0;
                     const pnlClass = isPos ? 'text-[#00E676]' : 'text-[#FF5252]';
                     return `
-                        <div class="bg-[#0A161C] p-3 rounded-lg border border-[#1A2A30] flex justify-between items-center">
+                        <div onclick="renderAssetSignalChart('${b.ticker}')" class="bg-[#0A161C] hover:border-[#00E5F2]/50 cursor-pointer transition-all p-3 rounded-lg border border-[#1A2A30] flex justify-between items-center">
                             <div>
                                 <span class="font-bold text-[#00E5F2] block">${b.ticker}</span>
                                 <span class="text-[10px] text-[#4A6A70] block">${b.trades} trades &bull; ${b.win_rate}% win</span>
@@ -962,9 +991,143 @@
     });
 
     let myChart = null;
+    let myAssetChart = null;
+    let currentAssetCharts = {};
+    let activeAssetChartTicker = null;
     let allTrades = [];
     let currentTradesPage = 1;
     let tradesPageSize = 20;
+
+    function setupAssetSignalTabs(assetCharts) {
+        const panel = document.getElementById('assetSignalsPanel');
+        const tabsContainer = document.getElementById('assetChartTabs');
+        const tickers = Object.keys(assetCharts || {});
+        if (!tickers.length) {
+            panel.classList.add('hidden');
+            return;
+        }
+        panel.classList.remove('hidden');
+        renderAssetSignalChart(tickers[0]);
+    }
+
+    function renderAssetSignalChart(ticker) {
+        const series = currentAssetCharts[ticker];
+        if (!series) return;
+        activeAssetChartTicker = ticker;
+
+        // Render tab buttons
+        const tabsContainer = document.getElementById('assetChartTabs');
+        const tickers = Object.keys(currentAssetCharts);
+        tabsContainer.innerHTML = tickers.map(tk => {
+            const isActive = tk === ticker;
+            const cls = isActive
+                ? "px-2.5 py-1 rounded bg-[#00E5F2]/15 text-[#00E5F2] border border-[#00E5F2]/50 font-bold cursor-pointer"
+                : "px-2.5 py-1 rounded bg-[#091518] text-[#8BA4A8] border border-[#1A2A30] hover:border-[#00A6B2] cursor-pointer";
+            return `<button type="button" onclick="renderAssetSignalChart('${tk}')" class="${cls}">${tk}</button>`;
+        }).join('');
+
+        const ctx = document.getElementById('assetSignalChart').getContext('2d');
+        if (myAssetChart) {
+            myAssetChart.destroy();
+        }
+
+        const metaList = series.meta || [];
+
+        myAssetChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: series.dates,
+                datasets: [
+                    {
+                        label: `${ticker} Price`,
+                        data: series.prices,
+                        borderColor: '#8BA4A8',
+                        backgroundColor: 'rgba(0, 166, 178, 0.05)',
+                        borderWidth: 1.6,
+                        fill: true,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        order: 3
+                    },
+                    {
+                        label: 'BUY / Cover',
+                        data: series.buy_points,
+                        borderColor: '#00E676',
+                        backgroundColor: '#00E676',
+                        pointStyle: 'triangle',
+                        pointRadius: 7,
+                        pointHoverRadius: 9,
+                        showLine: false,
+                        order: 1
+                    },
+                    {
+                        label: 'SELL / Exit',
+                        data: series.sell_points,
+                        borderColor: '#FF5252',
+                        backgroundColor: '#FF5252',
+                        pointStyle: 'triangle',
+                        rotation: 180,
+                        pointRadius: 7,
+                        pointHoverRadius: 9,
+                        showLine: false,
+                        order: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            color: '#8BA4A8',
+                            font: { family: 'JetBrains Mono', size: 10 },
+                            usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterBody: function(context) {
+                                const idx = context[0].dataIndex;
+                                const m = metaList[idx];
+                                if (!m) return [];
+                                const lines = [`Signal: ${m.action}`];
+                                if (m.reason) lines.push(`Trigger: ${m.reason}`);
+                                if (m.pnl_pct !== null && m.pnl_pct !== undefined) {
+                                    const sign = m.pnl_pct >= 0 ? '+' : '';
+                                    lines.push(`Position PnL: ${sign}$${m.pnl_usd} (${sign}${m.pnl_pct}%)`);
+                                }
+                                return lines;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(26, 42, 48, 0.2)' },
+                        ticks: {
+                            color: '#4A6A70',
+                            font: { family: 'JetBrains Mono', size: 9 },
+                            maxTicksLimit: 10
+                        }
+                    },
+                    y: {
+                        position: 'left',
+                        grid: { color: 'rgba(26, 42, 48, 0.2)' },
+                        ticks: {
+                            color: '#D6E5E3',
+                            font: { family: 'JetBrains Mono', size: 9 }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Dropdown Checkboxes Toggle and Selection UI
     const marketDropdownBtn = document.getElementById('marketDropdownBtn');
@@ -1153,19 +1316,57 @@
         const endIndex = startIndex + tradesPageSize;
         const pageTrades = allTrades.slice(startIndex, endIndex);
         
-        tbody.innerHTML = pageTrades.map(t => `
+        const summaryEl = document.getElementById('tradeLogSummaryStats');
+        if (summaryEl) {
+            const totalUsd = allTrades.reduce((acc, t) => acc + (typeof t.pnl_usd === 'number' ? t.pnl_usd : 0), 0);
+            const wins = allTrades.filter(t => typeof t.pnl_pct === 'number' && t.pnl_pct > 0).length;
+            const sign = totalUsd >= 0 ? '+' : '';
+            const col = totalUsd >= 0 ? 'text-[#00E676]' : 'text-[#FF5252]';
+            summaryEl.innerHTML = `${allTrades.length} Positions (${wins} Wins) &bull; Total Realized: <span class="font-bold ${col}">${sign}$${totalUsd.toFixed(2)}</span>`;
+        }
+
+        tbody.innerHTML = pageTrades.map(t => {
+            const isBuyOrLong = t.action.includes('Long') || t.action.includes('BUY') || t.action.includes('OPEN LONG');
+            const actionBadgeCls = isBuyOrLong ? 'text-[#00E5F2] border-[#00E5F2]/30' : 'text-[#FF5252] border-[#FF5252]/30';
+            
+            let reasonBadge = '';
+            if (t.reason) {
+                let rColor = 'text-[#8BA4A8] border-[#1A2A30]';
+                if (t.reason === 'TAKE_PROFIT' || t.reason === 'PROFIT_TRAIL') rColor = 'text-[#00E676] border-[#00E676]/40 bg-[#00E676]/10';
+                else if (t.reason === 'BREAKEVEN') rColor = 'text-[#00E5F2] border-[#00E5F2]/30 bg-[#00E5F2]/10';
+                else if (t.reason === 'STOP_LOSS') rColor = 'text-[#FF5252] border-[#FF5252]/30 bg-[#FF5252]/10';
+                reasonBadge = `<span class="ml-1.5 px-1.5 py-0.5 rounded border text-[9px] ${rColor}">${t.reason}</span>`;
+            }
+
+            const dateDisplay = t.entry_date ? `<span class="text-[#4A6A70]">${t.entry_date} &rarr;</span> ${t.date}` : t.date;
+            const priceDisplay = (t.entry_price !== undefined && t.entry_price !== null && t.exit_price !== undefined && t.exit_price !== null)
+                ? `<span class="text-[#8BA4A8]">$${t.entry_price}</span> &rarr; <span class="text-[#D6E5E3] font-semibold">$${t.exit_price}</span>`
+                : `$${t.price} <span class="text-[10px] text-[#4A6A70]">(${t.weight}%)</span>`;
+
+            let pnlDisplay = `<span class="text-[#4A6A70]">--</span>`;
+            if (typeof t.pnl_pct === 'number') {
+                const isWin = t.pnl_pct >= 0;
+                const pSign = isWin ? '+' : '';
+                const pCls = isWin ? 'text-[#00E676]' : 'text-[#FF5252]';
+                const usdStr = (typeof t.pnl_usd === 'number') ? `${pSign}$${t.pnl_usd.toFixed(2)} ` : '';
+                pnlDisplay = `<span class="font-bold ${pCls}">${usdStr}(${pSign}${t.pnl_pct.toFixed(2)}%)</span>`;
+            }
+
+            return `
             <tr class="border-b border-[#1A2A30]/40 hover:bg-[#112228]/20 transition-colors">
-                <td class="py-2.5">${t.date}</td>
-                <td class="py-2.5 font-bold text-[#00A6B2]">${t.ticker}</td>
+                <td class="py-2.5 text-[11px]">${dateDisplay}</td>
+                <td class="py-2.5 font-bold text-[#00A6B2] cursor-pointer hover:underline" onclick="if(currentAssetCharts['${t.ticker}']) renderAssetSignalChart('${t.ticker}')">${t.ticker}</td>
                 <td class="py-2.5">
-                    <span class="${t.action.includes('Long') ? 'text-[#00E5F2]' : 'text-[#FF5252]'} bg-[#112228] px-2 py-0.5 rounded text-[10px]">
+                    <span class="${actionBadgeCls} bg-[#112228] border px-2 py-0.5 rounded text-[10px]">
                         ${t.action}
                     </span>
+                    ${reasonBadge}
                 </td>
-                <td class="py-2.5 text-right font-semibold">${t.weight}%</td>
-                <td class="py-2.5 text-right text-[#4A6A70]">$${t.price}</td>
+                <td class="py-2.5 text-right text-[11px]">${priceDisplay}</td>
+                <td class="py-2.5 text-right text-[11px]">${pnlDisplay}</td>
             </tr>
-        `).join('');
+            `;
+        }).join('');
         
         pageIndicator.innerText = `Page ${currentTradesPage} of ${totalPages}`;
         prevBtn.disabled = currentTradesPage === 1;

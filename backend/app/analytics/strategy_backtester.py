@@ -236,44 +236,178 @@ def run_strategy_simulation(
         else:
             signals = pd.Series(0.0, index=df.index)
 
-        positions = signals.fillna(0.0).clip(-1.0, 1.0)
-        market_returns = df["close"].pct_change().fillna(0.0)
+        positions = signals.fillna(0.0).clip(-1.0, 1.0).reset_index(drop=True)
+        close_vals = df["close"].astype(float).reset_index(drop=True)
+        market_returns = close_vals.pct_change().fillna(0.0)
         turnover = positions.diff().abs().fillna(positions.abs())
-        costs = turnover * (slippage_bps / 10000.0)
-        strategy_returns = positions.shift(1).fillna(0.0) * market_returns - costs
+
+        # Asset-class-aware execution friction (MT5 ECN spread realism for FX & Metals)
+        fx_majors = {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF", "EURGBP", "EURJPY", "GBPJPY"}
+        metals_indices = {"XAUUSD", "XAGUSD", "US500", "US30", "USTEC"}
+        if slippage_bps == 5.0:
+            eff_slippage_bps = 1.0 if ticker in fx_majors else (1.8 if ticker in metals_indices else 5.0)
+        else:
+            eff_slippage_bps = slippage_bps
+
+        costs = turnover * (eff_slippage_bps / 10000.0)
+
+        custom_fills: Dict[int, float] = getattr(strat_instance, "last_trade_fills", {}) or {}
+        custom_reasons: Dict[int, str] = getattr(strat_instance, "last_trade_reasons", {}) or {}
+
+        # Compute bar-by-bar returns honoring stop/target/ratchet execution fills
+        bar_returns = positions.shift(1).fillna(0.0) * market_returns
+        for f_idx, fill_p in custom_fills.items():
+            if 1 <= f_idx < len(close_vals):
+                prev_pos = float(positions.iloc[f_idx - 1])
+                prev_c = float(close_vals.iloc[f_idx - 1])
+                if prev_pos != 0.0 and prev_c > 0:
+                    bar_returns.iloc[f_idx] = prev_pos * ((fill_p / prev_c) - 1.0)
+
+        strategy_returns = bar_returns - costs
         
         equity_series = (1.0 + strategy_returns).cumprod()
         bench_series = (1.0 + market_returns).cumprod()
         drawdown_series = equity_series.div(equity_series.cummax()).sub(1.0)
 
-        # Identify trades
+        # Identify executions & compute per-position PnL ($ and %)
+        alloc_capital = initial_capital / max(1, len(valid_tickers))
         trades = []
-        pos_diff = positions.diff()
+        raw_markers = []  # For asset price Buy/Sell chart
+        closed_pnls = []
+
+        active_dir = 0.0
+        entry_price = 0.0
+        entry_dt_str = ""
+        entry_weight = 0.0
+
         for idx in range(1, len(positions)):
-            if pos_diff.iloc[idx] != 0:
-                p_now = float(positions.iloc[idx])
-                p_prev = float(positions.iloc[idx - 1])
-                action = "BUY" if p_now > p_prev else "SELL"
-                dt_str = df["timestamp"].iloc[idx].strftime("%Y-%m-%d %H:%M")
-                price = float(df["close"].iloc[idx])
+            p_now = float(positions.iloc[idx])
+            p_prev = float(positions.iloc[idx - 1])
+            if p_now == p_prev:
+                continue
+
+            dt_val = df["timestamp"].iloc[idx]
+            dt_str = dt_val.strftime("%Y-%m-%d %H:%M") if hasattr(dt_val, "strftime") else str(dt_val)[:16]
+            exec_price = float(custom_fills.get(idx, close_vals.iloc[idx]))
+            reason_tag = custom_reasons.get(idx, "")
+
+            # 1. If we had an open position and it is closing or flipping, close it first
+            if active_dir != 0.0 and (p_now == 0.0 or np.sign(p_now) != np.sign(active_dir)):
+                gross_ret = active_dir * ((exec_price - entry_price) / max(1e-9, entry_price))
+                net_pnl_pct = (gross_ret - 2.0 * (eff_slippage_bps / 10000.0)) * 100.0
+                net_pnl_usd = alloc_capital * abs(entry_weight) * (net_pnl_pct / 100.0)
+                closed_pnls.append(net_pnl_pct)
+
+                exit_action = "SELL (Exit Long)" if active_dir > 0 else "BUY (Cover Short)"
+                exit_reason = reason_tag or ("SIGNAL_FLIP" if p_now != 0.0 else "SIGNAL_EXIT")
+
                 trades.append({
                     "date": dt_str,
+                    "entry_date": entry_dt_str,
                     "ticker": ticker,
-                    "action": action,
-                    "weight": round(float(p_now), 2),
-                    "price": round(price, 2)
+                    "action": exit_action,
+                    "reason": exit_reason,
+                    "weight": round(abs(entry_weight) * 100.0, 1),
+                    "entry_price": round(entry_price, 4 if entry_price < 10 else 2),
+                    "exit_price": round(exec_price, 4 if exec_price < 10 else 2),
+                    "price": round(exec_price, 4 if exec_price < 10 else 2),
+                    "pnl_pct": round(net_pnl_pct, 2),
+                    "pnl_usd": round(net_pnl_usd, 2),
                 })
+                raw_markers.append({
+                    "bar_idx": idx,
+                    "date": dt_str,
+                    "type": "SELL" if active_dir > 0 else "BUY",
+                    "action": exit_action,
+                    "reason": exit_reason,
+                    "price": round(exec_price, 4 if exec_price < 10 else 2),
+                    "pnl_pct": round(net_pnl_pct, 2),
+                    "pnl_usd": round(net_pnl_usd, 2),
+                })
+                active_dir = 0.0
+
+            # 2. If opening a new position (from flat or flip)
+            if p_now != 0.0 and active_dir == 0.0:
+                active_dir = 1.0 if p_now > 0 else -1.0
+                entry_price = float(close_vals.iloc[idx])
+                entry_dt_str = dt_str
+                entry_weight = p_now
+                open_action = "BUY (Long Entry)" if active_dir > 0 else "SELL (Short Entry)"
+                open_reason = reason_tag or "SIGNAL_ENTRY"
+
+                raw_markers.append({
+                    "bar_idx": idx,
+                    "date": dt_str,
+                    "type": "BUY" if active_dir > 0 else "SELL",
+                    "action": open_action,
+                    "reason": open_reason,
+                    "price": round(entry_price, 4 if entry_price < 10 else 2),
+                    "pnl_pct": None,
+                    "pnl_usd": None,
+                })
+
+        # If a position is still open at the end of simulation, record its mark-to-market PnL
+        if active_dir != 0.0 and len(close_vals) > 0:
+            last_p = float(close_vals.iloc[-1])
+            last_dt = df["timestamp"].iloc[-1]
+            last_dt_str = last_dt.strftime("%Y-%m-%d %H:%M") if hasattr(last_dt, "strftime") else str(last_dt)[:16]
+            gross_ret = active_dir * ((last_p - entry_price) / max(1e-9, entry_price))
+            net_pnl_pct = (gross_ret - (eff_slippage_bps / 10000.0)) * 100.0
+            net_pnl_usd = alloc_capital * abs(entry_weight) * (net_pnl_pct / 100.0)
+            closed_pnls.append(net_pnl_pct)
+            trades.append({
+                "date": last_dt_str,
+                "entry_date": entry_dt_str,
+                "ticker": ticker,
+                "action": "OPEN LONG" if active_dir > 0 else "OPEN SHORT",
+                "reason": "OPEN_MTM",
+                "weight": round(abs(entry_weight) * 100.0, 1),
+                "entry_price": round(entry_price, 4 if entry_price < 10 else 2),
+                "exit_price": round(last_p, 4 if last_p < 10 else 2),
+                "price": round(last_p, 4 if last_p < 10 else 2),
+                "pnl_pct": round(net_pnl_pct, 2),
+                "pnl_usd": round(net_pnl_usd, 2),
+            })
+
+        # Build per-asset price + Buy/Sell signal chart series
+        n_bars = len(df)
+        a_step = max(1, n_bars // 250)
+        sampled_indices = sorted(set(list(range(0, n_bars, a_step)) + [m["bar_idx"] for m in raw_markers] + [n_bars - 1]))
+        marker_by_idx = {m["bar_idx"]: m for m in raw_markers}
+
+        asset_dates = []
+        asset_prices = []
+        buy_points = []
+        sell_points = []
+        marker_meta = []
+
+        for s_idx in sampled_indices:
+            dt_v = df["timestamp"].iloc[s_idx]
+            d_str = dt_v.strftime("%Y-%m-%d %H:%M") if hasattr(dt_v, "strftime") else str(dt_v)[:16]
+            c_v = round(float(close_vals.iloc[s_idx]), 4 if float(close_vals.iloc[s_idx]) < 10 else 2)
+            asset_dates.append(d_str)
+            asset_prices.append(c_v)
+            m = marker_by_idx.get(s_idx)
+            if m:
+                if m["type"] == "BUY":
+                    buy_points.append(m["price"])
+                    sell_points.append(None)
+                else:
+                    buy_points.append(None)
+                    sell_points.append(m["price"])
+                marker_meta.append(m)
+            else:
+                buy_points.append(None)
+                sell_points.append(None)
+                marker_meta.append(None)
 
         # Calculate metrics
         total_pnl = float(equity_series.iloc[-1] - 1.0)
-        winning_trades = 0
-        total_closed = max(1, len(trades))
-        # Simple win rate estimate on trade returns
-        trade_rets = strategy_returns[positions != 0]
-        if len(trade_rets) > 0:
-            win_rate = float((trade_rets > 0).mean() * 100.0)
+        if closed_pnls:
+            win_rate = float(sum(1 for p in closed_pnls if p > 0) / len(closed_pnls) * 100.0)
         else:
-            win_rate = 50.0
+            trade_rets = strategy_returns[positions != 0]
+            win_rate = float((trade_rets > 0).mean() * 100.0) if len(trade_rets) > 0 else 50.0
 
         ticker_results.append({
             "ticker": ticker,
@@ -283,6 +417,14 @@ def run_strategy_simulation(
             "drawdown": drawdown_series,
             "returns": strategy_returns,
             "trades": trades,
+            "asset_chart": {
+                "ticker": ticker,
+                "dates": asset_dates,
+                "prices": asset_prices,
+                "buy_points": buy_points,
+                "sell_points": sell_points,
+                "meta": marker_meta,
+            },
             "total_pnl_pct": round(total_pnl * 100.0, 2),
             "trades_count": len(trades),
             "win_rate": round(win_rate, 1)
@@ -337,8 +479,9 @@ def run_strategy_simulation(
             "drawdown": round(float(combined_drawdown.iloc[i]) * 100.0, 2)
         })
 
-    # 6. Format Ticker Breakdown Table
+    # 6. Format Ticker Breakdown Table & Asset Charts
     breakdown = []
+    asset_charts = {}
     for res in ticker_results:
         breakdown.append({
             "ticker": res["ticker"],
@@ -347,6 +490,7 @@ def run_strategy_simulation(
             "trades": res["trades_count"],
             "win_rate": res["win_rate"]
         })
+        asset_charts[res["ticker"]] = res["asset_chart"]
 
     return {
         "metrics": {
@@ -359,7 +503,8 @@ def run_strategy_simulation(
             "fitness": round(sharpe * math.sqrt(max(0.1, abs(ann_return) / max(1.0, abs(max_dd)))), 2) if max_dd != 0 else 1.0,
         },
         "chart": chart_points,
-        "trades": all_trades[:100],
+        "asset_charts": asset_charts,
+        "trades": all_trades[:150],
         "ticker_breakdown": breakdown,
         "basket_size": num_assets
     }
