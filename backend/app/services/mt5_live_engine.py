@@ -151,6 +151,7 @@ def _live_trading_worker_loop():
     # Instantiate strategies
     scalper = GoldMathScalperStrategy(mode="static")
     sentiment = GoldNewsSentimentStrategy(mode="static")
+    last_sim_sig_bar_time = None
 
     while _engine_running:
         try:
@@ -246,6 +247,17 @@ def _live_trading_worker_loop():
 
             action = None
             reason = ""
+            trend_regime = "NEUTRAL"
+
+            # Compute macro trend regime (EMA50 vs EMA200)
+            if len(df) >= 30:
+                close_s = df['close']
+                ema_50 = float(close_s.ewm(span=min(50, len(df)), adjust=False).mean().iloc[-1])
+                ema_200 = float(close_s.ewm(span=min(150, len(df)), adjust=False).mean().iloc[-1])
+                if current_price < ema_50 and ema_50 <= ema_200 * 1.002:
+                    trend_regime = "BEAR"
+                elif current_price > ema_50 and ema_50 >= ema_200 * 0.998:
+                    trend_regime = "BULL"
 
             if strategy_id == "gold_math_scalper":
                 result = scalper.generate_signals(df)
@@ -264,16 +276,16 @@ def _live_trading_worker_loop():
                     "strategy": "Gold Math Scalper",
                     "price": current_price,
                     "signal": sig,
-                    "regime": "OU_ACTIVE",
+                    "regime": f"OU_{trend_regime}",
                     "atr": round(atr_val, 2),
                 }
 
                 if sig == 1 and len(current_longs) < max_positions:
                     action = "OPEN_LONG"
-                    reason = f"OU Mean-Reversion Oversold Dip (Price: {current_price})"
+                    reason = f"OU Mean-Reversion Oversold Dip ({trend_regime} Defense Active, Price: {current_price})"
                 elif sig == -1 and len(current_shorts) < max_positions:
                     action = "OPEN_SHORT"
-                    reason = f"OU Mean-Reversion Overbought Peak (Price: {current_price})"
+                    reason = f"OU Mean-Reversion Overbought Peak ({trend_regime} Defense Active, Price: {current_price})"
 
             elif strategy_id == "gold_news_sentiment":
                 result = sentiment.generate_signals(df)
@@ -292,6 +304,7 @@ def _live_trading_worker_loop():
                     "strategy": "Gold News Sentiment",
                     "price": current_price,
                     "signal": sig,
+                    "regime": f"SENT_{trend_regime}",
                     "atr": round(atr_val, 2),
                 }
 
@@ -304,14 +317,30 @@ def _live_trading_worker_loop():
 
             # Execution logic if action is triggered
             if action:
-                # Calculate asymmetric stop and take profit
-                sl_pct = (atr_val * 1.5 / current_price) * 100.0
-                tp_pct = (atr_val * 3.5 / current_price) * 100.0
+                # Dynamic asymmetric stop and take profit tailored to Macro Trend
+                if trend_regime == "BEAR":
+                    if action == "OPEN_SHORT":
+                        sl_pct = (atr_val * 1.2 / current_price) * 100.0
+                        tp_pct = (atr_val * 3.5 / current_price) * 100.0
+                    else:  # Counter-trend Long capitulation bounce
+                        sl_pct = (atr_val * 1.2 / current_price) * 100.0
+                        tp_pct = (atr_val * 1.8 / current_price) * 100.0
+                elif trend_regime == "BULL":
+                    if action == "OPEN_LONG":
+                        sl_pct = (atr_val * 1.2 / current_price) * 100.0
+                        tp_pct = (atr_val * 3.5 / current_price) * 100.0
+                    else:  # Counter-trend Short
+                        sl_pct = (atr_val * 1.2 / current_price) * 100.0
+                        tp_pct = (atr_val * 1.8 / current_price) * 100.0
+                else:
+                    sl_pct = (atr_val * 1.5 / current_price) * 100.0
+                    tp_pct = (atr_val * 2.5 / current_price) * 100.0
 
-                log_live_event(f"[SIGNAL DETECTED] {action} on {resolved_symbol} - {reason}")
-                
+                cur_bar_time = df['time'].iloc[-1] if 'time' in df.columns else None
+
                 # Check if live execution is authorized
                 if mt5_exec.LIVE_TRADING_ENABLED:
+                    log_live_event(f"[SIGNAL DETECTED] {action} on {resolved_symbol} - {reason}")
                     order_res = send_mt5_order(
                         ticker=resolved_symbol,
                         action=action,
@@ -325,7 +354,11 @@ def _live_trading_worker_loop():
                     else:
                         log_live_event(f"ORDER FAILED: {order_res.get('message')}", "ERROR")
                 else:
-                    log_live_event(f"[SIMULATION MODE] Signal received but LIVE_TRADING_ENABLED is False. No order placed.")
+                    # In simulation mode, only log once per bar to prevent terminal spam
+                    if last_sim_sig_bar_time != cur_bar_time:
+                        log_live_event(f"[SIGNAL DETECTED] {action} on {resolved_symbol} - {reason}")
+                        log_live_event(f"[SIMULATION MODE] Signal received but LIVE_TRADING_ENABLED is False. No order placed.")
+                        last_sim_sig_bar_time = cur_bar_time
 
         except Exception as e:
             log_live_event(f"Exception in live loop: {e}", "ERROR")
