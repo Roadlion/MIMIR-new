@@ -23,43 +23,64 @@ DEFAULT_ACTIVE_STRATEGIES = ["war_rig"]
 STRATEGY_METADATA = {
     "war_rig": {
         "name": "War Rig Transmission Engine",
-        "category": "🌟 Flagship Quant Engines",
+        "category": "🌟 Flagship Quant Engines (Lion's Strat)",
         "icon": "fas fa-car-side",
         "description": "Unified 3-Cylinder Crankshaft: Macro Inflows + Catalyst Twin-Turbo + Microstructure (>=75% conviction).",
         "is_flagship": True,
     },
     "stat_arb": {
         "name": "Stat-Arb APU (Pairs Trading)",
-        "category": "🌟 Flagship Quant Engines",
+        "category": "🌟 Flagship Quant Engines (Lion's Strat)",
         "icon": "fas fa-balance-scale",
         "description": "Kalman-filtered cointegrated pairs trading with Ornstein-Uhlenbeck mean-reversion.",
         "is_flagship": True,
     },
+    "gold_math_scalper": {
+        "name": "Gold Math Scalper",
+        "category": "🟡 Gold & Precious Metals",
+        "icon": "fas fa-coins",
+        "description": "Ornstein-Uhlenbeck micro-scalper with ATR risk management, half-life time exit, and inverse volatility parity sizing.",
+        "is_flagship": False,
+    },
+    "gold_news_sentiment": {
+        "name": "Gold Macro & News Sentiment",
+        "category": "🟡 Gold & Precious Metals",
+        "icon": "fas fa-newspaper",
+        "description": "Long/Short XAU based on central bank policy stances, geopolitical safe-haven flow, and sentiment momentum.",
+        "is_flagship": False,
+    },
+    "bong_scalper": {
+        "name": "Bong Scalper",
+        "category": "🚀 Momentum & Scalping",
+        "icon": "fas fa-bolt",
+        "description": "Fast EMA crossover with RSI oscillator confirmation for rapid intraday momentum.",
+        "is_flagship": False,
+    },
     "dual_hedge": {
         "name": "Dual Hedge Statistical Hedging",
-        "category": "📈 Built-in Strategies",
+        "category": "⚖️ Arbitrage & Hedging",
         "icon": "fas fa-arrows-split-up-and-left",
         "description": "Dual-leg statistical hedging state-machine (FLAT -> INITIAL -> HEDGED -> SOLO).",
         "is_flagship": False,
     },
     "mean_reversion": {
         "name": "Mean Reversion (OU Z-Score)",
-        "category": "📈 Built-in Strategies",
+        "category": "🔄 Mean Reversion & Volatility",
         "icon": "fas fa-wave-square",
         "description": "Pure Ornstein-Uhlenbeck z-score reversion (buys oversold, sells overbought).",
         "is_flagship": False,
     },
     "bollinger_bands": {
         "name": "Bollinger Bands & RSI Regime",
-        "category": "📈 Built-in Strategies",
+        "category": "🔄 Mean Reversion & Volatility",
         "icon": "fas fa-chart-line",
         "description": "Bollinger Bands + RSI confirmation with volatility regime adaptation.",
         "is_flagship": False,
     },
     "volume_exhaustion_reversal": {
         "name": "Volume Exhaustion Reversal",
-        "category": "📈 Built-in Strategies",
-        "icon": "fas fa-bolt",
+        "category": "🚀 Momentum & Scalping",
+        "icon": "fas fa-chart-bar",
         "description": "Swing reversal detected after exceptional-volume directional candle exhaustion.",
         "is_flagship": False,
     },
@@ -68,31 +89,32 @@ STRATEGY_METADATA = {
 
 def get_active_strategies() -> List[str]:
     """Retrieves the list of currently active strategy IDs from DB."""
-    conn = get_db_connection_dict()
-    cur = conn.cursor()
     try:
-        cur.execute(f"""
-            SELECT active_strategies 
-            FROM {settings.mimir_schema}.mimir_paper_trading_config 
-            ORDER BY id ASC LIMIT 1
-        """)
-        row = cur.fetchone()
-        if row and row.get("active_strategies") is not None:
-            val = row["active_strategies"]
-            if isinstance(val, str):
-                try:
-                    return json.loads(val)
-                except Exception:
-                    return [val]
-            elif isinstance(val, list):
-                return val
-        return list(DEFAULT_ACTIVE_STRATEGIES)
+        conn = get_db_connection_dict()
+        cur = conn.cursor()
+        try:
+            cur.execute(f"""
+                SELECT active_strategies 
+                FROM {settings.mimir_schema}.mimir_paper_trading_config 
+                ORDER BY id ASC LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row and row.get("active_strategies") is not None:
+                val = row["active_strategies"]
+                if isinstance(val, str):
+                    try:
+                        return json.loads(val)
+                    except Exception:
+                        return [val]
+                elif isinstance(val, list):
+                    return val
+            return list(DEFAULT_ACTIVE_STRATEGIES)
+        finally:
+            cur.close()
+            conn.close()
     except Exception as e:
         logger.warning(f"[STRATEGY_ORCHESTRATOR] Error reading active_strategies: {e}")
         return list(DEFAULT_ACTIVE_STRATEGIES)
-    finally:
-        cur.close()
-        conn.close()
 
 
 def set_active_strategies(active_list: List[str]) -> List[str]:
@@ -140,7 +162,7 @@ def get_strategy_catalog() -> Dict[str, Any]:
         catalog.append({
             "id": f_id,
             "name": meta.get("name", f_id),
-            "category": meta.get("category", "🌟 Flagship Quant Engines"),
+            "category": meta.get("category", "🌟 Flagship Quant Engines (Lion's Strat)"),
             "icon": meta.get("icon", "fas fa-robot"),
             "description": meta.get("description", ""),
             "is_active": f_id in active_strategies,

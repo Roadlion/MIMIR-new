@@ -19,10 +19,18 @@ class BongScalperStrategy(StaticStrategy):
         "rsi_period": (7, 21),
     }
 
-    def __init__(self, fast_ema: int = 9, slow_ema: int = 21, rsi_period: int = 14):
+    def __init__(
+        self,
+        fast_ema: int = 9,
+        slow_ema: int = 21,
+        rsi_period: int = 14,
+        mode: str = "adaptive",
+        **kwargs,
+    ):
         self.fast_ema = fast_ema
         self.slow_ema = slow_ema
         self.rsi_period = rsi_period
+        self.mode = mode
         self._state = "FLAT"
         self._pos = 0.0
 

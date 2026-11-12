@@ -22,6 +22,7 @@ from pathlib import Path
 # ==============================================================================
 SYMBOL_OR_PAIR = ""     # e.g. "XAUUSD XAGUSD", "XAUUSD", "default5", or ""
 TIMEFRAME = ""          # e.g. "M5", "M15", "H1", "H4", or "" (default: M5)
+STRATEGY = ""           # e.g. "gold_math_scalper", "gold_news_sentiment", "war_rig", etc.
 BARS = 0                # e.g. 2000, 3000, 5000, or 0 (default: 2000)
 
 # Date range (overrides BARS when set).  Format: "YYYY-MM-DD"
@@ -81,6 +82,9 @@ def run():
 
     if TIMEFRAME.strip():
         cli_args.extend(["--timeframe", TIMEFRAME.strip().upper()])
+
+    if STRATEGY.strip():
+        cli_args.extend(["--strategy", STRATEGY.strip().lower()])
 
     sys.argv = cli_args
     main()

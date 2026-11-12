@@ -59,6 +59,8 @@ def resolve_broker_symbol(symbol: str) -> Optional[str]:
     ]
     if clean_symbol == "BTCUSD":
         candidates.extend(["BTCUSD", "BTC", "BTC/USD"])
+    elif "XAU" in clean_symbol or "GOLD" in clean_symbol:
+        candidates.extend(["XAUUSD", "XAUUSD.a", "XAUUSDm", "XAUUSD+", "XAUUSD_SB", "GOLD", "GOLD.a", "GOLDm"])
 
     for cand in candidates:
         symbol_info = mt5.symbol_info(cand)
@@ -143,6 +145,8 @@ def get_mt5_positions(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
             "volume": p_dict.get("volume"),
             "price_open": p_dict.get("price_open"),
             "price_current": p_dict.get("price_current"),
+            "open_price": p_dict.get("price_open"),
+            "current_price": p_dict.get("price_current"),
             "sl": p_dict.get("sl"),
             "tp": p_dict.get("tp"),
             "profit": p_dict.get("profit"),
@@ -150,6 +154,7 @@ def get_mt5_positions(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
             "magic": p_dict.get("magic"),
             "comment": p_dict.get("comment"),
             "time": datetime.fromtimestamp(p_dict.get("time")).strftime('%Y-%m-%d %H:%M:%S') if p_dict.get("time") else None,
+            "open_time_epoch": p_dict.get("time", 0),
         })
     return results
 

@@ -134,7 +134,7 @@ def discover_strategies() -> Tuple[Dict[str, Type[Strategy]], Dict[str, Type[Str
         if not s_dir.exists() or not s_dir.is_dir():
             continue
 
-        for py_file in s_dir.glob("*.py"):
+        for py_file in s_dir.rglob("*.py"):
             if py_file.name in _EXCLUDED_FILE_NAMES:
                 continue
 

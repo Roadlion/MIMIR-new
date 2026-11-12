@@ -1,0 +1,520 @@
+{% extends "base.html" %}
+
+{% block title %}MT5 Real-Time Live Trader - MIMIR{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header Banner -->
+    <div class="bg-gradient-to-r from-[#0d1f27] via-[#0A161C] to-[#12242B] border border-[#1A2A30] rounded-xl p-6 shadow-xl relative overflow-hidden">
+        <div class="absolute -right-10 -bottom-10 opacity-5 pointer-events-none">
+            <i class="fas fa-bolt text-9xl text-amber-400"></i>
+        </div>
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative z-10">
+            <div>
+                <div class="flex items-center gap-3">
+                    <span class="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase tracking-widest flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> MT5 EXECUTION ENGINE
+                    </span>
+                    <span id="engineBadge" class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                        STATUS: OFFLINE
+                    </span>
+                    <span id="accountBadge" class="px-2 py-0.5 rounded text-xs font-mono text-[#00A6B2] border border-[#00A6B2]/30 bg-[#00A6B2]/10">
+                        <i class="fas fa-server mr-1"></i> MT5 Terminal: Connecting...
+                    </span>
+                </div>
+                <h1 class="text-2xl md:text-3xl font-extrabold text-[#D6E5E3] mt-2 tracking-tight">
+                    MetaTrader 5 Real-Time Engine
+                </h1>
+                <p class="text-xs md:text-sm text-[#4A6A70] mt-1 max-w-2xl">
+                    Autonomous high-frequency tick monitor & order execution interface. Deploys the latest quantitative strategies directly to your local Pepperstone / MT5 terminal with micro-lot protection and dynamic asymmetric risk stops.
+                </p>
+            </div>
+
+            <!-- Global Action Switch & Panic Button -->
+            <div class="flex items-center gap-3 flex-wrap">
+                <button id="toggleEngineBtn" onclick="toggleEngine()" class="px-5 py-2.5 rounded-lg text-xs font-mono font-bold tracking-wider transition-all duration-200 shadow-lg flex items-center gap-2 bg-[#00A6B2] hover:bg-[#00c5d4] text-[#060D11]">
+                    <i class="fas fa-play"></i> START ENGINE
+                </button>
+                <button onclick="emergencyCloseAll()" class="px-4 py-2.5 rounded-lg text-xs font-mono font-bold tracking-wider transition-all duration-200 bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500/25 flex items-center gap-2">
+                    <i class="fas fa-hand-paper"></i> CLOSE ALL POSITIONS
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Metrics Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Account Balance -->
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-[11px] font-mono uppercase tracking-wider text-[#4A6A70]">MT5 Balance</p>
+                <h3 id="mt5Balance" class="text-xl font-bold font-mono text-[#D6E5E3] mt-0.5">$0.00</h3>
+                <p id="mt5Server" class="text-[10px] text-[#4A6A70] mt-0.5 font-mono">Server: Unknown</p>
+            </div>
+            <div class="w-10 h-10 rounded-lg bg-[#111A20] border border-[#1A2A30] flex items-center justify-center text-[#00A6B2]">
+                <i class="fas fa-wallet text-sm"></i>
+            </div>
+        </div>
+
+        <!-- Equity & Floating PnL -->
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-[11px] font-mono uppercase tracking-wider text-[#4A6A70]">Equity & Floating PnL</p>
+                <h3 id="mt5Equity" class="text-xl font-bold font-mono text-[#D6E5E3] mt-0.5">$0.00</h3>
+                <p id="mt5Profit" class="text-[10px] font-mono mt-0.5 text-zinc-400">Floating: $0.00</p>
+            </div>
+            <div class="w-10 h-10 rounded-lg bg-[#111A20] border border-[#1A2A30] flex items-center justify-center text-emerald-400">
+                <i class="fas fa-chart-line text-sm"></i>
+            </div>
+        </div>
+
+        <!-- Active Signal & Regime -->
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-[11px] font-mono uppercase tracking-wider text-[#4A6A70]">Latest Live Signal</p>
+                <h3 id="latestSignal" class="text-xl font-bold font-mono text-zinc-400 mt-0.5">WAITING</h3>
+                <p id="signalMeta" class="text-[10px] text-[#4A6A70] mt-0.5 font-mono">Regime: - | ATR: -</p>
+            </div>
+            <div class="w-10 h-10 rounded-lg bg-[#111A20] border border-[#1A2A30] flex items-center justify-center text-amber-400">
+                <i class="fas fa-satellite-dish text-sm"></i>
+            </div>
+        </div>
+
+        <!-- Mode & Risk Guard -->
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-[11px] font-mono uppercase tracking-wider text-[#4A6A70]">Order Mode</p>
+                <div class="flex items-center gap-2 mt-1">
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="liveTradingToggle" onchange="toggleLiveTradingAuthorization()" class="sr-only peer">
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                    </label>
+                    <span id="liveTradingLabel" class="text-xs font-mono font-bold text-amber-400">SIMULATION (PAPER)</span>
+                </div>
+                <p class="text-[10px] text-[#4A6A70] mt-1 font-mono">Toggle to place real orders</p>
+            </div>
+            <div class="w-10 h-10 rounded-lg bg-[#111A20] border border-[#1A2A30] flex items-center justify-center text-purple-400">
+                <i class="fas fa-shield-alt text-sm"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Workspace: Strategy Configuration & Live Orders -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Configuration Panel (1 col) -->
+        <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl p-5 space-y-4 shadow-lg">
+            <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3">
+                <h3 class="text-sm font-bold font-mono text-[#D6E5E3] uppercase tracking-wider flex items-center gap-2">
+                    <i class="fas fa-sliders-h text-[#00A6B2]"></i> Engine Parameters
+                </h3>
+                <span class="text-[10px] font-mono text-[#4A6A70]">Micro-lot Safe</span>
+            </div>
+
+            <!-- Strategy Selection -->
+            <div>
+                <label class="block text-xs font-mono text-[#4A6A70] mb-1">Target Strategy Engine</label>
+                <select id="cfgStrategy" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                    <option value="gold_math_scalper" selected>🏆 Gold Math Scalper (OU + Dynamic ATR Stops)</option>
+                    <option value="gold_news_sentiment">📰 Gold Macro & News Sentiment (Asymmetric Long/Short)</option>
+                </select>
+                <p class="text-[10px] text-[#4A6A70] mt-1 font-mono">Engine updates instantaneously without restarts.</p>
+            </div>
+
+            <!-- Symbol -->
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-mono text-[#4A6A70] mb-1">Symbol</label>
+                    <input type="text" id="cfgSymbol" value="XAUUSD" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-mono text-[#4A6A70] mb-1">Timeframe</label>
+                    <select id="cfgTimeframe" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                        <option value="M1" selected>1 Minute (M1)</option>
+                        <option value="M5">5 Minutes (M5)</option>
+                        <option value="M15">15 Minutes (M15)</option>
+                        <option value="M30">30 Minutes (M30)</option>
+                        <option value="H1">1 Hour (H1)</option>
+                        <option value="H4">4 Hours (H4)</option>
+                        <option value="D1">1 Day (D1)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Volume / Lot Size -->
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-mono text-[#4A6A70] mb-1">Lot Size (Volume)</label>
+                    <input type="number" step="0.01" min="0.01" id="cfgLotSize" value="0.01" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-amber-400 font-bold focus:border-[#00A6B2] focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-mono text-[#4A6A70] mb-1">Max Positions</label>
+                    <input type="number" min="1" max="5" id="cfgMaxPos" value="1" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Poll Interval -->
+            <div>
+                <label class="block text-xs font-mono text-[#4A6A70] mb-1">Tick Poll Rate (Seconds)</label>
+                <input type="number" min="1" max="60" id="cfgPollRate" value="3" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+            </div>
+
+            <!-- Dynamic Exit Controls -->
+            <div class="pt-3 border-t border-[#1A2A30] space-y-3">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <label class="block text-xs font-mono font-bold text-[#D6E5E3]">Mean-Reversion Early Exit</label>
+                        <span class="text-[10px] text-[#4A6A70]">Close position when |Z| &le; target</span>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="cfgEnableMeanExit" checked class="sr-only peer">
+                        <div class="w-8 h-4 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#00A6B2]"></div>
+                    </label>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] mb-1">Z-Score Exit Target</label>
+                        <input type="number" step="0.05" id="cfgZscoreExit" value="0.20" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-[#4A6A70] mb-1">Max Hold Limit (Mins)</label>
+                        <input type="number" min="5" max="1440" id="cfgMaxHoldMins" value="60" class="w-full bg-[#111A20] border border-[#1A2A30] rounded-lg px-3 py-2 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] focus:outline-none">
+                    </div>
+                </div>
+            </div>
+
+            <button onclick="saveEngineConfig()" class="w-full py-2 bg-[#1A2A30] hover:bg-[#22363e] border border-[#00A6B2]/40 text-[#00A6B2] text-xs font-mono font-bold rounded-lg transition-all">
+                <i class="fas fa-save mr-1"></i> APPLY CONFIGURATION
+            </button>
+
+            <!-- Manual Order Quick Strike -->
+            <div class="pt-4 border-t border-[#1A2A30]">
+                <h4 class="text-xs font-mono font-bold text-[#D6E5E3] mb-2 flex items-center justify-between">
+                    <span>Manual Quick Order</span>
+                    <span class="text-[10px] text-[#4A6A70]">Direct MT5 Market</span>
+                </h4>
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="executeManualTrade('OPEN_LONG')" class="py-2.5 bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20 text-xs font-mono font-bold rounded-lg transition-all flex items-center justify-center gap-1.5">
+                        <i class="fas fa-arrow-up"></i> BUY (LONG)
+                    </button>
+                    <button onclick="executeManualTrade('OPEN_SHORT')" class="py-2.5 bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500/20 text-xs font-mono font-bold rounded-lg transition-all flex items-center justify-center gap-1.5">
+                        <i class="fas fa-arrow-down"></i> SELL (SHORT)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Positions & Execution Logs (2 cols) -->
+        <div class="lg:col-span-2 space-y-6">
+            <!-- Open Positions Table -->
+            <div class="bg-[#0A161C] border border-[#1A2A30] rounded-xl p-5 shadow-lg">
+                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-3">
+                    <h3 class="text-sm font-bold font-mono text-[#D6E5E3] uppercase tracking-wider flex items-center gap-2">
+                        <i class="fas fa-layer-group text-[#00A6B2]"></i> Live Open Positions (<span id="posCount">0</span>)
+                    </h3>
+                    <button onclick="refreshPositions()" class="text-xs font-mono text-[#4A6A70] hover:text-[#00A6B2] flex items-center gap-1">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left font-mono text-xs">
+                        <thead>
+                            <tr class="text-[#4A6A70] border-b border-[#1A2A30]">
+                                <th class="pb-2">Ticket</th>
+                                <th class="pb-2">Symbol</th>
+                                <th class="pb-2">Type</th>
+                                <th class="pb-2">Lots</th>
+                                <th class="pb-2">Open Price</th>
+                                <th class="pb-2">Current</th>
+                                <th class="pb-2">SL / TP</th>
+                                <th class="pb-2">Profit (USD)</th>
+                                <th class="pb-2 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positionsTableBody" class="divide-y divide-[#16252C] text-[#D6E5E3]">
+                            <tr>
+                                <td colspan="9" class="py-6 text-center text-[#4A6A70]">No active positions found on MT5.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Real-time Console Log Terminal -->
+            <div class="bg-[#060D11] border border-[#1A2A30] rounded-xl p-4 shadow-xl">
+                <div class="flex items-center justify-between border-b border-[#1A2A30] pb-2 mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <h4 class="text-xs font-mono font-bold text-[#D6E5E3] uppercase tracking-wider">Engine Execution Stream</h4>
+                    </div>
+                    <span class="text-[10px] font-mono text-[#4A6A70]">Live sliding buffer (100 events)</span>
+                </div>
+
+                <div id="engineLogTerminal" class="h-64 overflow-y-auto space-y-1 font-mono text-[11px] text-[#A0B4B0] p-2 bg-[#04080B] rounded border border-[#111A20]">
+                    <div class="text-[#4A6A70]">[System] Terminal ready. Polling status...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let isEngineRunning = false;
+let isLiveTradingEnabled = false;
+let pollTimer = null;
+
+async function fetchEngineStatus() {
+    try {
+        const res = await fetch('/api/mt5/engine/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        // Update Status Badges
+        isEngineRunning = data.engine_running;
+        const btn = document.getElementById('toggleEngineBtn');
+        const badge = document.getElementById('engineBadge');
+        if (isEngineRunning) {
+            btn.className = "px-5 py-2.5 rounded-lg text-xs font-mono font-bold tracking-wider transition-all duration-200 shadow-lg flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white";
+            btn.innerHTML = '<i class="fas fa-stop"></i> STOP ENGINE';
+            badge.className = "px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+            badge.innerText = "STATUS: ACTIVE";
+        } else {
+            btn.className = "px-5 py-2.5 rounded-lg text-xs font-mono font-bold tracking-wider transition-all duration-200 shadow-lg flex items-center gap-2 bg-[#00A6B2] hover:bg-[#00c5d4] text-[#060D11]";
+            btn.innerHTML = '<i class="fas fa-play"></i> START ENGINE';
+            badge.className = "px-2 py-0.5 rounded text-xs font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700";
+            badge.innerText = "STATUS: OFFLINE";
+        }
+
+        // Account Information
+        const acct = data.account;
+        if (acct && acct.status === "ONLINE") {
+            document.getElementById('accountBadge').className = "px-2 py-0.5 rounded text-xs font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10";
+            document.getElementById('accountBadge').innerHTML = `<i class="fas fa-check-circle mr-1"></i> MT5: ${acct.login} (${acct.currency})`;
+            document.getElementById('mt5Balance').innerText = `$${Number(acct.balance).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('mt5Equity').innerText = `$${Number(acct.equity).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('mt5Server').innerText = `Server: ${acct.server}`;
+            
+            const prof = Number(acct.profit);
+            const profEl = document.getElementById('mt5Profit');
+            profEl.innerText = `Floating: ${prof >= 0 ? '+' : ''}$${prof.toFixed(2)}`;
+            profEl.className = `text-[10px] font-mono mt-0.5 ${prof >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+        } else {
+            document.getElementById('accountBadge').className = "px-2 py-0.5 rounded text-xs font-mono text-red-400 border border-red-500/30 bg-red-500/10";
+            document.getElementById('accountBadge').innerHTML = `<i class="fas fa-times-circle mr-1"></i> MT5 Disconnected`;
+        }
+
+        // Latest Live Signal
+        const sig = data.last_signal;
+        if (sig && sig.signal !== undefined) {
+            const sigEl = document.getElementById('latestSignal');
+            if (sig.signal === 1) {
+                sigEl.innerText = "BUY (LONG)";
+                sigEl.className = "text-xl font-bold font-mono text-emerald-400 mt-0.5";
+            } else if (sig.signal === -1) {
+                sigEl.innerText = "SELL (SHORT)";
+                sigEl.className = "text-xl font-bold font-mono text-red-400 mt-0.5";
+            } else {
+                sigEl.innerText = "NEUTRAL / HOLD";
+                sigEl.className = "text-xl font-bold font-mono text-zinc-400 mt-0.5";
+            }
+            document.getElementById('signalMeta').innerText = `Regime: ${sig.regime || 'STATIC'} | ATR: ${sig.atr || '-'} | Price: $${sig.price || '-'}`;
+        }
+
+        // Render Positions
+        renderPositions(data.positions || []);
+
+        // Initial Config Sync
+        if (data.config && !window._configInitialized) {
+            window._configInitialized = true;
+            if (data.config.enable_mean_exit !== undefined) {
+                document.getElementById('cfgEnableMeanExit').checked = data.config.enable_mean_exit;
+            }
+            if (data.config.zscore_exit !== undefined) {
+                document.getElementById('cfgZscoreExit').value = data.config.zscore_exit;
+            }
+            if (data.config.max_holding_minutes !== undefined) {
+                document.getElementById('cfgMaxHoldMins').value = data.config.max_holding_minutes;
+            }
+        }
+
+        // Render Logs
+        renderLogs(data.logs || []);
+
+    } catch (e) {
+        console.error("Error polling MT5 engine status:", e);
+    }
+}
+
+function renderPositions(positions) {
+    const tbody = document.getElementById('positionsTableBody');
+    document.getElementById('posCount').innerText = positions.length;
+
+    if (positions.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="py-6 text-center text-[#4A6A70]">No active positions found on MT5.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = positions.map(p => {
+        const isLong = p.type === "BUY" || p.type === 0;
+        const profit = Number(p.profit || 0);
+        const pClass = profit >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const openPrice = Number(p.open_price ?? p.price_open ?? 0);
+        const currentPrice = Number(p.current_price ?? p.price_current ?? 0);
+        return `
+            <tr class="hover:bg-[#111A20] transition-colors">
+                <td class="py-2.5 text-[#4A6A70]">#${p.ticket}</td>
+                <td class="py-2.5 font-bold text-[#D6E5E3]">${p.symbol}</td>
+                <td class="py-2.5">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${isLong ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30'}">
+                        ${isLong ? 'BUY' : 'SELL'}
+                    </span>
+                </td>
+                <td class="py-2.5 text-amber-400">${Number(p.volume).toFixed(2)}</td>
+                <td class="py-2.5">$${openPrice.toFixed(2)}</td>
+                <td class="py-2.5">$${currentPrice.toFixed(2)}</td>
+                <td class="py-2.5 text-[#4A6A70] text-[10px]">SL: ${p.sl ? '$' + Number(p.sl).toFixed(2) : '-'} | TP: ${p.tp ? '$' + Number(p.tp).toFixed(2) : '-'}</td>
+                <td class="py-2.5 font-bold ${pClass}">${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}</td>
+                <td class="py-2.5 text-right">
+                    <button onclick="closeSinglePosition('${p.symbol}')" class="px-2 py-1 text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded">
+                        Close
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderLogs(logs) {
+    const term = document.getElementById('engineLogTerminal');
+    if (!logs || logs.length === 0) return;
+
+    term.innerHTML = logs.map(l => {
+        let color = "text-[#A0B4B0]";
+        if (l.level === "ERROR") color = "text-red-400";
+        if (l.level === "WARNING") color = "text-amber-400";
+        if (l.message.includes("SUCCESS")) color = "text-emerald-400 font-bold";
+        if (l.message.includes("SIGNAL")) color = "text-cyan-400 font-bold";
+        return `<div class="${color}"><span class="text-[#4A6A70]">[${l.time}]</span> ${escapeHtml(l.message)}</div>`;
+    }).join('');
+
+    term.scrollTop = term.scrollHeight;
+}
+
+function escapeHtml(str) {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function toggleEngine() {
+    const endpoint = isEngineRunning ? '/api/mt5/engine/stop' : '/api/mt5/engine/start';
+    try {
+        const res = await fetch(endpoint, { method: 'POST' });
+        const data = await res.json();
+        fetchEngineStatus();
+    } catch (e) {
+        alert("Engine toggle error: " + e);
+    }
+}
+
+async function saveEngineConfig() {
+    const payload = {
+        strategy_id: document.getElementById('cfgStrategy').value,
+        symbol: document.getElementById('cfgSymbol').value.trim(),
+        timeframe: document.getElementById('cfgTimeframe').value,
+        lot_size: parseFloat(document.getElementById('cfgLotSize').value),
+        max_open_positions: parseInt(document.getElementById('cfgMaxPos').value),
+        poll_interval: parseFloat(document.getElementById('cfgPollRate').value),
+        enable_mean_exit: document.getElementById('cfgEnableMeanExit').checked,
+        zscore_exit: parseFloat(document.getElementById('cfgZscoreExit').value),
+        enable_time_exit: true,
+        max_holding_minutes: parseFloat(document.getElementById('cfgMaxHoldMins').value)
+    };
+    try {
+        const res = await fetch('/api/mt5/engine/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        alert("Configuration Applied Successfully!");
+        fetchEngineStatus();
+    } catch (e) {
+        alert("Error saving config: " + e);
+    }
+}
+
+async function toggleLiveTradingAuthorization() {
+    const isChecked = document.getElementById('liveTradingToggle').checked;
+    const label = document.getElementById('liveTradingLabel');
+    if (isChecked) {
+        if (!confirm("⚠️ CAUTION: You are enabling LIVE ORDER EXECUTION on MetaTrader 5. The engine will place actual market trades with the configured lot size. Proceed?")) {
+            document.getElementById('liveTradingToggle').checked = false;
+            return;
+        }
+        label.innerText = "LIVE TRADING ACTIVE (REAL)";
+        label.className = "text-xs font-mono font-bold text-emerald-400 animate-pulse";
+    } else {
+        label.innerText = "SIMULATION (PAPER)";
+        label.className = "text-xs font-mono font-bold text-amber-400";
+    }
+
+    await fetch('/api/mt5/engine/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ live_trading_enabled: isChecked })
+    });
+}
+
+async function executeManualTrade(action) {
+    const sym = document.getElementById('cfgSymbol').value.trim();
+    const lots = parseFloat(document.getElementById('cfgLotSize').value);
+    if (!confirm(`Place immediate market order: ${action} ${lots} lots on ${sym}?`)) return;
+
+    try {
+        const res = await fetch('/api/mt5/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ticker: sym,
+                action: action,
+                volume: lots,
+                comment: "MIMIR UI Manual"
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert(`Order Filled! Ticket #${data.ticket}`);
+        } else {
+            alert(`Order Failed: ${data.message || JSON.stringify(data)}`);
+        }
+        fetchEngineStatus();
+    } catch (e) {
+        alert("Order error: " + e);
+    }
+}
+
+async function closeSinglePosition(symbol) {
+    if (!confirm(`Close all open positions on ${symbol}?`)) return;
+    try {
+        const res = await fetch(`/api/mt5/close/${symbol}`, { method: 'POST' });
+        const data = await res.json();
+        fetchEngineStatus();
+    } catch (e) {
+        alert("Close error: " + e);
+    }
+}
+
+async function emergencyCloseAll() {
+    const sym = document.getElementById('cfgSymbol').value.trim();
+    if (!confirm(`🚨 EMERGENCY PANIC: Close ALL open positions on ${sym} immediately?`)) return;
+    closeSinglePosition(sym);
+}
+
+function refreshPositions() {
+    fetchEngineStatus();
+}
+
+// Start polling
+fetchEngineStatus();
+pollTimer = setInterval(fetchEngineStatus, 2500);
+</script>
+{% endblock %}

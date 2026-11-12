@@ -202,7 +202,25 @@
                     <div>
                         <label class="block text-xs text-[#8BA4A8] font-mono uppercase mb-1 font-semibold">Select Python Strategy File</label>
                         <select id="pyStrategySelect" class="w-full bg-[#0A161C] border border-[#1A2A30] text-xs text-[#D6E5E3] rounded px-3 py-2 focus:border-[#00A6B2] focus:outline-none font-mono cursor-pointer">
-                            <option value="bong_scalper" selected>bong_scalper.py &mdash; Fast EMA Momentum Scalper</option>
+                            <optgroup label="🌟 Flagship Quant Engines (Lion's Strat)">
+                                <option value="war_rig">War Rig Transmission Engine (war_rig.py)</option>
+                                <option value="stat_arb">Stat-Arb APU Pairs Trading (stat_arb.py)</option>
+                            </optgroup>
+                            <optgroup label="🟡 Gold & Precious Metals (strategies/gold/)">
+                                <option value="gold_math_scalper">Gold Math Scalper (gold_math_scalper.py)</option>
+                                <option value="gold_news_sentiment">Gold Macro &amp; News Sentiment (gold_news_sentiment.py)</option>
+                            </optgroup>
+                            <optgroup label="🚀 Momentum & Scalping (strategies/momentum/)">
+                                <option value="bong_scalper" selected>Fast EMA Momentum Scalper (bong_scalper.py)</option>
+                                <option value="volume_exhaustion_reversal">Volume Exhaustion Reversal (volume_exhaustion.py)</option>
+                            </optgroup>
+                            <optgroup label="🔄 Mean Reversion & Volatility (strategies/mean_reversion/)">
+                                <option value="mean_reversion">Mean Reversion OU Z-Score (ou_mean_reversion.py)</option>
+                                <option value="bollinger_bands">Bollinger Bands &amp; RSI Regime (bollinger_rsi.py)</option>
+                            </optgroup>
+                            <optgroup label="⚖️ Arbitrage & Hedging (strategies/arbitrage/)">
+                                <option value="dual_hedge">Dual Hedge Statistical Hedging (dual_hedge.py)</option>
+                            </optgroup>
                         </select>
                         <span class="text-[10px] text-[#4A6A70] font-mono mt-1 block">Auto-detected from <code class="text-[#00E5F2]">bong_strats/strategies/*.py</code></span>
                     </div>
@@ -233,7 +251,9 @@
                                 <option value="1m">1-Minute (M1)</option>
                                 <option value="5m">5-Minute (M5)</option>
                                 <option value="15m">15-Minute (M15)</option>
+                                <option value="30m">30-Minute (M30)</option>
                                 <option value="1h" selected>1-Hour (H1)</option>
+                                <option value="4h">4-Hour (H4)</option>
                                 <option value="1d">1-Day (D1)</option>
                             </select>
                         </div>
@@ -851,6 +871,7 @@
             const select = document.getElementById('pyStrategySelect');
             if (!select) return;
 
+            const prevSelected = select.value;
             select.innerHTML = '';
             const categories = {};
             catalog.forEach(strat => {
@@ -866,7 +887,9 @@
                     const opt = document.createElement('option');
                     opt.value = strat.id;
                     opt.innerText = `${strat.name} (${strat.id}.py)`;
-                    if (strat.id === 'bong_scalper') opt.selected = true;
+                    if (prevSelected ? strat.id === prevSelected : strat.id === 'bong_scalper') {
+                        opt.selected = true;
+                    }
                     optgroup.appendChild(opt);
                 });
                 select.appendChild(optgroup);

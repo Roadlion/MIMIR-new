@@ -19,7 +19,7 @@ except Exception:
     settings = None
     HAS_DB = False
 
-from .static_strategies import USER_STRATEGY_REGISTRY
+from .registry import USER_STRATEGY_REGISTRY, reload_registries
 from .indicators import (
     compute_ou_features,
     compute_bollinger_features,
@@ -38,7 +38,10 @@ def get_or_create_strategy_instances(ticker: str) -> Dict[str, Any]:
     if ticker_clean not in _ACTIVE_USER_STRATEGIES:
         _ACTIVE_USER_STRATEGIES[ticker_clean] = {}
         for name, cls in USER_STRATEGY_REGISTRY.items():
-            _ACTIVE_USER_STRATEGIES[ticker_clean][name] = cls(mode="adaptive")
+            try:
+                _ACTIVE_USER_STRATEGIES[ticker_clean][name] = cls(mode="adaptive")
+            except TypeError:
+                _ACTIVE_USER_STRATEGIES[ticker_clean][name] = cls()
     return _ACTIVE_USER_STRATEGIES[ticker_clean]
 
 

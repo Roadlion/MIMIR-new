@@ -19,8 +19,60 @@ from backend.app.integration.mt5_executor import (
     LIVE_TRADING_ENABLED,
 )
 import backend.app.integration.mt5_executor as mt5_exec
+from backend.app.services.mt5_live_engine import (
+    get_engine_status,
+    start_live_engine,
+    stop_live_engine,
+    update_live_config,
+)
 
 router = APIRouter(prefix="/api/mt5", tags=["MT5 Direct Live Trading"])
+
+
+class MT5LiveConfigModel(BaseModel):
+    strategy_id: Optional[str] = None
+    symbol: Optional[str] = None
+    timeframe: Optional[str] = None
+    lot_size: Optional[float] = None
+    poll_interval: Optional[float] = None
+    max_open_positions: Optional[int] = None
+    live_trading_enabled: Optional[bool] = None
+    enable_mean_exit: Optional[bool] = None
+    zscore_exit: Optional[float] = None
+    enable_time_exit: Optional[bool] = None
+    max_holding_minutes: Optional[float] = None
+
+
+@router.get("/engine/status")
+def get_live_engine_status():
+    """Returns the comprehensive real-time trading engine state."""
+    return get_engine_status()
+
+
+@router.post("/engine/start")
+def start_engine():
+    """Starts the autonomous tick-by-tick real-time trading loop."""
+    return start_live_engine()
+
+
+@router.post("/engine/stop")
+def stop_engine():
+    """Stops the autonomous real-time trading loop."""
+    return stop_live_engine()
+
+
+@router.post("/engine/config")
+def update_engine_configuration(cfg: MT5LiveConfigModel):
+    """Updates live strategy parameters, symbol, timeframe, or lot size."""
+    data = cfg.dict(exclude_unset=True)
+    if "live_trading_enabled" in data:
+        mt5_exec.LIVE_TRADING_ENABLED = data.pop("live_trading_enabled")
+    updated = update_live_config(data)
+    return {
+        "success": True,
+        "config": updated,
+        "live_trading_enabled": mt5_exec.LIVE_TRADING_ENABLED,
+    }
 
 
 class MT5OrderRequest(BaseModel):
