@@ -54,6 +54,7 @@ _live_config = {
     "lot_size": 0.01,
     "poll_interval": 3.0,
     "is_active": False,
+    "live_trading_enabled": False,
     "max_open_positions": 1,
     "sl_atr_mult": 1.5,
     "tp_atr_mult": 3.0,
@@ -89,12 +90,14 @@ def get_engine_status() -> Dict[str, Any]:
     with _engine_lock:
         is_running = _engine_running
         cfg = dict(_live_config)
+    cfg["live_trading_enabled"] = mt5_exec.LIVE_TRADING_ENABLED
 
     account_info = get_mt5_account_info()
     positions = get_mt5_positions(symbol=cfg.get("symbol"))
 
     return {
         "engine_running": is_running,
+        "live_trading_enabled": mt5_exec.LIVE_TRADING_ENABLED,
         "config": cfg,
         "account": account_info,
         "positions": positions,
@@ -109,6 +112,10 @@ def update_live_config(new_config: Dict[str, Any]) -> Dict[str, Any]:
         for k, v in new_config.items():
             if k in _live_config:
                 _live_config[k] = v
+        # Synchronize live trading authorization
+        if "live_trading_enabled" in new_config:
+            mt5_exec.LIVE_TRADING_ENABLED = bool(new_config["live_trading_enabled"])
+            _live_config["live_trading_enabled"] = mt5_exec.LIVE_TRADING_ENABLED
         # Synchronize global lot size
         if "lot_size" in new_config:
             mt5_exec.DEFAULT_LOT_SIZE = float(new_config["lot_size"])

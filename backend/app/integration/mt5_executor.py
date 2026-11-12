@@ -17,9 +17,16 @@ except ImportError:
     mt5 = None
     HAS_MT5 = False
 
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parents[3] / ".env"
+load_dotenv(env_path)
+
 DEFAULT_MAGIC_NUMBER = 202608
 DEFAULT_LOT_SIZE = 0.01
-LIVE_TRADING_ENABLED = False  # Master toggle: toggleable via API/UI
+LIVE_TRADING_ENABLED = os.environ.get("MIMIR_LIVE_TRADING_ENABLED", "1").lower() in ("1", "true", "yes")
 
 
 def initialize_mt5() -> bool:

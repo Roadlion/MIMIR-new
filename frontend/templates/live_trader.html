@@ -285,6 +285,21 @@ async function fetchEngineStatus() {
             badge.innerText = "STATUS: OFFLINE";
         }
 
+        // Sync Live Trading Authorization Toggle
+        const isLive = Boolean(data.live_trading_enabled ?? data.config?.live_trading_enabled);
+        const liveToggle = document.getElementById('liveTradingToggle');
+        const liveLabel = document.getElementById('liveTradingLabel');
+        if (liveToggle && liveLabel) {
+            liveToggle.checked = isLive;
+            if (isLive) {
+                liveLabel.innerText = "LIVE TRADING ACTIVE (REAL)";
+                liveLabel.className = "text-xs font-mono font-bold text-emerald-400 animate-pulse";
+            } else {
+                liveLabel.innerText = "SIMULATION (PAPER)";
+                liveLabel.className = "text-xs font-mono font-bold text-amber-400";
+            }
+        }
+
         // Account Information
         const acct = data.account;
         if (acct && acct.status === "ONLINE") {
@@ -426,7 +441,8 @@ async function saveEngineConfig() {
         enable_mean_exit: document.getElementById('cfgEnableMeanExit').checked,
         zscore_exit: parseFloat(document.getElementById('cfgZscoreExit').value),
         enable_time_exit: true,
-        max_holding_minutes: parseFloat(document.getElementById('cfgMaxHoldMins').value)
+        max_holding_minutes: parseFloat(document.getElementById('cfgMaxHoldMins').value),
+        live_trading_enabled: document.getElementById('liveTradingToggle').checked
     };
     try {
         const res = await fetch('/api/mt5/engine/config', {

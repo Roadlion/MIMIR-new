@@ -66,7 +66,7 @@ def update_engine_configuration(cfg: MT5LiveConfigModel):
     """Updates live strategy parameters, symbol, timeframe, or lot size."""
     data = cfg.dict(exclude_unset=True)
     if "live_trading_enabled" in data:
-        mt5_exec.LIVE_TRADING_ENABLED = data.pop("live_trading_enabled")
+        mt5_exec.LIVE_TRADING_ENABLED = bool(data["live_trading_enabled"])
     updated = update_live_config(data)
     return {
         "success": True,

@@ -56,7 +56,7 @@ echo.
 echo Starting MIMIR backend server on http://0.0.0.0:8000 ...
 echo (Keep this window open while using MIMIR. Press Ctrl+C to stop.)
 echo.
-".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+".venv\Scripts\python.exe" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 
 echo.
 echo ===================================================
