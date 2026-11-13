@@ -256,6 +256,164 @@
             </div>
         </div>
     </div>
+
+    <!-- Institutional Risk Manager & What-If Scenario Stress Deck -->
+    <div class="mt-8 bg-[#0A161C] border border-[#1A2A30] rounded-xl p-6 shadow-xl">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-[#1A2A30] pb-4 mb-6 gap-4">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-cyan-400"></span>
+                    <h3 class="text-base font-bold font-mono text-[#D6E5E3] uppercase tracking-wider flex items-center gap-2">
+                        <i class="fas fa-shield-alt text-[#00A6B2]"></i> Quantitative Risk Manager & Stress Test Deck
+                    </h3>
+                    <span id="riskGradeBadge" class="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                        ANALYZING...
+                    </span>
+                </div>
+                <p id="riskVerdict" class="text-xs font-mono text-[#4A6A70] mt-1">
+                    Multi-asset & multi-strategy portfolio risk analysis, loss clustering, and parametric volatility stress tests.
+                </p>
+            </div>
+
+            <!-- Controls / Filter -->
+            <div class="flex items-center gap-3">
+                <select id="riskTimeRange" onchange="fetchRiskAnalytics()" class="bg-[#060D11] border border-[#1A2A30] rounded px-3 py-1.5 text-xs font-mono text-[#D6E5E3] focus:border-[#00A6B2] outline-none">
+                    <option value="30">Last 30 Days</option>
+                    <option value="90" selected>Last 90 Days</option>
+                    <option value="365">Last 365 Days</option>
+                </select>
+                <button onclick="fetchRiskAnalytics(); fetchScenarioStress();" class="px-3 py-1.5 bg-[#00A6B2]/10 hover:bg-[#00A6B2]/20 text-[#00A6B2] border border-[#00A6B2]/30 rounded text-xs font-mono font-bold flex items-center gap-1.5 transition-colors">
+                    <i class="fas fa-redo-alt"></i> Re-Calculate
+                </button>
+            </div>
+        </div>
+
+        <!-- 4 Risk Diagnostic Pillars -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <!-- 1. Drawdown & Capital Buffer -->
+            <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-4">
+                <div class="text-[11px] font-mono text-[#4A6A70] uppercase flex items-center justify-between">
+                    <span>Drawdown & Ruin Risk</span>
+                    <i class="fas fa-chart-line text-amber-400"></i>
+                </div>
+                <div class="mt-2">
+                    <div class="text-2xl font-bold font-mono text-amber-400" id="riskMaxDD">$-.--</div>
+                    <div class="text-[11px] font-mono text-[#A0B4B0] mt-0.5" id="riskCurrentDD">Current DD: $-.--</div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-[#111A20] text-[10px] font-mono space-y-1">
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Monte Carlo VaR 95%:</span>
+                        <span id="riskVaR95" class="text-red-400 font-bold">$-.--</span>
+                    </div>
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Recommended Buffer:</span>
+                        <span id="riskBuffer" class="text-cyan-400 font-bold">$-.--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Expectancy & Edge -->
+            <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-4">
+                <div class="text-[11px] font-mono text-[#4A6A70] uppercase flex items-center justify-between">
+                    <span>Expectancy & Edge</span>
+                    <i class="fas fa-coins text-emerald-400"></i>
+                </div>
+                <div class="mt-2">
+                    <div class="text-2xl font-bold font-mono text-emerald-400" id="riskProfitFactor">-.--</div>
+                    <div class="text-[11px] font-mono text-[#A0B4B0] mt-0.5" id="riskWinRate">Win Rate: --% (-- trades)</div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-[#111A20] text-[10px] font-mono space-y-1">
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Payoff Ratio:</span>
+                        <span id="riskPayoff" class="text-[#D6E5E3] font-bold">-.--</span>
+                    </div>
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Expected Gain/Trade:</span>
+                        <span id="riskExpectancy" class="text-emerald-400 font-bold">+$-.--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Loss Clustering & Streaks -->
+            <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-4">
+                <div class="text-[11px] font-mono text-[#4A6A70] uppercase flex items-center justify-between">
+                    <span>Loss Clustering</span>
+                    <i class="fas fa-link text-purple-400"></i>
+                </div>
+                <div class="mt-2">
+                    <div class="text-2xl font-bold font-mono text-purple-400" id="riskMaxLossStreak">-</div>
+                    <div class="text-[11px] font-mono text-[#A0B4B0] mt-0.5" id="riskMaxWinStreak">Max Win Streak: -</div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-[#111A20] text-[10px] font-mono space-y-1">
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Current Streak:</span>
+                        <span id="riskCurrentStreak" class="text-[#D6E5E3] font-bold">-</span>
+                    </div>
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Total Realized P&L:</span>
+                        <span id="riskNetPnL" class="text-emerald-400 font-bold">+$-.--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Psychology & Friction -->
+            <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-4">
+                <div class="text-[11px] font-mono text-[#4A6A70] uppercase flex items-center justify-between">
+                    <span>Discipline & Friction</span>
+                    <i class="fas fa-stopwatch text-cyan-400"></i>
+                </div>
+                <div class="mt-2">
+                    <div class="text-2xl font-bold font-mono text-cyan-400" id="riskAsymmetryRatio">-.--x</div>
+                    <div class="text-[11px] font-mono text-[#A0B4B0] mt-0.5" id="riskHoldTimes">Hold: W -m / L -m</div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-[#111A20] text-[10px] font-mono space-y-1">
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Broker Drag:</span>
+                        <span id="riskFrictionDrag" class="text-amber-400 font-bold">--%</span>
+                    </div>
+                    <div class="flex justify-between text-[#4A6A70]">
+                        <span>Commission / Swap:</span>
+                        <span id="riskCommissions" class="text-[#D6E5E3] font-bold">$-.--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- What-If Scenario Stress Testing Matrix -->
+        <div class="bg-[#060D11] border border-[#1A2A30] rounded-lg p-5">
+            <div class="flex items-center justify-between border-b border-[#1A2A30] pb-3 mb-3">
+                <div>
+                    <h4 class="text-xs font-mono font-bold text-[#D6E5E3] uppercase tracking-wider flex items-center gap-2">
+                        <i class="fas fa-bolt text-amber-400"></i> What-If Volatility Stress Test Matrix (Parametric ATR Shock)
+                    </h4>
+                    <p class="text-[11px] font-mono text-[#4A6A70] mt-0.5">
+                        Simulating strategy execution under quiet, normal, elevated, and crisis-level volatility spikes on current symbol.
+                    </p>
+                </div>
+                <span class="text-[10px] font-mono text-[#4A6A70]">Tested against recent 300 bars</span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left font-mono text-xs">
+                    <thead>
+                        <tr class="text-[#4A6A70] border-b border-[#1A2A30]">
+                            <th class="pb-2">Scenario</th>
+                            <th class="pb-2">Volatility Multiplier</th>
+                            <th class="pb-2">Opportunities</th>
+                            <th class="pb-2">Long / Short Mix</th>
+                            <th class="pb-2">Resilience Status</th>
+                            <th class="pb-2">Risk Advisory</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scenarioTableBody" class="divide-y divide-[#16252C] text-[#D6E5E3]">
+                        <tr>
+                            <td colspan="6" class="py-4 text-center text-[#4A6A70]">Running stress simulations...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -529,8 +687,111 @@ function refreshPositions() {
     fetchEngineStatus();
 }
 
+async function fetchRiskAnalytics() {
+    const days = document.getElementById('riskTimeRange')?.value || 90;
+    try {
+        const res = await fetch(`/api/mt5/risk/analysis?days=${days}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const m = data.metrics;
+        const mc = data.monte_carlo;
+
+        if (!m || m.total_trades === 0) {
+            document.getElementById('riskGradeBadge').innerText = "NO TRADES";
+            document.getElementById('riskVerdict').innerText = "No closed trades recorded in the selected history period.";
+            return;
+        }
+
+        // Badge & Verdict
+        const badge = document.getElementById('riskGradeBadge');
+        badge.innerText = `GRADE ${m.health_grade} (${m.health_score}/100)`;
+        if (m.health_grade === 'A') {
+            badge.className = "px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+        } else if (m.health_grade === 'B') {
+            badge.className = "px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30";
+        } else if (m.health_grade === 'C') {
+            badge.className = "px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30";
+        } else {
+            badge.className = "px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-red-500/10 text-red-400 border border-red-500/30";
+        }
+        document.getElementById('riskVerdict').innerText = `${m.verdict} Analyzed across ${m.total_trades} round-turn deals.`;
+
+        // 1. Drawdown
+        document.getElementById('riskMaxDD').innerText = `-$${Number(m.max_drawdown_dollars).toFixed(2)}`;
+        document.getElementById('riskCurrentDD').innerText = `Current DD: -$${Number(m.current_drawdown).toFixed(2)}`;
+        document.getElementById('riskVaR95').innerText = mc?.var_95_max_drawdown ? `-$${Number(mc.var_95_max_drawdown).toFixed(2)}` : 'N/A';
+        document.getElementById('riskBuffer').innerText = mc?.recommended_min_buffer ? `$${Number(mc.recommended_min_buffer).toFixed(2)}` : 'N/A';
+
+        // 2. Expectancy & Edge
+        document.getElementById('riskProfitFactor').innerText = Number(m.profit_factor).toFixed(2);
+        document.getElementById('riskWinRate').innerText = `Win Rate: ${m.win_rate_pct}% (${m.win_count}W / ${m.loss_count}L)`;
+        document.getElementById('riskPayoff').innerText = `${Number(m.payoff_ratio).toFixed(2)}x (Avg W $${m.avg_win} / L $${m.avg_loss})`;
+        document.getElementById('riskExpectancy').innerText = `${m.expectancy_per_trade >= 0 ? '+' : ''}$${Number(m.expectancy_per_trade).toFixed(2)}`;
+
+        // 3. Loss Clustering
+        document.getElementById('riskMaxLossStreak').innerText = `${m.max_consecutive_losses} in a row`;
+        document.getElementById('riskMaxWinStreak').innerText = `Max Win Streak: ${m.max_consecutive_wins}`;
+        document.getElementById('riskCurrentStreak').innerText = m.current_streak;
+        document.getElementById('riskNetPnL').innerText = `${m.net_pnl >= 0 ? '+' : ''}$${Number(m.net_pnl).toFixed(2)}`;
+        document.getElementById('riskNetPnL').className = `font-bold ${m.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+
+        // 4. Discipline & Friction
+        document.getElementById('riskAsymmetryRatio').innerText = `${Number(m.duration_asymmetry_ratio).toFixed(2)}x`;
+        document.getElementById('riskHoldTimes').innerText = `Hold: W ${m.avg_hold_win_mins}m / L ${m.avg_hold_loss_mins}m`;
+        document.getElementById('riskFrictionDrag').innerText = `${m.friction_drag_pct}% of gross`;
+        document.getElementById('riskCommissions').innerText = `$${Math.abs(m.total_commission + m.total_swap).toFixed(2)}`;
+
+    } catch (e) {
+        console.error("Error fetching risk analytics:", e);
+    }
+}
+
+async function fetchScenarioStress() {
+    const sym = document.getElementById('cfgSymbol')?.value.trim() || 'XAUUSD';
+    const tf = document.getElementById('cfgTimeframe')?.value || 'M15';
+    const strat = document.getElementById('cfgStrategy')?.value || 'gold_math_scalper';
+
+    try {
+        const res = await fetch(`/api/mt5/risk/scenarios?symbol=${sym}&timeframe=${tf}&strategy_id=${strat}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sc = data.data?.scenarios || [];
+
+        const tbody = document.getElementById('scenarioTableBody');
+        if (sc.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-[#4A6A70]">No scenario results generated.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = sc.map(s => {
+            let resBadge = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+            if (s.resilience === "SURVIVES") resBadge = "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30";
+            if (s.resilience === "CIRCUIT_BREAKER_ACTIVE") resBadge = "bg-amber-500/10 text-amber-400 border border-amber-500/30";
+
+            return `
+                <tr class="hover:bg-[#111A20] transition-colors">
+                    <td class="py-2.5 font-bold text-[#D6E5E3]">${s.label}</td>
+                    <td class="py-2.5 text-amber-400">${s.multiplier.toFixed(1)}x ATR</td>
+                    <td class="py-2.5">${s.trade_opportunities} signals</td>
+                    <td class="py-2.5 text-[#A0B4B0] text-[11px]">${s.long_bars} Long / ${s.short_bars} Short</td>
+                    <td class="py-2.5">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold ${resBadge}">
+                            ${s.resilience}
+                        </span>
+                    </td>
+                    <td class="py-2.5 text-[#4A6A70] text-[11px]">${s.advisory}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (e) {
+        console.error("Error fetching scenario stress:", e);
+    }
+}
+
 // Start polling
 fetchEngineStatus();
+fetchRiskAnalytics();
+fetchScenarioStress();
 pollTimer = setInterval(fetchEngineStatus, 2500);
 </script>
 {% endblock %}

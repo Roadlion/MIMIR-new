@@ -25,6 +25,12 @@ from backend.app.services.mt5_live_engine import (
     stop_live_engine,
     update_live_config,
 )
+from backend.app.analytics.mt5_risk_analyzer import (
+    fetch_and_pair_mt5_deals,
+    compute_risk_metrics,
+    run_monte_carlo_stress_test,
+    run_volatility_scenario_stress_test,
+)
 
 router = APIRouter(prefix="/api/mt5", tags=["MT5 Direct Live Trading"])
 
@@ -148,3 +154,49 @@ def close_ticker_positions(ticker: str):
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("message"))
     return result
+
+
+@router.get("/risk/analysis")
+def get_risk_analysis(
+    days: int = Query(default=90, ge=1, le=3650),
+    symbol: Optional[str] = Query(default=None),
+    magic: Optional[int] = Query(default=None)
+):
+    """
+    Computes institutional risk metrics & Monte Carlo simulations from MT5 trade deals.
+    Asset-agnostic and strategy-agnostic.
+    """
+    trades = fetch_and_pair_mt5_deals(days=days, symbol=symbol, magic=magic)
+    metrics = compute_risk_metrics(trades)
+    monte_carlo = run_monte_carlo_stress_test(trades)
+    return {
+        "success": True,
+        "query": {
+            "days": days,
+            "symbol": symbol or "ALL",
+            "magic": magic or "ALL"
+        },
+        "metrics": metrics,
+        "monte_carlo": monte_carlo
+    }
+
+
+@router.get("/risk/scenarios")
+def get_scenario_stress_test(
+    symbol: str = Query(default="XAUUSD"),
+    timeframe: str = Query(default="M15"),
+    strategy_id: str = Query(default="gold_math_scalper")
+):
+    """
+    Simulates strategy resilience under parametric volatility shocks (1.0x, 1.5x, 2.0x, 3.0x).
+    """
+    result = run_volatility_scenario_stress_test(
+        symbol=symbol,
+        timeframe=timeframe,
+        strategy_id=strategy_id
+    )
+    return {
+        "success": True,
+        "data": result
+    }
+
