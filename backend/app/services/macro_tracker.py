@@ -315,12 +315,30 @@ def is_buy_blocked_by_macro(ticker_sector: Optional[str], conn=None) -> tuple[bo
     return False, ""
 
 
-def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
+DEFENSIVE_TICKERS = {
+    # Defensive Sector ETFs
+    "XLU", "XLP", "XLE", "XLV",
+    # Safe Haven Commodities & Miners
+    "GLD", "SLV", "GDX", "NEM", "GOLD",
+    # Institutional Defensive Staples, Utilities & Energy
+    "KO", "PEP", "WMT", "PG", "COST", "NEE", "SO", "DUK", "XOM", "CVX"
+}
+
+
+def is_market_regime_bullish(conn=None, ticker: Optional[str] = None) -> tuple[bool, str]:
     """
     Checks if the broader US equity market is in a healthy, bullish/neutral regime:
     1. SPY is trading above its 50-day Simple Moving Average (SMA_50).
     2. ^VIX is at or below 25.0 (absence of high-volatility panic).
-    Returns (is_bullish: bool, reason: str).
+
+    P0 Track 2 Upgrade: Defensive Macro Regime Exemption
+    If the market regime is defensive (SPY < 50-SMA or VIX > 25.0), but a candidate
+    `ticker` belongs to defensive safe-haven corridors (XLU, XLP, XLE, GLD, etc.)
+    and demonstrates positive Relative Strength (RS >= +2.0% vs SPY over 5 days)
+    while holding above its 20-day SMA, a DEFENSIVE_EXEMPTION is granted to capture
+    institutional flight-to-safety capital flows.
+
+    Returns (is_bullish_or_exempt: bool, reason: str).
     """
     close_conn = False
     if conn is None:
@@ -329,6 +347,12 @@ def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
 
     cur = conn.cursor()
     try:
+        macro_defensive = False
+        macro_reasons = []
+        latest_spy = 0.0
+        sma_50 = 0.0
+        spy_closes = []
+
         # 1. Fetch SPY prices for 50-day SMA
         cur.execute(f"""
             SELECT close
@@ -345,7 +369,8 @@ def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
             sma_50 = sum(spy_closes) / len(spy_closes)
 
             if latest_spy < sma_50:
-                return False, f"Market regime defensive: SPY (${latest_spy:.2f}) < 50-day SMA (${sma_50:.2f}). Swing longs paused."
+                macro_defensive = True
+                macro_reasons.append(f"SPY (${latest_spy:.2f}) < 50-day SMA (${sma_50:.2f})")
 
         # 2. Fetch latest ^VIX level
         cur.execute(f"""
@@ -361,9 +386,75 @@ def is_market_regime_bullish(conn=None) -> tuple[bool, str]:
             if raw_vix is not None:
                 latest_vix = float(raw_vix)
                 if latest_vix > 25.0:
-                    return False, f"Market regime elevated risk: VIX at {latest_vix:.1f} > 25.0 threshold. Swing longs paused."
+                    macro_defensive = True
+                    macro_reasons.append(f"VIX at {latest_vix:.1f} > 25.0 threshold")
 
-        return True, "Market regime healthy (SPY >= 50-SMA and VIX <= 25.0)."
+        # 3. If market is healthy, return bullish approval immediately
+        if not macro_defensive:
+            return True, "Market regime healthy (SPY >= 50-SMA and VIX <= 25.0)."
+
+        base_issue = "; ".join(macro_reasons)
+
+        # 4. Track 2: Evaluate Defensive Regime Exemption if ticker is provided
+        if ticker:
+            clean_ticker = ticker.strip().upper()
+            is_defensive_candidate = clean_ticker in DEFENSIVE_TICKERS
+
+            if not is_defensive_candidate:
+                # Check institutional relationship taxonomy in mimir_asset_relationships
+                try:
+                    cur.execute(f"""
+                        SELECT 1
+                        FROM {settings.mimir_schema}.mimir_asset_relationships
+                        WHERE (source_key = %s OR target_key = %s)
+                          AND is_active = TRUE
+                          AND (
+                            economic_rationale ILIKE '%%utility%%'
+                            OR economic_rationale ILIKE '%%staple%%'
+                            OR economic_rationale ILIKE '%%gold%%'
+                            OR economic_rationale ILIKE '%%defense%%'
+                            OR economic_rationale ILIKE '%%energy%%'
+                          )
+                        LIMIT 1
+                    """, (clean_ticker, clean_ticker))
+                    if cur.fetchone():
+                        is_defensive_candidate = True
+                except Exception:
+                    pass
+
+            if is_defensive_candidate:
+                # Query candidate ticker 20-day OHLCV for Relative Strength & SMA check
+                cur.execute(f"""
+                    SELECT close
+                    FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                    WHERE ticker = %s
+                    ORDER BY date DESC
+                    LIMIT 20
+                """, (clean_ticker,))
+                t_rows = cur.fetchall()
+                if len(t_rows) >= 5:
+                    t_closes = [float(r['close'] if isinstance(r, dict) else r[0]) for r in t_rows]
+                    curr_t = t_closes[0]
+                    p5_t = t_closes[min(4, len(t_closes) - 1)]
+                    r_t_5d = ((curr_t - p5_t) / p5_t) * 100.0 if p5_t > 0 else 0.0
+
+                    if len(spy_closes) >= 5:
+                        p5_spy = spy_closes[min(4, len(spy_closes) - 1)]
+                        r_spy_5d = ((latest_spy - p5_spy) / p5_spy) * 100.0 if p5_spy > 0 else 0.0
+                    else:
+                        r_spy_5d = 0.0
+
+                    rs_5d = r_t_5d - r_spy_5d
+                    sma_20_t = sum(t_closes) / len(t_closes)
+
+                    # Grant exemption if Relative Strength >= +2.0% and price holds above 20-SMA
+                    if rs_5d >= 2.0 and curr_t >= sma_20_t:
+                        return True, (
+                            f"DEFENSIVE_EXEMPTION granted: {clean_ticker} demonstrates institutional safe-haven rotation "
+                            f"(+{rs_5d:.1f}% Relative Strength vs SPY over 5D, trading above 20-SMA). Swing long permitted."
+                        )
+
+        return False, f"Market regime defensive ({base_issue}). Non-defensive longs paused."
     except Exception as e:
         logger.warning(f"[MACRO_TRACKER] is_market_regime_bullish check error: {e}")
         return True, "Market check skipped on exception."

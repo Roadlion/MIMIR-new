@@ -41,10 +41,10 @@ def _get_raw_connection(autocommit=True, options="-c zero_damaged_pages=on"):
     return conn
 
 
-def sync_database_buffers() -> bool:
-    """Executes a CHECKPOINT to flush all dirty shared memory buffers to disk."""
+def sync_database_buffers(timeout_seconds: int = 3) -> bool:
+    """Executes a CHECKPOINT to flush all dirty shared memory buffers to disk with strict timeout."""
     try:
-        conn = _get_raw_connection(autocommit=True)
+        conn = _get_raw_connection(autocommit=True, options=f"-c zero_damaged_pages=on -c statement_timeout={timeout_seconds * 1000}")
         cur = conn.cursor()
         cur.execute("CHECKPOINT;")
         cur.close()
@@ -52,7 +52,7 @@ def sync_database_buffers() -> bool:
         logger.info("[DB_INTEGRITY] Database buffers flushed to disk (CHECKPOINT successful).")
         return True
     except Exception as e:
-        logger.warning(f"[DB_INTEGRITY] Failed to run CHECKPOINT: {e}")
+        logger.warning(f"[DB_INTEGRITY] Failed to run CHECKPOINT (skipped safely): {e}")
         return False
 
 

@@ -58,7 +58,7 @@ except ImportError:
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-WAR_RIG_CONVICTION_THRESHOLD = 75.0
+WAR_RIG_CONVICTION_THRESHOLD = 85.0
 MINIMUM_RR_RATIO = 2.50
 
 
@@ -150,6 +150,98 @@ def calculate_war_rig_execution_bounds(
     rr = round((target_price - last_close) / max(0.01, (last_close - stop_loss)), 2)
 
     return round(last_close, 2), target_price, stop_loss, rr
+
+
+def calculate_ihmr(
+    cur,
+    ticker: str,
+    eval_date: date,
+    current_price: float
+) -> Tuple[float, float, float, str, str]:
+    """
+    P2 Track 5: Implied vs Historical Move Ratio (IHMR) Pre-Earnings Volatility Filter.
+    Calculates the ratio of market-implied earnings move to actual realized historical moves:
+        IHMR = Implied Move % / Historical Realized Move %
+    - IHMR > 1.40: IV_CRUSH_HAZARD (Retail hype over-pricing catalyst; route to credit spreads)
+    - 0.80 <= IHMR <= 1.15: UNDERPRICED_CATALYST (Asymmetric pre-earnings runner)
+    - Returns (ihmr, implied_move_pct, hist_move_pct, status, recommendation).
+    """
+    clean_ticker = ticker.strip().upper()
+    hist_move_pct = 4.5
+    try:
+        # 1. Historical Realized 1-Day Earnings Moves (up to last 4 prints)
+        cur.execute(f"""
+            SELECT earnings_date
+            FROM {settings.mimir_schema}.mimir_earnings_calendar
+            WHERE ticker = %s AND earnings_date < %s
+            ORDER BY earnings_date DESC
+            LIMIT 4
+        """, (clean_ticker, eval_date))
+        past_dates = [r[0] for r in cur.fetchall()]
+
+        hist_moves = []
+        for ed in past_dates:
+            cur.execute(f"""
+                SELECT close
+                FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                WHERE ticker = %s AND date >= %s - INTERVAL '3 days' AND date <= %s + INTERVAL '3 days'
+                ORDER BY date ASC
+                LIMIT 3
+            """, (clean_ticker, ed, ed))
+            p_rows = cur.fetchall()
+            if len(p_rows) >= 2:
+                c1 = float(p_rows[0][0])
+                c2 = float(p_rows[-1][0])
+                if c1 > 0:
+                    hist_moves.append(abs(c2 - c1) / c1 * 100.0)
+
+        if hist_moves:
+            hist_move_pct = sum(hist_moves) / len(hist_moves)
+        hist_move_pct = max(1.5, hist_move_pct)
+    except Exception as e:
+        logger.warning(f"[WAR_RIG IHMR] Error fetching historical moves for {clean_ticker}: {e}")
+
+    # 2. Implied Move from Options Chain or ATR Proxy
+    implied_move_pct = 5.0
+    try:
+        from .options_data import get_options_service
+        svc = get_options_service()
+        chain = svc.fetch_chain(clean_ticker)
+        if chain and chain.calls and chain.puts and current_price > 0:
+            atm_call = min(chain.calls, key=lambda c: abs(c.strike - current_price))
+            atm_put = min(chain.puts, key=lambda p: abs(p.strike - current_price))
+            p_call = (atm_call.bid + atm_call.ask) / 2.0 if (atm_call.bid + atm_call.ask) > 0 else atm_call.last_price
+            p_put = (atm_put.bid + atm_put.ask) / 2.0 if (atm_put.bid + atm_put.ask) > 0 else atm_put.last_price
+            if p_call > 0 and p_put > 0:
+                implied_move_pct = ((p_call + p_put) / current_price) * 100.0
+    except Exception:
+        # Fallback to 14-day ATR proxy
+        try:
+            cur.execute(f"""
+                SELECT high, low, close FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                WHERE ticker = %s ORDER BY date DESC LIMIT 15
+            """, (clean_ticker,))
+            rows = cur.fetchall()
+            if len(rows) >= 5 and current_price > 0:
+                trs = [max(float(r[0]) - float(r[1]), abs(float(r[0]) - float(rows[i+1][2]))) for i, r in enumerate(rows[:-1])]
+                atr_pct = (sum(trs) / len(trs) / current_price) * 100.0
+                implied_move_pct = atr_pct * 1.5
+        except Exception:
+            pass
+
+    ihmr = implied_move_pct / hist_move_pct if hist_move_pct > 0 else 1.0
+
+    if ihmr > 1.40:
+        status = "IV_CRUSH_HAZARD"
+        rec = "RECOMMEND_NITROUS_MODE_B_CREDIT_SPREAD"
+    elif 0.80 <= ihmr <= 1.15:
+        status = "UNDERPRICED_CATALYST"
+        rec = "ASYMMETRIC_UNDERPRICED_CATALYST"
+    else:
+        status = "NORMAL_VOLATILITY"
+        rec = "STANDARD_EXECUTION"
+
+    return round(ihmr, 2), round(implied_move_pct, 2), round(hist_move_pct, 2), status, rec
 
 
 class WarRigEngine:
@@ -388,6 +480,19 @@ class WarRigEngine:
                 if valuation != "OVERVALUED":
                     turbo_a_score += 2.0
 
+                # P2 Track 5: Evaluate IHMR Pre-Earnings Filter
+                curr_p = float(df_prices['close'].iloc[-1]) if df_prices is not None and not df_prices.empty else 100.0
+                ihmr, implied_pct, hist_pct, ihmr_status, ihmr_rec = calculate_ihmr(cur, ticker, eval_date, curr_p)
+
+                if ihmr_status == "IV_CRUSH_HAZARD":
+                    # Severe retail volatility bubble: penalize equity long momentum to prevent IV crush trap
+                    turbo_a_score = max(6.0, turbo_a_score - 10.0)
+                    logger.info(f"[WAR_RIG IHMR] {ticker} flagged as IV_CRUSH_HAZARD (IHMR={ihmr:.2f}). Long equity penalized.")
+                elif ihmr_status == "UNDERPRICED_CATALYST":
+                    # Options market is sleeping on catalyst: award underpriced catalyst bonus
+                    turbo_a_score = min(38.0, turbo_a_score + 8.0)
+                    logger.info(f"[WAR_RIG IHMR] {ticker} awarded UNDERPRICED_CATALYST bonus (IHMR={ihmr:.2f}).")
+
                 details["turbo_a_active"] = True
                 details["pre_earnings"] = {
                     "earnings_date": earn_date.strftime('%Y-%m-%d'),
@@ -396,7 +501,12 @@ class WarRigEngine:
                     "avg_sentiment": round(avg_sent, 2),
                     "confidence": round(avg_conf, 2),
                     "eps_growth": eps_growth,
-                    "valuation": valuation
+                    "valuation": valuation,
+                    "ihmr": ihmr,
+                    "implied_move_pct": implied_pct,
+                    "historical_move_pct": hist_pct,
+                    "ihmr_status": ihmr_status,
+                    "nitrous_directive": ihmr_rec
                 }
 
             # ── TURBO B: Supply Chain Spillover & High-Magnitude News ────────
@@ -912,14 +1022,20 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
         # Universe assembly: active tickers with upcoming earnings, recent catalysts, or top liquidity
         candidate_tickers = set([t.strip().upper() for t in DEFAULT_TICKERS if t])
 
-        # 1. Add top institutional liquid equities from daily OHLCV (dollar volume >= $25M)
+        # 1. Add top institutional liquid equities (Track 4: >= $50M daily dollar volume)
         try:
+            # Tier 1: Core Liquid Equities (>= $50M daily dollar volume to eliminate wide broker spreads)
             cur.execute(f"""
+                WITH daily_bars AS (
+                    SELECT ticker, AVG(close) AS close, SUM(volume) AS volume
+                    FROM {settings.mimir_schema}.mimir_hourly_ohlcv
+                    WHERE timestamp >= NOW() - INTERVAL '5 days'
+                    GROUP BY ticker, timestamp::date
+                )
                 SELECT DISTINCT ticker
-                FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
-                WHERE date >= CURRENT_DATE - INTERVAL '4 days'
-                  AND close >= 5.0
-                  AND (close * volume) >= 25000000
+                FROM daily_bars
+                WHERE close >= 5.0
+                  AND (close * volume) >= 50000000
                 LIMIT 100
             """)
             for r in cur.fetchall():
@@ -997,7 +1113,9 @@ def run_war_rig_scan(conn=None, top_n: int = 10) -> List[Dict[str, Any]]:
                 pass
             logger.warning(f"[WAR_RIG] Catalyst velocity candidate query error: {v_err}")
 
-        logger.info(f"[WAR_RIG] Scanning universe of {len(candidate_tickers)} candidates through the unified crankshaft...")
+        # Purge toxic illiquid symbols, crypto, OTC, and foreign assets
+        candidate_tickers = {t for t in candidate_tickers if is_us_stock(t)}
+        logger.info(f"[WAR_RIG] Scanning filtered universe of {len(candidate_tickers)} liquid US candidates through the unified crankshaft...")
 
         for ticker in candidate_tickers:
             # Check duplicate signals in last 24 hours

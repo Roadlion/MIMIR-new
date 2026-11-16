@@ -38,16 +38,20 @@ from backend.app.analytics.mt5_bridge import (
 )
 
 def get_seconds_until_market_open() -> float:
-    """Returns seconds remaining until next 09:30:00 AM Eastern Time session."""
+    """
+    Returns seconds remaining until next post-10:15:00 AM Eastern Time liquidity window.
+    Execution is strictly delayed until 10:15 AM ET to bypass retail opening spread expansion
+    and market-on-open volatility spikes.
+    """
     now_ny = datetime.now(ZoneInfo('America/New_York'))
-    bell_ny = now_ny.replace(hour=9, minute=30, second=0, microsecond=0)
+    bell_ny = now_ny.replace(hour=10, minute=15, second=0, microsecond=0)
     
-    # If today's bell has already passed today, target tomorrow's bell
+    # If today's 10:15 window has already arrived
     if now_ny >= bell_ny:
-        # If market is currently open (between 09:30 and 16:00 ET on weekday), return 0 to execute immediately
+        # If market is currently open (between 10:15 and 16:00 ET on weekday), return 0 to execute immediately
         if now_ny.weekday() < 5 and now_ny.hour < 16:
             return 0.0
-        # Otherwise target next morning
+        # Otherwise target next morning 10:15 ET
         bell_ny = bell_ny + timedelta(days=1)
         while bell_ny.weekday() >= 5:  # Skip weekends
             bell_ny += timedelta(days=1)
@@ -86,8 +90,8 @@ def run_market_open_liquidation(wait_for_bell: bool = True, close_rogue: bool = 
         if sec_left > 0:
             now_ny = datetime.now(ZoneInfo('America/New_York'))
             print(f"[TIME] Current NY Time: {now_ny.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            print(f"[TIME] Market Open Bell: 09:30:00 AM ET")
-            print(f"[WAIT] Waiting {sec_left:.0f} seconds ({sec_left/60:.1f} mins / {sec_left/3600:.2f} hours) until opening bell...")
+            print(f"[TIME] Post-Open Liquidity Window: 10:15:00 AM ET (Avoiding 09:30-10:15 Spread Spikes)")
+            print(f"[WAIT] Waiting {sec_left:.0f} seconds ({sec_left/60:.1f} mins / {sec_left/3600:.2f} hours) until liquidation window...")
             
             while True:
                 sec_left = get_seconds_until_market_open()
@@ -102,7 +106,7 @@ def run_market_open_liquidation(wait_for_bell: bool = True, close_rogue: bool = 
                     time.sleep(max(0.5, sec_left))
                     break
 
-            print("\n[BELL] 09:30:00 AM ET opening bell has arrived! Initializing execution...")
+            print("\n[WINDOW] 10:15:00 AM ET liquidity window reached! Initializing execution...")
             # Brief 2-second grace period for broker price feed synchronization
             time.sleep(2.0)
 
@@ -119,6 +123,7 @@ def run_market_open_liquidation(wait_for_bell: bool = True, close_rogue: bool = 
     mimir_positions = [p for p in positions if p.magic == MIMIR_MAGIC]
     stat_arb_positions = [p for p in positions if p.magic == STAT_ARB_MAGIC]
     rogue_positions = [p for p in positions if p.magic not in AUTHORIZED_MAGICS]
+    other_positions = stat_arb_positions
 
     print(f"[AUDIT] Active positions found:")
     print(f"  - MIMIR War Rig positions (Magic {MIMIR_MAGIC}): {len(mimir_positions)}")

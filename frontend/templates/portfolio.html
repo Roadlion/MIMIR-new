@@ -2062,7 +2062,6 @@
     }
 
     // --- ALERT PAPER TRADER FUNCTIONS (METATRADER 5 DIRECT) ---
-    async 
     // --- Strategy Orchestrator & Dropdown Manager ---
     async function loadStrategyOrchestrator() {
         try {
@@ -2200,7 +2199,7 @@
         }
     }
 
-    function loadPaperSummary() {
+    async function loadPaperSummary() {
         loadStrategyOrchestrator();
         try {
             const res = await fetch("/api/v1/paper-trading/summary");

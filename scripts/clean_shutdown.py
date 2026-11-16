@@ -28,14 +28,22 @@ def main():
         print("===================================================")
         print("[MIMIR] Clean Process Purge & Safe Shutdown")
         print("===================================================")
-        print("[1/4] Flushing database buffers to disk (CHECKPOINT)...")
+        print("[1/4] Flushing database buffers (CHECKPOINT with 3s timeout)...")
 
-    sync_database_buffers()
+    try:
+        sync_database_buffers(timeout_seconds=3)
+    except Exception as e:
+        if not quiet:
+            print(f"  - Database buffer sync skipped: {e}")
 
     if not quiet:
         print("[2/4] Disconnecting MetaTrader 5 terminal session...")
 
-    disconnect_mt5()
+    try:
+        disconnect_mt5()
+    except Exception as e:
+        if not quiet:
+            print(f"  - MT5 disconnect note: {e}")
 
     if not quiet:
         print("[3/4] Terminating MIMIR daemons, pipelines, and worker processes...")

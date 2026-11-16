@@ -52,7 +52,10 @@ JUNK_PHRASES: List[str] = [
     "lottery ticket stock", "stocks to buy right now", "penny stocks to buy",
     "best stocks under $", "top stocks to buy now", "stocks to hold forever",
     "3 reasons to buy", "3 reasons to sell", "forget nvidia, buy",
-    "forget tesla, buy", "forget apple, buy"
+    "forget tesla, buy", "forget apple, buy",
+    "why is it moving today", "why is the stock dropping", "why is the stock rising",
+    "should you buy", "what you need to know about", "better buy than",
+    "which is the better buy", "bull vs bear", "stocks to buy and hold", "unstoppable dividend stocks"
 ]
 
 # Compiled regular expressions for listicles, clickbait, and lifestyle noise

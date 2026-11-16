@@ -273,6 +273,27 @@ def send_market_order(
                 "retcode": 10027
             }
 
+        # Guard against unauthorized Stat-Arb orders
+        if magic == STAT_ARB_MAGIC and not (comment or "").startswith("STAT_ARB:"):
+            return {
+                "success": False,
+                "message": "Unauthorized order using STAT_ARB magic number without verified APU tag.",
+                "retcode": 10027
+            }
+
+        # Fund Circuit Breaker Sentinel Gate
+        try:
+            from backend.app.services.risk_manager import is_circuit_breaker_active, check_microstructure_spread
+            cb_active, cb_reason = is_circuit_breaker_active()
+            if cb_active:
+                return {
+                    "success": False,
+                    "message": f"Order blocked by Fund Circuit Breaker: {cb_reason}",
+                    "retcode": 10027
+                }
+        except Exception:
+            pass
+
         b_symbol = resolve_mt5_symbol(ticker)
         if not b_symbol:
             return {
@@ -296,6 +317,19 @@ def send_market_order(
                 "message": f"No live price tick available for '{b_symbol}'. Market may be closed.",
                 "retcode": 10021
             }
+
+        # Microstructure Spread Gate: Reject executions when broker ask-bid spread > 0.05% (5 bps)
+        try:
+            from backend.app.services.risk_manager import check_microstructure_spread
+            spread_ok, spread_pct = check_microstructure_spread(ticker, tick.ask, tick.bid, max_spread_pct=0.05)
+            if not spread_ok:
+                return {
+                    "success": False,
+                    "message": f"Order rejected: Bid-ask spread for {ticker} ({spread_pct:.3f}%) exceeds institutional threshold (0.050%).",
+                    "retcode": 10015
+                }
+        except Exception:
+            pass
 
         act_upper = action.strip().upper()
         if act_upper not in ("BUY", "SELL"):
@@ -617,11 +651,21 @@ def get_open_positions(magic_only: Optional[int] = None) -> List[Dict[str, Any]]
             open_time_str = datetime.fromtimestamp(p.time).strftime("%Y-%m-%d %H:%M:%S")
 
             clean_ticker = p.symbol.replace(".US", "").replace("#", "")
+            raw_comment = (p.comment or "").strip()
+            if p.magic == STAT_ARB_MAGIC or raw_comment.upper().startswith("STAT_ARB"):
+                strategy_name = "Stat-Arb APU"
+            elif "COPILOT" in raw_comment.upper():
+                strategy_name = "Co-Pilot"
+            elif raw_comment.startswith("MIMIR:") and not raw_comment.startswith(("MIMIR:Auto", "MIMIR:Close")):
+                strategy_name = raw_comment.split("MIMIR:", 1)[1].strip() or "War Rig"
+            else:
+                strategy_name = "War Rig"
 
             result.append({
                 "ticket": p.ticket,
                 "ticker": clean_ticker,
                 "mt5_symbol": p.symbol,
+                "strategy_name": strategy_name,
                 "action": action,
                 "quantity": p.volume,
                 "avg_entry_price": float(p.price_open),

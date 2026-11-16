@@ -2,10 +2,14 @@
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 from backend.app.database import get_db_connection
+from backend.app.config import get_settings
 from backend.app.sentiment.deepseek_client import DeepSeekSentiment
 from backend.app.sentiment.asset_mapper import resolve_ticker, resolve_country_code, resolve_region
+
+settings = get_settings()
 
 # Anti-spam cache for breaking intelligence alerts (4-hour cooldown per topic/asset)
 _RECENT_BREAKING_ALERTS = {}

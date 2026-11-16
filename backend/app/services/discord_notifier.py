@@ -1065,6 +1065,37 @@ def send_market_session_briefing(
 
 # ── Co-Pilot Personalized Multi-User Alert Functions ─────────────────────────
 
+def _resolve_copilot_webhook(user: Dict[str, Any], explicit_webhook: Optional[str] = None) -> Optional[str]:
+    """
+    Resolves the destination Discord webhook for a Co-Pilot user alert.
+    Rules:
+    1. If user is admin (id == 1 or username == 'admin'):
+       - Uses explicit_webhook if provided, or user.get("discord_webhook_trades"),
+         or falls back to the system admin webhook get_webhook_url("trades").
+    2. If user is NOT admin:
+       - Uses explicit_webhook if provided, or user.get("discord_webhook_trades").
+       - MUST NEVER fall back to get_webhook_url("trades").
+       - If the resolved webhook equals the admin webhook, suppress it to prevent cross-contamination.
+       - If no dedicated webhook is set, returns None (alert is logged in DB, but Discord ping suppressed).
+    """
+    username = str(user.get("username", "")).strip().lower()
+    is_admin = (user.get("id") == 1 or username == "admin")
+    admin_webhook = (get_webhook_url("trades") or "").strip()
+    target_url = (explicit_webhook or user.get("discord_webhook_trades") or "").strip()
+
+    if not target_url and is_admin:
+        target_url = admin_webhook
+
+    if not target_url:
+        return None
+
+    if not is_admin and admin_webhook and target_url == admin_webhook:
+        logger.info(f"[DISCORD] Suppressed alert for non-admin user '{user.get('username')}' destined for admin webhook.")
+        return None
+
+    return target_url
+
+
 def send_copilot_buy_alert(
     user: Dict[str, Any],
     eval_result: Dict[str, Any],
@@ -1074,7 +1105,7 @@ def send_copilot_buy_alert(
     Sends a personalized BUY alert tailored to an individual user's
     actual portfolio equity, dry powder, sector limit, and risk sizing.
     """
-    target_url = (webhook_url or user.get("discord_webhook_trades") or get_webhook_url("trades") or "").strip()
+    target_url = _resolve_copilot_webhook(user, webhook_url)
     if not target_url:
         return False
 
@@ -1201,7 +1232,7 @@ def send_copilot_ratchet_alert(
     Sends an alert instructing the user to ratchet up their real-life stop-loss order
     to lock in guaranteed profits.
     """
-    target_url = (webhook_url or user.get("discord_webhook_trades") or get_webhook_url("trades") or "").strip()
+    target_url = _resolve_copilot_webhook(user, webhook_url)
     if not target_url:
         return False
 
@@ -1277,7 +1308,7 @@ def send_copilot_exit_alert(
     Sends an alert instructing the user to close/sell their real-life position
     and notifying them of restored dry powder.
     """
-    target_url = (webhook_url or user.get("discord_webhook_trades") or get_webhook_url("trades") or "").strip()
+    target_url = _resolve_copilot_webhook(user, webhook_url)
     if not target_url:
         return False
 

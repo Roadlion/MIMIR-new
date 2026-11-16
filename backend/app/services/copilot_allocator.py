@@ -280,8 +280,13 @@ def evaluate_signal_for_user(user: Dict[str, Any], signal: Dict[str, Any], conn=
     if stop_loss is not None:
         stop_loss = float(stop_loss)
     else:
-        # Default stop loss 3.0% below entry if not provided
-        stop_loss = round(entry_price * 0.97, 2)
+        # Dynamic ATR-based stop loss calculation (2.5x ATR14)
+        try:
+            from ..analytics.paper_trader import get_ticker_atr_bounds
+            sl_pct, _ = get_ticker_atr_bounds(ticker, entry_price)
+            stop_loss = round(entry_price * (1.0 - (sl_pct / 100.0)), 2)
+        except Exception:
+            stop_loss = round(entry_price * 0.95, 2)
 
     stop_distance = abs(entry_price - stop_loss)
     if stop_distance <= 0:
@@ -646,14 +651,15 @@ def dispatch_copilot_signals(signal: Dict[str, Any], signal_id: Optional[int] = 
                 eval_res["user_id"] = user["id"]
                 eval_res["username"] = user["username"]
 
-                # Send Discord alert
+                # Send Discord alert (firewalled to account's dedicated webhook or admin)
                 sent = send_copilot_buy_alert(user=user, eval_result=eval_res)
                 eval_res["discord_sent"] = sent
                 dispatched.append(eval_res)
+                status_note = " (Discord alert sent)" if sent else " (Discord alert suppressed/no webhook)"
                 logger.info(
                     f"[COPILOT] Dispatched personalized alert for {user['username']}: "
                     f"BUY {eval_res['shares']} {signal['ticker']} @ ${eval_res['entry_price']} "
-                    f"(Cost: ${eval_res['estimated_cost']}, Rem. Dry Powder: ${eval_res['dry_powder_after']})"
+                    f"(Cost: ${eval_res['estimated_cost']}, Rem. Dry Powder: ${eval_res['dry_powder_after']}){status_note}"
                 )
             else:
                 logger.info(

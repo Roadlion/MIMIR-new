@@ -30,15 +30,25 @@ from backend.app.analytics.mt5_bridge import (
 
 settings = get_settings()
 
+# Institutional Liquidity Gate: Blacklist of chronic spread-widening and microcap stop-out symbols
+TOXIC_ILLIQUID_BLACKLIST = {
+    "KTB", "APPF", "INN", "SKWD", "BNED", "EDF", "SVM", "BFLY",
+    "FRSH", "POET", "ACMR", "DX", "LUNR", "WRD", "SKYQ", "CION", "DRH"
+}
+
 def is_us_stock(ticker: str) -> bool:
     """
     Returns True if ticker represents a major US stock listed on NYSE, NASDAQ, or AMEX.
     Filters out OTC stocks (5-letter tickers ending in F or Y), crypto (-USD), forex (=X), commodities (=F),
-    and foreign exchange tickers with dots.
+    foreign exchange tickers with dots, and toxic illiquid symbols.
     """
     if not ticker:
         return False
     t = ticker.strip().upper()
+    
+    # 0. Exclude toxic illiquid equities with chronic wide spreads & stop-outs
+    if t in TOXIC_ILLIQUID_BLACKLIST:
+        return False
     
     # Exclude Crypto (-USD), Forex (=X), Commodities (=F)
     if "-USD" in t or "=X" in t or "=F" in t:
@@ -126,14 +136,13 @@ def check_herd_arrival(ticker: str, conn=None) -> bool:
         return False
 
 
-def get_ticker_atr_bounds(ticker: str, current_price: float, cur=None) -> tuple[float, float]:
+def get_ticker_atr_data(ticker: str, current_price: float, cur=None) -> dict[str, float]:
     """
-    Computes ATR-based dynamic Stop Loss % and Take Profit % based on 14-day price history.
-    SL is set to 1.5x ATR (clamped between 3.5% and 7.5%).
-    TP is set to 2.5x ATR (clamped between 6.0% and 15.0%, ensuring >= 1.67 Risk/Reward).
+    Computes 14-day Average True Range (ATR) in dollar value and percentage,
+    with bounds for dynamic Stop Loss and Take Profit.
     """
     if not ticker or current_price <= 0:
-        return 4.5, 8.0
+        return {"atr": round(current_price * 0.035, 4), "atr_pct": 3.5, "sl_pct": 4.5, "tp_pct": 8.0}
 
     close_cur = False
     conn = None
@@ -162,21 +171,37 @@ def get_ticker_atr_bounds(ticker: str, current_price: float, cur=None) -> tuple[
                 tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
                 trs.append(tr)
             if trs:
-                atr = sum(trs) / len(trs)
-                sl_pct = (1.5 * atr / current_price) * 100.0
-                tp_pct = (2.5 * atr / current_price) * 100.0
-                sl_pct = max(3.5, min(7.5, sl_pct))
-                tp_pct = max(6.0, min(15.0, tp_pct))
-                return round(sl_pct, 2), round(tp_pct, 2)
+                atr_dollar = sum(trs) / len(trs)
+                atr_pct = (atr_dollar / current_price) * 100.0
+                # Volatility-Normalized Dynamic Stops (2.5x ATR SL clamped [3.5%, 8.0%], 4.0x ATR TP clamped [6.0%, 16.0%])
+                sl_pct = max(3.5, min(8.0, 2.5 * atr_pct))
+                tp_pct = max(6.0, min(16.0, 4.0 * atr_pct))
+                tp_pct = max(tp_pct, round(sl_pct * 1.67, 2))
+                return {
+                    "atr": round(atr_dollar, 4),
+                    "atr_pct": round(atr_pct, 2),
+                    "sl_pct": round(sl_pct, 2),
+                    "tp_pct": round(tp_pct, 2)
+                }
     except Exception as e:
-        print(f"[PAPER_TRADER] ATR calculation error for {ticker}: {e}")
+        logger.warning(f"[PAPER_TRADER] ATR calculation error for {ticker}: {e}")
     finally:
         if close_cur:
             cur.close()
             conn.close()
 
-    # Safe default if no historical OHLCV available
-    return 4.5, 8.0
+    def_atr = round(current_price * 0.035, 4)
+    return {"atr": def_atr, "atr_pct": 3.5, "sl_pct": 5.0, "tp_pct": 10.0}
+
+
+def get_ticker_atr_bounds(ticker: str, current_price: float, cur=None) -> tuple[float, float]:
+    """
+    Computes ATR-based dynamic Stop Loss % and Take Profit % based on 14-day price history.
+    SL is set to 2.5x ATR (clamped between 3.5% and 8.0%).
+    TP is set to 4.0x ATR (clamped between 6.0% and 16.0%, ensuring >= 1.67 Risk/Reward).
+    """
+    atr_data = get_ticker_atr_data(ticker, current_price, cur=cur)
+    return atr_data["sl_pct"], atr_data["tp_pct"]
 
 
 
@@ -224,7 +249,11 @@ def init_paper_trading_db(force: bool = False):
             ADD COLUMN IF NOT EXISTS max_open_positions INTEGER DEFAULT 15,
             ADD COLUMN IF NOT EXISTS max_positions_per_sector INTEGER DEFAULT 2,
             ADD COLUMN IF NOT EXISTS max_sector_exposure_pct FLOAT DEFAULT 25.0,
-            ADD COLUMN IF NOT EXISTS min_conviction_score FLOAT DEFAULT 0.75;
+            ADD COLUMN IF NOT EXISTS min_conviction_score FLOAT DEFAULT 0.75,
+            ADD COLUMN IF NOT EXISTS risk_per_trade_pct FLOAT DEFAULT 1.5,
+            ADD COLUMN IF NOT EXISTS max_position_equity_pct FLOAT DEFAULT 20.0,
+            ADD COLUMN IF NOT EXISTS max_adv_pct FLOAT DEFAULT 1.0,
+            ADD COLUMN IF NOT EXISTS active_strategies JSONB DEFAULT '["war_rig"]'::jsonb;
         """)
 
         # Upgrade default 3.0/6.0 parameters to ATR-optimized 4.5/8.0
@@ -296,7 +325,9 @@ def init_paper_trading_db(force: bool = False):
 
         cur.execute(f"""
             ALTER TABLE {schema}.mimir_paper_portfolio
-            ADD COLUMN IF NOT EXISTS mt5_ticket BIGINT;
+            ADD COLUMN IF NOT EXISTS mt5_ticket BIGINT,
+            ADD COLUMN IF NOT EXISTS peak_price FLOAT,
+            ADD COLUMN IF NOT EXISTS peak_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
         """)
 
         conn.commit()
@@ -322,8 +353,10 @@ def get_paper_config() -> Dict[str, Any]:
                    mt5_magic, mt5_enabled, ignore_market_hours,
                    COALESCE(max_open_positions, 15) as max_open_positions,
                    COALESCE(max_positions_per_sector, 2) as max_positions_per_sector,
-                   COALESCE(max_sector_exposure_pct, 25.0) as max_sector_exposure_pct,
-                   COALESCE(min_conviction_score, 0.75) as min_conviction_score,
+                   COALESCE(max_sector_exposure_pct, 20.0) as max_sector_exposure_pct,
+                   COALESCE(min_conviction_score, 0.85) as min_conviction_score,
+                   COALESCE(risk_per_trade_pct, 1.0) as risk_per_trade_pct,
+                   COALESCE(max_position_equity_pct, 10.0) as max_position_equity_pct,
                    updated_at
             FROM {settings.mimir_schema}.mimir_paper_trading_config
             ORDER BY id ASC LIMIT 1
@@ -344,20 +377,24 @@ def get_paper_config() -> Dict[str, Any]:
             if res.get("max_positions_per_sector") is None:
                 res["max_positions_per_sector"] = 2
             if res.get("max_sector_exposure_pct") is None:
-                res["max_sector_exposure_pct"] = 25.0
+                res["max_sector_exposure_pct"] = 20.0
             if res.get("min_conviction_score") is None:
-                res["min_conviction_score"] = 0.75
+                res["min_conviction_score"] = 0.85
+            if res.get("risk_per_trade_pct") is None:
+                res["risk_per_trade_pct"] = 1.0
+            if res.get("max_position_equity_pct") is None:
+                res["max_position_equity_pct"] = 10.0
             return res
         return {
             "is_enabled": True,
             "execution_mode": "AUTO",
             "min_win_rate": 55.0,
             "min_sentiment_score": 0.0,
-            "position_size_type": "FIXED_USD",
+            "position_size_type": "RISK_PARITY",
             "position_size_value": 1000.0,
             "initial_capital": 100000.0,
-            "stop_loss_pct": 4.5,
-            "take_profit_pct": 8.0,
+            "stop_loss_pct": 5.0,
+            "take_profit_pct": 10.0,
             "auto_exit_on_hold_days": True,
             "us_stocks_only": True,
             "mt5_magic": MIMIR_MAGIC,
@@ -365,8 +402,10 @@ def get_paper_config() -> Dict[str, Any]:
             "ignore_market_hours": False,
             "max_open_positions": 15,
             "max_positions_per_sector": 2,
-            "max_sector_exposure_pct": 25.0,
-            "min_conviction_score": 0.75
+            "max_sector_exposure_pct": 20.0,
+            "min_conviction_score": 0.85,
+            "risk_per_trade_pct": 1.0,
+            "max_position_equity_pct": 10.0
         }
     finally:
         cur.close()
@@ -646,32 +685,15 @@ def execute_single_paper_trade(
         if signal_type == "BUY" and not force:
             try:
                 from backend.app.services.macro_tracker import is_market_regime_bullish
-                market_bullish, macro_reason = is_market_regime_bullish(conn=conn)
+                market_bullish, macro_reason = is_market_regime_bullish(conn=conn, ticker=ticker)
                 if not market_bullish:
                     return {"success": False, "status": "MACRO_BLOCKED", "message": f"Suppressed by macro gate: {macro_reason}"}
+                elif "DEFENSIVE_EXEMPTION" in macro_reason:
+                    logger.info(f"[PAPER_TRADER] {macro_reason}")
             except Exception as m_err:
                 logger.warning(f"[PAPER_TRADER] Macro check warning: {m_err}")
 
-        # Position Sizing (Fixed quantity or Dynamic Kelly scale)
-        if fixed_quantity is not None and fixed_quantity > 0:
-            trade_alloc = 500.0
-        else:
-            base_alloc = float(config.get("position_size_value", 500.0))
-            conviction = float(conviction_score or 0.5)
-            cat_type = str(catalyst_type or "")
-
-            if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
-                multiplier = 3.0
-            elif conviction >= 0.65:
-                multiplier = 1.5
-            else:
-                multiplier = 1.0
-
-            trade_alloc = base_alloc * multiplier
-
-        magic = int(config.get("mt5_magic", MIMIR_MAGIC))
-
-        # Dynamic SL / TP
+        # Dynamic SL / TP calculation (computed prior to sizing for risk parity per share)
         if stop_loss and trigger_price > 0:
             trade_sl_pct = abs(trigger_price - stop_loss) / trigger_price * 100.0
             trade_sl_pct = max(3.5, min(7.5, trade_sl_pct))
@@ -685,6 +707,69 @@ def execute_single_paper_trade(
             _, trade_tp_pct = get_ticker_atr_bounds(ticker, trigger_price, cur=cur)
 
         trade_tp_pct = max(trade_tp_pct, round(trade_sl_pct * 1.67, 2))
+
+        # Position Sizing (Fixed USD vs Volatility-Parity / Fixed Risk Budget)
+        size_type = config.get("position_size_type", "RISK_PARITY")
+        conviction = float(conviction_score or 0.5)
+        cat_type = str(catalyst_type or "")
+
+        if fixed_quantity is not None and fixed_quantity > 0:
+            trade_alloc = 500.0
+        elif size_type == "FIXED_USD":
+            base_alloc = float(config.get("position_size_value", 500.0))
+            if conviction >= 0.80 or cat_type in ["PRE_EARNINGS_BEAT", "SUPPLY_CHAIN_SPILLOVER", "WAR_RIG_CONVERGENCE"]:
+                multiplier = 3.0
+            elif conviction >= 0.65:
+                multiplier = 1.5
+            else:
+                multiplier = 1.0
+            trade_alloc = base_alloc * multiplier
+        else:
+            # P1 Track 3: Volatility-Parity / Fixed Risk Budget Sizing
+            # 1. Total Account Equity
+            account_equity = float(config.get("initial_capital", 100000.0))
+            try:
+                acc_sum = get_mt5_account_summary()
+                if acc_sum.get("connected") and acc_sum.get("equity", 0) > 1000.0:
+                    account_equity = float(acc_sum["equity"])
+            except Exception:
+                pass
+
+            # 2. Risk Budget: Base 1.0% equity risk, scaled by conviction (0.8% to 1.2%)
+            base_risk_pct = float(config.get("risk_per_trade_pct", 1.0)) / 100.0
+            conviction_factor = 0.8 + 0.4 * ((max(0.60, min(1.0, conviction)) - 0.60) / 0.40)
+            trade_risk_pct = base_risk_pct * conviction_factor
+            dollar_risk_budget = account_equity * trade_risk_pct
+
+            # 3. Size = Dollar Risk Budget / SL Fraction (Equates dollar loss across all ATR tiers)
+            sl_fraction = trade_sl_pct / 100.0
+            trade_alloc = dollar_risk_budget / sl_fraction if sl_fraction > 0 else dollar_risk_budget / 0.05
+
+            # 4. Single Position Concentration Cap (default 10% equity)
+            max_equity_pct = float(config.get("max_position_equity_pct", 10.0)) / 100.0
+            trade_alloc = min(trade_alloc, account_equity * max_equity_pct)
+
+            # 5. ADV Liquidity Cap (default 1.0% of 20-day Average Daily Dollar Volume)
+            try:
+                cur.execute(f"""
+                    SELECT AVG(close * volume) as adv
+                    FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                    WHERE ticker = %s
+                    ORDER BY date DESC
+                    LIMIT 20
+                """, (ticker.strip().upper(),))
+                adv_row = cur.fetchone()
+                if adv_row:
+                    adv_val = float(adv_row["adv"] if isinstance(adv_row, dict) else adv_row[0] or 0.0)
+                    if adv_val > 0:
+                        max_adv_usd = adv_val * 0.01
+                        trade_alloc = min(trade_alloc, max(max_adv_usd, 500.0))
+            except Exception:
+                pass
+
+            trade_alloc = max(200.0, round(trade_alloc, 2))
+
+        magic = int(config.get("mt5_magic", MIMIR_MAGIC))
 
         # Order placement
         if is_exit:
@@ -810,6 +895,16 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
             "message": "Paper trading execution paused: outside US regular market hours (09:30-16:00 ET) or during blackout window."
         }
 
+    # Circuit Breaker Sentinel: Halt all new executions if 1.5% daily drawdown breached
+    from backend.app.services.risk_manager import is_circuit_breaker_active, check_trade_pacing_and_rate_limits
+    cb_active, cb_reason = is_circuit_breaker_active()
+    if cb_active:
+        logger.warning(f"[PAPER_TRADER] Execution halted by Circuit Breaker: {cb_reason}")
+        return {
+            "executed_count": 0,
+            "message": f"Execution halted by Circuit Breaker: {cb_reason}"
+        }
+
     # Verify MT5 Terminal connection and AlgoTrading status
     mt5_status = get_terminal_and_account_status()
     if not mt5_status.get("connected"):
@@ -907,6 +1002,13 @@ def auto_execute_pending_alerts() -> Dict[str, Any]:
                 print(f"[PAPER_TRADER] Portfolio concurrency limit reached ({len(open_tickers)}/{max_open_pos} positions). Ending BUY execution sweep.")
                 break
 
+            # Rate Pacing Gate: Enforce fund-wide daily trade limit (5/day) and ticker debounce (1/ticker/24h)
+            if not is_exit_signal:
+                pacing_ok, pacing_reason = check_trade_pacing_and_rate_limits(ticker, conn=conn)
+                if not pacing_ok:
+                    logger.info(f"[PAPER_TRADER] Pacing filter blocked {ticker}: {pacing_reason}")
+                    continue
+
             # Execute trade via execute_single_paper_trade
             res = execute_single_paper_trade(
                 signal_id=alert_id,
@@ -989,41 +1091,113 @@ def process_paper_position_exits() -> Dict[str, Any]:
 
             open_dt = datetime.strptime(open_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=gmt_plus_7)
 
-            # Phase 2 Upgrade: Full 3-Tier Profit Ratchet Ladder
-            # Tier 1 (+3% gain) -> Lock +0.5% profit
-            # Tier 2 (+6% gain) -> Lock +3.5% profit
-            # Tier 3 (+10% gain) -> Lock +7.5% profit
+            # P0 Track 1: Volatility-Adaptive Chandelier Ratchet Engine
             entry_price = float(pos.get("avg_entry_price", 0.0))
             curr_price = float(pos.get("current_price", 0.0))
             curr_sl = float(pos.get("sl", 0.0))
             pos_ticket = pos.get("ticket")
             is_buy = (pos.get("action") == "BUY")
 
-            if entry_price > 0 and pos_ticket:
+            if entry_price > 0 and pos_ticket and curr_price > 0:
                 gain_pct = ((curr_price - entry_price) / entry_price) * 100.0 if is_buy else ((entry_price - curr_price) / entry_price) * 100.0
+
+                # 1. Fetch dynamic ATR data for asset
+                atr_info = get_ticker_atr_data(ticker, curr_price, cur=cur)
+                atr_dollar = atr_info["atr"]
+                atr_pct = atr_info["atr_pct"]
+
+                # 2. Track & update peak price (or trough for sell) in paper portfolio
+                stored_peak = None
+                try:
+                    cur.execute(f"""
+                        SELECT peak_price
+                        FROM {schema}.mimir_paper_portfolio
+                        WHERE mt5_ticket = %s
+                        ORDER BY id DESC LIMIT 1
+                    """, (pos_ticket,))
+                    p_row = cur.fetchone()
+                    if p_row and p_row["peak_price"] is not None:
+                        stored_peak = float(p_row["peak_price"])
+                except Exception:
+                    pass
+
+                if is_buy:
+                    peak_price = max(stored_peak or entry_price, curr_price)
+                    if stored_peak is None or curr_price > stored_peak:
+                        try:
+                            cur.execute(f"""
+                                UPDATE {schema}.mimir_paper_portfolio
+                                SET peak_price = %s, peak_updated_at = NOW()
+                                WHERE mt5_ticket = %s
+                            """, (peak_price, pos_ticket))
+                            conn.commit()
+                        except Exception:
+                            pass
+                else:
+                    peak_price = min(stored_peak or entry_price, curr_price)
+                    if stored_peak is None or curr_price < stored_peak:
+                        try:
+                            cur.execute(f"""
+                                UPDATE {schema}.mimir_paper_portfolio
+                                SET peak_price = %s, peak_updated_at = NOW()
+                                WHERE mt5_ticket = %s
+                            """, (peak_price, pos_ticket))
+                            conn.commit()
+                        except Exception:
+                            pass
+
+                # 3. Dynamic Volatility-Adaptive Triggers
+                # Tier 1 (Breakeven Lock): max(4.5%, 1.5 * ATR%)
+                # Tier 2 (Lock 1.0 ATR Profit): max(7.5%, 2.5 * ATR%)
+                # Tier 3 (Chandelier Trail): max(12.0%, 3.5 * ATR%)
+                t1_trigger = max(4.5, 1.5 * atr_pct)
+                t2_trigger = max(7.5, 2.5 * atr_pct)
+                t3_trigger = max(12.0, 3.5 * atr_pct)
+
                 target_sl = None
                 tier_label = ""
                 locked_pct = 0.0
 
-                if gain_pct >= 10.0:
-                    target_sl = round(entry_price * 1.075, 2) if is_buy else round(entry_price * 0.925, 2)
-                    tier_label = "Tier 3 (+10%)"
-                    locked_pct = 7.5
-                elif gain_pct >= 6.0:
-                    target_sl = round(entry_price * 1.035, 2) if is_buy else round(entry_price * 0.965, 2)
-                    tier_label = "Tier 2 (+6%)"
-                    locked_pct = 3.5
-                elif gain_pct >= 3.0:
+                if gain_pct >= t3_trigger:
+                    # Tier 3: Chandelier trailing stop (Peak - 1.5 ATR for BUY)
+                    if is_buy:
+                        ch_sl = round(peak_price - (1.5 * atr_dollar), 2)
+                        target_sl = max(curr_sl, ch_sl)
+                        locked_pct = round(((target_sl - entry_price) / entry_price) * 100.0, 2)
+                    else:
+                        ch_sl = round(peak_price + (1.5 * atr_dollar), 2)
+                        target_sl = min(curr_sl, ch_sl) if curr_sl > 0 else ch_sl
+                        locked_pct = round(((entry_price - target_sl) / entry_price) * 100.0, 2)
+                    tier_label = f"Tier 3 Chandelier (Peak ${peak_price:.2f} - 1.5 ATR)"
+
+                elif gain_pct >= t2_trigger:
+                    # Tier 2: Lock 1.0 ATR profit
+                    if is_buy:
+                        target_sl = round(entry_price + (1.0 * atr_dollar), 2)
+                        locked_pct = round(((target_sl - entry_price) / entry_price) * 100.0, 2)
+                    else:
+                        target_sl = round(entry_price - (1.0 * atr_dollar), 2)
+                        locked_pct = round(((entry_price - target_sl) / entry_price) * 100.0, 2)
+                    tier_label = f"Tier 2 Lock (+1.0 ATR / +{locked_pct:.1f}%)"
+
+                elif gain_pct >= t1_trigger:
+                    # Tier 1: Breakeven lock +0.5%
                     target_sl = round(entry_price * 1.005, 2) if is_buy else round(entry_price * 0.995, 2)
-                    tier_label = "Tier 1 (+3%)"
+                    tier_label = f"Tier 1 Breakeven Lock (+{t1_trigger:.1f}% trigger)"
                     locked_pct = 0.5
 
                 if target_sl is not None:
+                    # Defensive quote validation: never place stop on the wrong side of current quote
+                    if is_buy and target_sl >= curr_price:
+                        target_sl = round(curr_price * 0.995, 2)
+                    elif not is_buy and target_sl <= curr_price:
+                        target_sl = round(curr_price * 1.005, 2)
+
                     should_ratchet = (curr_sl < target_sl) if is_buy else (curr_sl > target_sl or curr_sl == 0.0)
                     if should_ratchet:
                         mod_res = modify_position_sltp(ticket=pos_ticket, sl=target_sl)
                         if mod_res.get("success"):
-                            print(f"[PAPER_TRADER] Profit Ratchet ({tier_label}): Ratcheted SL for {ticker} (#{pos_ticket}) to ${target_sl} (Locked +{locked_pct}% profit at {gain_pct:+.1f}% gain).")
+                            print(f"[PAPER_TRADER] Volatility Ratchet ({tier_label}): Ratcheted SL for {ticker} (#{pos_ticket}) to ${target_sl} (Locked +{locked_pct}% profit at {gain_pct:+.1f}% gain, ATR: ${atr_dollar:.2f}).")
                             try:
                                 from backend.app.services.discord_notifier import send_ratchet_alert
                                 send_ratchet_alert(

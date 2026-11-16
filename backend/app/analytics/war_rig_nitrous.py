@@ -1129,3 +1129,215 @@ def get_nitrous_bridge() -> WarRigNitrousBridge:
     if _nitrous_bridge is None:
         _nitrous_bridge = WarRigNitrousBridge()
     return _nitrous_bridge
+
+
+import json
+
+def execute_paper_options_order(
+    nitrous_dict: Dict[str, Any],
+    underlying_price: float,
+    contracts: int = 1,
+    conn = None
+) -> Dict[str, Any]:
+    """
+    P2 Track 6: Executes and logs a paper options position from Nitrous Bridge directive
+    into yggdrasil.mimir_options_positions.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    cur = conn.cursor()
+    try:
+        ticker = str(nitrous_dict.get("ticker", "")).strip().upper()
+        strategy = str(nitrous_dict.get("recommended_strategy", "BULL_CALL_SPREAD"))
+        exp_date_str = str(nitrous_dict.get("expiration_date", ""))
+        dte = int(nitrous_dict.get("dte", 21))
+        legs = nitrous_dict.get("legs", [])
+        net_amount = float(nitrous_dict.get("net_amount", 0.0))
+        max_profit = float(nitrous_dict.get("max_profit", 0.0))
+        max_loss = float(nitrous_dict.get("max_loss", 0.0))
+        breakeven = float(nitrous_dict.get("breakeven", 0.0))
+
+        # Generate unique ticket ID
+        ts_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ticket_id = f"OPT_{ticker}_{strategy[:8]}_{ts_str}"
+
+        exp_dt = datetime.strptime(exp_date_str, "%Y-%m-%d").date() if exp_date_str else (datetime.now(timezone.utc) + timedelta(days=dte)).date()
+
+        cur.execute(f"""
+            INSERT INTO {settings.mimir_schema}.mimir_options_positions (
+                ticket_id, ticker, strategy_type, underlying_entry_price,
+                net_premium, contracts_count, expiration_date, dte_at_open,
+                legs, max_profit, max_loss, breakeven, status,
+                current_spread_value, unrealized_pnl, realized_pnl, opened_at
+            ) VALUES (
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, 'OPEN',
+                %s, 0.0, 0.0, NOW()
+            ) RETURNING position_id
+        """, (
+            ticket_id, ticker, strategy, underlying_price,
+            net_amount, contracts, exp_dt, dte,
+            json.dumps(legs), max_profit, max_loss, breakeven,
+            net_amount
+        ))
+        row = cur.fetchone()
+        pos_id = row[0] if row else None
+        conn.commit()
+
+        logging.info(f"[NITROUS_OPTIONS] Executed paper options position {ticket_id} for {ticker}: {strategy} (Net: ${net_amount:.2f}, Max Profit: ${max_profit:.2f})")
+        return {
+            "success": True,
+            "position_id": pos_id,
+            "ticket_id": ticket_id,
+            "ticker": ticker,
+            "strategy": strategy,
+            "contracts": contracts,
+            "net_premium": net_amount,
+            "max_profit": max_profit,
+            "max_loss": max_loss,
+            "breakeven": breakeven
+        }
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"[NITROUS_OPTIONS] Error executing paper options order: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+
+def revalue_open_options_positions(conn = None) -> Dict[str, Any]:
+    """
+    P2 Track 6: Mark-to-market revaluation of open paper options positions.
+    Monitors 50% max-profit take-profit targets, underlying stop-loss breaches,
+    and approaching expiration pins.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        close_conn = True
+
+    cur = conn.cursor()
+    summary = {"monitored": 0, "closed_tp": 0, "closed_sl": 0, "closed_expired": 0}
+    try:
+        cur.execute(f"""
+            SELECT position_id, ticket_id, ticker, strategy_type,
+                   underlying_entry_price, net_premium, contracts_count,
+                   expiration_date, legs, max_profit, max_loss, breakeven
+            FROM {settings.mimir_schema}.mimir_options_positions
+            WHERE status = 'OPEN'
+        """)
+        open_positions = cur.fetchall()
+        summary["monitored"] = len(open_positions)
+
+        for pos in open_positions:
+            pos_id, ticket_id, ticker, strategy, entry_price, net_prem, num_contracts, exp_date, raw_legs, max_prof, max_l, be = pos
+            entry_price = float(entry_price)
+            net_prem = float(net_prem)
+            num_contracts = int(num_contracts)
+            max_prof = float(max_prof or 0.0)
+            max_l = float(max_l or 0.0)
+
+            # 1. Fetch current underlying price
+            cur.execute(f"""
+                SELECT close FROM {settings.mimir_schema}.v_mimir_daily_ohlcv
+                WHERE ticker = %s ORDER BY date DESC LIMIT 1
+            """, (ticker,))
+            price_row = cur.fetchone()
+            curr_underlying = float(price_row[0]) if price_row and price_row[0] is not None else entry_price
+
+            # 2. DTE calculation
+            today = datetime.now(timezone.utc).date()
+            if hasattr(exp_date, "date"):
+                exp_date_val = exp_date.date()
+            elif isinstance(exp_date, str):
+                exp_date_val = datetime.strptime(exp_date[:10], "%Y-%m-%d").date()
+            else:
+                exp_date_val = exp_date
+            curr_dte = max(0, (exp_date_val - today).days)
+
+            # 3. Mark-to-Market Valuation of spread
+            legs_list = raw_legs if isinstance(raw_legs, list) else json.loads(raw_legs)
+            current_spread_val = net_prem
+
+            if strategy == "BULL_CALL_SPREAD" and len(legs_list) >= 2:
+                long_leg = next((l for l in legs_list if "BUY" in str(l.get("action", "")).upper()), None)
+                short_leg = next((l for l in legs_list if "SELL" in str(l.get("action", "")).upper()), None)
+                if long_leg and short_leg:
+                    k_long = float(long_leg.get("strike", entry_price))
+                    k_short = float(short_leg.get("strike", entry_price * 1.1))
+                    spread_width = k_short - k_long
+                    intrinsic = max(0.0, min(spread_width, curr_underlying - k_long))
+                    time_weight = min(1.0, curr_dte / 21.0)
+                    expected_linear = net_prem + (intrinsic - net_prem) * (1.0 - (curr_dte / 25.0) ** 0.5) if curr_dte < 25 else net_prem + (curr_underlying - entry_price) * 0.35
+                    current_spread_val = max(0.0, min(spread_width, expected_linear))
+
+            # Unrealized PnL = (Current Spread Val - Net Premium Paid) * 100 * contracts
+            unrealized_pnl = (current_spread_val - net_prem) * 100.0 * num_contracts
+
+            # 4. Profit Target Check (Standard 50% Max Profit Target)
+            if max_prof > 0 and unrealized_pnl >= (0.50 * max_prof):
+                cur.execute(f"""
+                    UPDATE {settings.mimir_schema}.mimir_options_positions
+                    SET status = 'CLOSED_TP_50_PCT',
+                        current_spread_value = %s,
+                        unrealized_pnl = 0.0,
+                        realized_pnl = %s,
+                        closed_at = NOW(),
+                        close_reason = 'Captured 50%% max profit target'
+                    WHERE position_id = %s
+                """, (current_spread_val, unrealized_pnl, pos_id))
+                summary["closed_tp"] += 1
+                logging.info(f"[NITROUS_OPTIONS] Position {ticket_id} closed at 50% max profit: +${unrealized_pnl:.2f}")
+
+            # 5. Stop Loss Check (Underlying fell > 4.5% or broke downside floor)
+            elif curr_underlying < (entry_price * 0.95):
+                cur.execute(f"""
+                    UPDATE {settings.mimir_schema}.mimir_options_positions
+                    SET status = 'CLOSED_SL_UNDERLYING',
+                        current_spread_value = %s,
+                        unrealized_pnl = 0.0,
+                        realized_pnl = %s,
+                        closed_at = NOW(),
+                        close_reason = 'Underlying breached stop loss threshold'
+                    WHERE position_id = %s
+                """, (current_spread_val, unrealized_pnl, pos_id))
+                summary["closed_sl"] += 1
+                logging.info(f"[NITROUS_OPTIONS] Position {ticket_id} closed on underlying stop breach: ${unrealized_pnl:.2f}")
+
+            # 6. Expiration Check (DTE <= 1)
+            elif curr_dte <= 1:
+                cur.execute(f"""
+                    UPDATE {settings.mimir_schema}.mimir_options_positions
+                    SET status = 'EXPIRED_CLOSED',
+                        current_spread_value = %s,
+                        unrealized_pnl = 0.0,
+                        realized_pnl = %s,
+                        closed_at = NOW(),
+                        close_reason = 'Expiration close to prevent pin risk'
+                    WHERE position_id = %s
+                """, (current_spread_val, unrealized_pnl, pos_id))
+                summary["closed_expired"] += 1
+            else:
+                cur.execute(f"""
+                    UPDATE {settings.mimir_schema}.mimir_options_positions
+                    SET current_spread_value = %s,
+                        unrealized_pnl = %s
+                    WHERE position_id = %s
+                """, (current_spread_val, unrealized_pnl, pos_id))
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"[NITROUS_OPTIONS] Error revaluing options positions: {e}")
+    finally:
+        cur.close()
+        if close_conn:
+            conn.close()
+
+    return summary
