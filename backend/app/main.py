@@ -158,6 +158,10 @@ async def oracle_page(request: Request):
 async def casino_page(request: Request):
     return templates.TemplateResponse(request, "casino.html")
 
+@app.get("/live-trader", response_class=HTMLResponse)
+async def live_trader_page(request: Request):
+    return templates.TemplateResponse(request, "live_trader.html")
+
 @app.get("/health")
 async def health():
     return {"status": "MIMIR is awake", "mode": settings.mode}

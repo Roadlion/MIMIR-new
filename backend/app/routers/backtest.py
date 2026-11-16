@@ -148,3 +148,47 @@ def get_backtest_history():
     finally:
         cur.close()
         conn.close()
+
+
+# --- Python Strategy Backtest Endpoints ---
+class StrategyBacktestRequest(BaseModel):
+    strategy_id: str = Field(..., example="bong_scalper")
+    tickers: str = Field("XAUUSD", example="XAUUSD, EURUSD")
+    timeframe: str = Field("1h", example="1h")
+    start_date: Optional[str] = Field(None, example="2026-08-01")
+    end_date: Optional[str] = Field(None, example="2026-10-25")
+    initial_capital: float = Field(10000.0, ge=1.0)
+    slippage_bps: float = Field(5.0, ge=0.0)
+    params: Optional[Dict[str, Any]] = None
+
+@router.get("/strategies")
+def get_backtest_strategies():
+    """Returns all available Python strategy files for backtesting."""
+    from ..analytics.strategy_orchestrator import get_strategy_catalog
+    try:
+        return get_strategy_catalog()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/run-strategy")
+def run_strategy_backtest_endpoint(req: StrategyBacktestRequest):
+    """
+    Executes a backtest for a Python strategy file (bong_strats)
+    across single assets or multi-ticker baskets.
+    """
+    from ..analytics.strategy_backtester import run_strategy_simulation
+    try:
+        return run_strategy_simulation(
+            strategy_id=req.strategy_id,
+            tickers_str=req.tickers,
+            timeframe=req.timeframe,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            initial_capital=req.initial_capital,
+            slippage_bps=req.slippage_bps,
+            custom_params=req.params
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"[BACKTEST] Strategy simulation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -70,6 +70,7 @@ def _get_pool():
             dbname=settings.db_name,
             user=settings.db_user,
             password=settings.db_password,
+            connect_timeout=3,
             options="-c zero_damaged_pages=on",
         )
     return _pool
@@ -86,6 +87,7 @@ def _get_dict_pool():
             dbname=settings.db_name,
             user=settings.db_user,
             password=settings.db_password,
+            connect_timeout=3,
             cursor_factory=RealDictCursor,
             options="-c zero_damaged_pages=on",
         )
